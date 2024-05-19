@@ -23,15 +23,7 @@ resource "mongodb_db_user" "user" {
   name = var.username
   password = var.password
   role {
-    role = "StaffAdministratorRole"
+    role = "StaffRole"
     db =   "admin"
-  }
-  role {
-    role = "readAnyDatabase"
-    db =   "admin"
-  }
-  role {
-    role = "readWrite"
-    db =   "local"
   }
 }

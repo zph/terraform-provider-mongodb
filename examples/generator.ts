@@ -57,36 +57,26 @@ type User = {
 
 enum Role {
   Administrator = 'administrator',
+  Staff = 'staff',
   Exporter = 'mongo-exporter',
   Failover = 'failover',
 }
 
 const users: User[] = [
-  {
-    name: 'admin2',
-    password: '<PASSWORD>',
-    type: Role.Administrator,
-  },
-  {
-    name: 'user2',
-    password: '<PASSWORD>',
-    type: Role.Administrator,
-  },
-  {
-    name: 'user3',
-    password: '<PASSWORD>',
-    type: Role.Administrator,
-  },
-  {
-    name: 'user4',
-    password: '<PASSWORD>',
-    type: Role.Administrator,
-  },
-  {
-    name: 'user5',
-    password: '<PASSWORD>',
-    type: Role.Administrator,
-  },
+  ...["admin2", "user2", "user3"].flatMap(n => {
+    return [
+      {
+      name: n,
+      password: '<PASSWORD>',
+      type: Role.Staff,
+      },
+      {
+      name: `${n}-admin`,
+      password: '<PASSWORD>',
+      type: Role.Administrator,
+      },
+    ]
+  }),
   {
     name: 'mongo_exporter',
     password: '<PASSWORD>',
