@@ -6,13 +6,14 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
+	"time"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/proxy"
-	"net/url"
-	"strconv"
-	"time"
 )
 
 type ClientConfig struct {
@@ -44,8 +45,9 @@ func (role Role) String() string {
 }
 
 type PrivilegeDto struct {
-	Db         string   `json:"db"`
-	Collection string   `json:"collection"`
+	Db         string   `json:"db,omitempty"`
+	Collection string   `json:"collection,omitempty"`
+	Cluster    bool     `json:"cluster,omitempty"`
 	Actions    []string `json:"actions"`
 }
 
@@ -76,6 +78,7 @@ type SingleResultGetRole struct {
 			Resource struct {
 				Db         string `json:"db"`
 				Collection string `json:"collection"`
+				Cluster    bool   `json:"cluster"`
 			} `json:"resource"`
 			Actions []string `json:"actions"`
 		} `json:"privileges"`
@@ -169,8 +172,9 @@ func (privilege Privilege) String() string {
 }
 
 type Resource struct {
-	Db         string `json:"db"`
-	Collection string `json:"collection"`
+	Db         string `json:"db,omitempty" bson:"db,omitempty"`
+	Collection string `json:"collection,omitempty" bson:"collection,omitempty"`
+	Cluster    bool   `json:"cluster,omitempty" bson:"cluster,omitempty"`
 }
 
 func (resource Resource) String() string {
@@ -230,9 +234,14 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	var result *mongo.SingleResult
 	for _, element := range privilege {
 		var prv Privilege
+		if element.Db != "" && element.Cluster {
+			return fmt.Errorf("can't create a role that specifies both a db and a cluster=true: role %s", role)
+		}
+
 		prv.Resource = Resource{
 			Db:         element.Db,
 			Collection: element.Collection,
+			Cluster:    element.Cluster,
 		}
 		prv.Actions = element.Actions
 		privileges = append(privileges, prv)
