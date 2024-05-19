@@ -72,9 +72,6 @@ resource "mongodb_db_role" "staff_role" {
   }
 }
 
-locals {
-  admin_roles = toset(["clusterAdmin" , "clusterManager" , "clusterMonitor"])
-}
 resource "mongodb_db_role" "staff_administrator_role" {
   depends_on = [mongodb_db_role.staff_role]
   database = "admin"
