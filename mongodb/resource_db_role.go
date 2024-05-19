@@ -34,7 +34,7 @@ func resourceDatabaseRole() *schema.Resource {
 			"privilege": {
 				Type:     schema.TypeSet,
 				Optional: true,
-				MaxItems: 10,
+				MaxItems: 20,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"db": {
@@ -62,7 +62,7 @@ func resourceDatabaseRole() *schema.Resource {
 			"inherited_role": {
 				Type:     schema.TypeSet,
 				Optional: true,
-				MaxItems: 2,
+				MaxItems: 20,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"db": {

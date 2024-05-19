@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 0.13"
+  required_version = ">= 1.5.7"
 
   required_providers {
     mongodb = {
@@ -8,19 +8,25 @@ terraform {
     }
   }
 }
-provider "mongodb" {
-  host = "documentdb-test-terraform.cluster-ro-ctclcdufsrkx.eu-west-3.docdb.amazonaws.com"
-  port = "27017"
-  username = ""
-  password = ""
-  ssl = true
-  direct = true
-  certificate = file(pathexpand("rds-combined-ca-bundle.pem"))
+
+variable "username" {
+  description = "the user name"
+  type = string
 }
+variable "password" {
+  description = "the user password"
+  type = string
+}
+
 resource "mongodb_db_user" "user" {
   auth_database = "admin"
-  name = "monta"
-  password = "monta"
+  name = var.username
+  password = var.password
+  role {
+   # role = mongodb_db_role.role.name
+    role = "custom_role_test"
+    db =   "admin"
+  }
   role {
     role = "readAnyDatabase"
     db =   "admin"
@@ -33,6 +39,4 @@ resource "mongodb_db_user" "user" {
     role = "readWrite"
     db =   "monta"
   }
-
-
 }
