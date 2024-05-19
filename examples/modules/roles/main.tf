@@ -39,7 +39,7 @@ resource "mongodb_db_role" "role_2" {
 }
 resource "mongodb_db_role" "role4" {
   depends_on = [mongodb_db_role.role]
-  database = "exemple"
+  database = "example"
   name = "new_role4"
 }
 
