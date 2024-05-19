@@ -107,19 +107,19 @@ const servers = {
   },
   'shard-01': {
     host: 'localhost',
-    port: 27021,
+    port: 27018,
     userAdmin: 'admin',
     userAdminPassword: 'admin',
   },
   'shard-02': {
     host: 'localhost',
-    port: 27023,
+    port: 27021,
     userAdmin: 'admin',
     userAdminPassword: 'admin',
   },
   'shard-03': {
     host: 'localhost',
-    port: 27026,
+    port: 27024,
     userAdmin: 'admin',
     userAdminPassword: 'admin',
   },
