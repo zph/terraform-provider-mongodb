@@ -1,6 +1,6 @@
-module github.com/Kaginari/terraform-provider-mongodb
+module github.com/zph/terraform-provider-mongodb
 
-go 1.17
+go 1.22
 
 require (
 	github.com/hashicorp/go-cty v1.4.1-0.20200414143053-d3edf31b6320
