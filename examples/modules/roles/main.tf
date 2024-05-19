@@ -42,3 +42,31 @@ resource "mongodb_db_role" "role4" {
   database = "exemple"
   name = "new_role4"
 }
+
+
+resource "mongodb_db_role" "failover_role" {
+  name = "FailoversAndReplSetManagerRole"
+  database = "admin"
+  privilege {
+    cluster = true
+    actions = [
+      "replSetGetConfig",
+      "replSetGetStatus",
+      "replSetStateChange",
+    ]
+  }
+}
+
+//resource "mongodb_db_role" "staff_administrator_role" {
+//  database = "admin"
+//  name = "StaffAdministratorRole"
+//  inherited_role {
+//    role = "enableProfiler"
+//  }
+//
+//  privilege {
+//    db = "not_inhireted"
+//    collection = "*"
+//    actions = ["collStats"]
+//  }
+//}
