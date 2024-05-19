@@ -30,7 +30,7 @@ provider "mongodb" {
 provider "mongodb" {
   alias = "shard_01"
   host = "localhost"
-  port = "27021"
+  port = "27018"
   # TODO: lift out as AWS Secrets Manager reference blocks
   username = "admin"
   password = "admin"
@@ -69,7 +69,7 @@ module "mongos_roles" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_admin2" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/administrator"
@@ -79,7 +79,7 @@ module "mongos_user_admin2" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_user2" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/administrator"
@@ -89,7 +89,7 @@ module "mongos_user_user2" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_user3" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/administrator"
@@ -99,7 +99,7 @@ module "mongos_user_user3" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_user4" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/administrator"
@@ -109,7 +109,7 @@ module "mongos_user_user4" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_user5" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/administrator"
@@ -119,7 +119,7 @@ module "mongos_user_user5" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_mongo_exporter" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/mongo-exporter"
@@ -129,7 +129,7 @@ module "mongos_user_mongo_exporter" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 module "mongos_user_failover" {
   depends_on = [ module.mongos_roles ]
   source = "./modules/users/failover"
@@ -139,7 +139,7 @@ module "mongos_user_failover" {
     mongodb = mongodb.mongos
   }
 }
-  
+
 //////////////////////////////
 // END mongos
 //////////////////////////////
@@ -153,7 +153,7 @@ module "shard_01_roles" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_admin2" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/administrator"
@@ -163,7 +163,7 @@ module "shard_01_user_admin2" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_user2" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/administrator"
@@ -173,7 +173,7 @@ module "shard_01_user_user2" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_user3" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/administrator"
@@ -183,7 +183,7 @@ module "shard_01_user_user3" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_user4" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/administrator"
@@ -193,7 +193,7 @@ module "shard_01_user_user4" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_user5" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/administrator"
@@ -203,7 +203,7 @@ module "shard_01_user_user5" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_mongo_exporter" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/mongo-exporter"
@@ -213,7 +213,7 @@ module "shard_01_user_mongo_exporter" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 module "shard_01_user_failover" {
   depends_on = [ module.shard_01_roles ]
   source = "./modules/users/failover"
@@ -223,7 +223,7 @@ module "shard_01_user_failover" {
     mongodb = mongodb.shard_01
   }
 }
-  
+
 //////////////////////////////
 // END shard_01
 //////////////////////////////
@@ -237,7 +237,7 @@ module "shard_02_roles" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_admin2" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/administrator"
@@ -247,7 +247,7 @@ module "shard_02_user_admin2" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_user2" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/administrator"
@@ -257,7 +257,7 @@ module "shard_02_user_user2" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_user3" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/administrator"
@@ -267,7 +267,7 @@ module "shard_02_user_user3" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_user4" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/administrator"
@@ -277,7 +277,7 @@ module "shard_02_user_user4" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_user5" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/administrator"
@@ -287,7 +287,7 @@ module "shard_02_user_user5" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_mongo_exporter" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/mongo-exporter"
@@ -297,7 +297,7 @@ module "shard_02_user_mongo_exporter" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 module "shard_02_user_failover" {
   depends_on = [ module.shard_02_roles ]
   source = "./modules/users/failover"
@@ -307,7 +307,7 @@ module "shard_02_user_failover" {
     mongodb = mongodb.shard_02
   }
 }
-  
+
 //////////////////////////////
 // END shard_02
 //////////////////////////////
@@ -321,7 +321,7 @@ module "shard_03_roles" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_admin2" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/administrator"
@@ -331,7 +331,7 @@ module "shard_03_user_admin2" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_user2" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/administrator"
@@ -341,7 +341,7 @@ module "shard_03_user_user2" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_user3" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/administrator"
@@ -351,7 +351,7 @@ module "shard_03_user_user3" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_user4" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/administrator"
@@ -361,7 +361,7 @@ module "shard_03_user_user4" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_user5" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/administrator"
@@ -371,7 +371,7 @@ module "shard_03_user_user5" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_mongo_exporter" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/mongo-exporter"
@@ -381,7 +381,7 @@ module "shard_03_user_mongo_exporter" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 module "shard_03_user_failover" {
   depends_on = [ module.shard_03_roles ]
   source = "./modules/users/failover"
@@ -391,7 +391,7 @@ module "shard_03_user_failover" {
     mongodb = mongodb.shard_03
   }
 }
-  
+
 //////////////////////////////
 // END shard_03
 //////////////////////////////
