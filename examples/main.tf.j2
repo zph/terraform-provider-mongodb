@@ -41,7 +41,7 @@ module "{{node.name}}_roles" {
   {% for user in users %}
 module "{{node.name}}_user_{{ user.name }}" {
   depends_on = [ module.{{node.name}}_roles ]
-  source = "./modules/user"
+  source = "./modules/users/{{user.type}}"
   username = "{{user.name}}"
   password = "{{user.password}}"
   providers = {

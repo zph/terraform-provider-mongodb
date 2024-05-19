@@ -52,28 +52,50 @@ const Server = (name: string, opts: Partial<Node> = {}): Node => {
 type User = {
   name: string,
   password: string,
+  type: Role,
+}
+
+enum Role {
+  Administrator = 'administrator',
+  Exporter = 'mongo-exporter',
+  Failover = 'failover',
 }
 
 const users: User[] = [
   {
     name: 'admin2',
     password: '<PASSWORD>',
+    type: Role.Administrator,
   },
   {
     name: 'user2',
     password: '<PASSWORD>',
+    type: Role.Administrator,
   },
   {
     name: 'user3',
     password: '<PASSWORD>',
+    type: Role.Administrator,
   },
   {
     name: 'user4',
     password: '<PASSWORD>',
+    type: Role.Administrator,
   },
   {
     name: 'user5',
     password: '<PASSWORD>',
+    type: Role.Administrator,
+  },
+  {
+    name: 'mongo_exporter',
+    password: '<PASSWORD>',
+    type: Role.Exporter,
+  },
+  {
+    name: 'failover',
+    password: 'fail',
+    type: Role.Failover,
   },
 ]
 const servers = {

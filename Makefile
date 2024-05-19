@@ -34,6 +34,8 @@ install:
 	cd examples && rm -rf .terraform
 	cd examples && make init
 re-install:
+	rm -f ./terraform.lock.hcl
+	rm -f ./examples/.terraform.lock.hcl
 	rm -f ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
 	go build -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
 	cd examples && rm -rf .terraform
