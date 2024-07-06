@@ -33,6 +33,7 @@ type ShardModel struct {
 
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var m ShardModel
+
 	m.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
 	m.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
 	m.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
@@ -54,8 +55,7 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	version += 1
 	config.Version = version
 
-	data.State().
-		config.Settings.ChainingAllowed = m.Settings.ChainingAllowed
+	config.Settings.ChainingAllowed = m.Settings.ChainingAllowed
 	config.Settings.HeartbeatIntervalMillis = m.Settings.HeartbeatIntervalMillis
 	config.Settings.HeartbeatTimeoutSecs = m.Settings.HeartbeatTimeoutSecs
 	config.Settings.ElectionTimeoutMillis = m.Settings.ElectionTimeoutMillis
