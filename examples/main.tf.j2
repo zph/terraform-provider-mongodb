@@ -17,7 +17,7 @@ terraform {
 
 {% for node in nodes %}
 provider "mongodb" {
-  alias = "{{node.name}}"
+  alias = "{{node.name | to_resource }}"
   host = "{{node.host}}"
   port = "{{node.port}}"
   # TODO: lift out as AWS Secrets Manager reference blocks
@@ -32,20 +32,20 @@ provider "mongodb" {
 //////////////////////////////
 // START {{node.name}}
 //////////////////////////////
-module "{{node.name}}_roles" {
+module "{{node.name | to_resource }}_roles" {
   source = "./modules/roles"
   providers = {
-    mongodb = mongodb.{{node.name}}
+    mongodb = mongodb.{{node.name | to_resource }}
   }
 }
   {% for user in users %}
-module "{{node.name}}_user_{{ user.name }}" {
+module "{{node.name | to_resource }}_user_{{ user.name | to_resource }}" {
   depends_on = [ module.{{node.name}}_roles ]
   source = "./modules/users/{{user.type}}"
   username = "{{user.name}}"
   password = "{{user.password}}"
   providers = {
-    mongodb = mongodb.{{node.name}}
+    mongodb = mongodb.{{node.name | to_resource }}
   }
 }
   {% endfor %}

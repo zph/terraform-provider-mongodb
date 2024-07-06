@@ -2,11 +2,12 @@ package mongodb
 
 import (
 	"context"
+	"regexp"
+	"time"
+
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"regexp"
-	"time"
 )
 
 func Provider() *schema.Provider {
@@ -90,8 +91,9 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"mongodb_db_user": resourceDatabaseUser(),
-			"mongodb_db_role": resourceDatabaseRole(),
+			"mongodb_db_user":      resourceDatabaseUser(),
+			"mongodb_db_role":      resourceDatabaseRole(),
+			"mongodb_shard_config": resourceShardConfig(),
 		},
 		DataSourcesMap:       map[string]*schema.Resource{},
 		ConfigureContextFunc: providerConfigure,

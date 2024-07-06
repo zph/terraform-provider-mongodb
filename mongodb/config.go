@@ -136,9 +136,16 @@ func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		mongoClient, err := mongo.NewClient(options.Client().ApplyURI(uri).SetAuth(options.Credential{
-			AuthSource: c.DB, Username: c.Username, Password: c.Password,
-		}).SetTLSConfig(tlsConfig).SetDialer(dialer))
+		clientOptions := options.
+			Client().
+			ApplyURI(uri).
+			SetAuth(options.Credential{
+				AuthSource: c.DB, Username: c.Username, Password: c.Password,
+			}).
+			SetTLSConfig(tlsConfig).
+			SetDialer(dialer)
+
+		mongoClient, err := mongo.NewClient(clientOptions)
 
 		return mongoClient, err
 	}
@@ -246,19 +253,22 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 		prv.Actions = element.Actions
 		privileges = append(privileges, prv)
 	}
-	if len(roles) != 0 && len(privileges) != 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: privileges}, {Key: "roles", Value: roles}})
-	} else if len(roles) == 0 && len(privileges) != 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: privileges}, {Key: "roles", Value: []bson.M{}}})
-	} else if len(roles) != 0 && len(privileges) == 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: []bson.M{}}, {Key: "roles", Value: roles}})
+	var rolesValue any
+	var privelegesValue any
+
+	if len(roles) != 0 {
+		rolesValue = roles
 	} else {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: []bson.M{}}, {Key: "roles", Value: []bson.M{}}})
+		rolesValue = []bson.M{}
 	}
+	if len(privileges) != 0 {
+		privelegesValue = privileges
+	} else {
+		privelegesValue = []bson.M{}
+	}
+
+	result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
+		{Key: "privileges", Value: privelegesValue}, {Key: "roles", Value: rolesValue}})
 
 	if result.Err() != nil {
 		return result.Err()

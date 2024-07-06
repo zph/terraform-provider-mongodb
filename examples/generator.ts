@@ -1,25 +1,6 @@
-import * as template from 'npm:nunjucks';
-import { snakeCase, kebabCase } from 'npm:change-case';
+#!/usr/bin/env -S deno run --allow-read="./"
 
-// TODO: make sure throw works, it's not currently
-// there are many issues in repo about this :-/
-// Because it's unreliable we'll trust typescript typing instead
-const env = template.configure('.', {throwOnUndefined: true})
-
-env.addFilter('to_resource', function (str: string) {
-  if(!str) throw new Error('to_resource: str is empty');
-  return snakeCase(str.toLowerCase());
-});
-
-env.addFilter('kebab_case', function (str: string) {
-  if(!str) throw new Error('kebab_case: str is empty');
-  return kebabCase(str.toLowerCase());
-});
-
-// deno-lint-ignore no-explicit-any
-function render(tmpl: string, args: {[key: string]: any}) {
-  return env.render(tmpl, args)
-}
+import Templating, {snakeCase} from 'https://raw.githubusercontent.com/zph/terraform-generator/main/mod.ts'
 
 type Node = {
   name: string,
@@ -34,7 +15,7 @@ const DefaultNode: Node = {
   host: 'localhost',
   port: 27017,
   userAdmin: 'admin',
-  userAdminPassword: '<PASSWORD>',
+  userAdminPassword: 'admin',
 }
 
 const Server = (name: string, opts: Partial<Node> = {}): Node => {
@@ -63,17 +44,20 @@ enum Role {
 }
 
 const users: User[] = [
-  ...["admin2", "user2", "user3"].flatMap(n => {
+  ...["admin2", "user2", "user3",
+    "user4", "user5", "user6",
+    "user7", "user8", "user9",
+  ].flatMap(n => {
     return [
       {
-      name: n,
-      password: '<PASSWORD>',
-      type: Role.Staff,
+        name: n,
+        password: '<PASSWORD>',
+        type: Role.Staff,
       },
       {
-      name: `${n}-admin`,
-      password: '<PASSWORD>',
-      type: Role.Administrator,
+        name: `${n}-admin`,
+        password: '<PASSWORD>',
+        type: Role.Administrator,
       },
     ]
   }),
@@ -88,39 +72,20 @@ const users: User[] = [
     type: Role.Failover,
   },
 ]
-const servers = {
-  'mongos': {
-    host: 'localhost',
-    port: 27017,
-    userAdmin: 'admin',
-    userAdminPassword: 'admin',
-  },
-  'shard-01': {
-    host: 'localhost',
-    port: 27018,
-    userAdmin: 'admin',
-    userAdminPassword: 'admin',
-  },
-  'shard-02': {
-    host: 'localhost',
-    port: 27021,
-    userAdmin: 'admin',
-    userAdminPassword: 'admin',
-  },
-  'shard-03': {
-    host: 'localhost',
-    port: 27024,
-    userAdmin: 'admin',
-    userAdminPassword: 'admin',
-  },
-}
+const servers = [
+    { name: 'mongos', port: 27017 },
+    { name: 'shard-01', port: 27018 },
+    { name: 'shard-02', port: 27021 },
+    { name: 'shard-03', port: 27024 }
+  ].map(({ name, port }) => Server(name, { port }))
 
 const main = () => {
-  const args: {nodes: Node[], users: User[]} = {
-    nodes: Object.entries(servers).map(([name, opts]) => Server(name, opts)),
+  const args: { nodes: Node[], users: User[] } = {
+    nodes: servers,
     users
   }
-  const hcl = render('main.tf.j2', args)
+  const template = new Templating('.')
+  const hcl = template.render('main.tf.j2', args)
   console.log(hcl)
 }
 
