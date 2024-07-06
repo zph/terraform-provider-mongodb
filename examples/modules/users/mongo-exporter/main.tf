@@ -23,8 +23,7 @@ resource "mongodb_db_user" "user" {
   name = var.username
   password = var.password
   role {
-   # role = mongodb_db_role.role.name
-    role = "custom_role_test"
+    role = "clusterMonitor"
     db =   "admin"
   }
 }
