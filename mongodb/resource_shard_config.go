@@ -53,7 +53,9 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	version := config.Version
 	version += 1
 	config.Version = version
-	config.Settings.ChainingAllowed = m.Settings.ChainingAllowed
+
+	data.State().
+		config.Settings.ChainingAllowed = m.Settings.ChainingAllowed
 	config.Settings.HeartbeatIntervalMillis = m.Settings.HeartbeatIntervalMillis
 	config.Settings.HeartbeatTimeoutSecs = m.Settings.HeartbeatTimeoutSecs
 	config.Settings.ElectionTimeoutMillis = m.Settings.ElectionTimeoutMillis
