@@ -1,12 +1,9 @@
-# Terraform Provider Mongodb
-![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/Kaginari/terraform-provider-mongodb?logo=go&style=flat-square)
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/Kaginari/terraform-provider-mongodb?logo=git&style=flat-square)
-![GitHub](https://img.shields.io/github/license/Kaginari/terraform-provider-mongodb?color=yellow&style=flat-square)
-![GitHub Workflow Status](https://img.shields.io/github/workflow/status/Kaginari/terraform-provider-mongodb/golangci?logo=github&style=flat-square)
-![GitHub issues](https://img.shields.io/github/issues/Kaginari/terraform-provider-mongodb?logo=github&style=flat-square)
+# Terraform Provider MongoDB
 
+> Fork of [Kaginari/terraform-provider-mongodb](https://github.com/Kaginari/terraform-provider-mongodb).
+> Forked to make larger changes than could be contributed via pull request to the upstream project and to iterate quickly for my own use cases.
 
-This repository is a Terraform Mongodb for [Terraform](https://www.terraform.io).
+This repository is a Terraform MongoDB provider for [Terraform](https://www.terraform.io).
 
 ### Requirements
 
@@ -20,7 +17,7 @@ This repository is a Terraform Mongodb for [Terraform](https://www.terraform.io)
 1. Build the provider using the `make install` command:
 
 ````bash
-git clone https://github.com/Kaginari/terraform-provider-mongodb
+git clone https://github.com/zph/terraform-provider-mongodb
 cd terraform-provider-mongodb
 make install
 ````

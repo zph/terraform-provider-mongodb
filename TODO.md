@@ -1,0 +1,5 @@
+- [ ] Setup publishing to terraform registry
+- [ ] Add section for why the fork
+- [ ] Include a cdktf module to make using this on clusters convenient and compact
+- [ ] update testing harness
+- [ ] Remove current generator format?
