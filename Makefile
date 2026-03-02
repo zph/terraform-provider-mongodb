@@ -4,7 +4,7 @@ endif
 
 default: help
 
-.PHONY: help build install re-install lint test test-unit test-plan test-shard-plan run
+.PHONY: help build install re-install lint test test-unit test-integration test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
 
 OS_ARCH=linux_amd64
 #
@@ -49,10 +49,13 @@ re-install: ## Clean reinstall of the provider
 lint: ## Run golangci-lint
 	golangci-lint run
 
-test: test-unit test-plan test-shard-plan ## Run all tests
+test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cdktn + plan)
 
 test-unit: ## Run Go unit tests
 	go test ./...
+
+test-integration: ## Run integration tests (requires Docker)
+	go test -tags integration -v -timeout 300s ./mongodb/
 
 test-plan: re-install ## Build provider and run terraform plan against examples
 	cd examples && terraform plan
@@ -61,3 +64,12 @@ test-shard-plan: ## Build provider and run terraform plan for shard_config examp
 	cd examples/modules/shard_config/basic && make build
 
 run: install ## Alias for install
+
+cdktn-build: ## Build the CDKTN construct library
+	cd cdktn && go build ./...
+
+cdktn-test: ## Run CDKTN construct library tests
+	cd cdktn && go test ./...
+
+cdktn-test-golden: ## Update CDKTN golden files
+	cd cdktn && UPDATE_GOLDEN=1 go test ./...
