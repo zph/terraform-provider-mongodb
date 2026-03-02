@@ -1,13 +1,14 @@
 # Terraform Provider MongoDB
 
 > Fork of [Kaginari/terraform-provider-mongodb](https://github.com/Kaginari/terraform-provider-mongodb).
-> Forked to make larger changes than could be contributed via pull request to the upstream project and to iterate quickly for my own use cases.
+> Forked to make larger changes than could be contributed via pull request to the upstream project and to iterate quickly for my own use cases. The changes are intended for production maturity but at this point the project is
+largely unvalidated beyond the tests seen here.
 
 This repository is a Terraform MongoDB provider for [Terraform](https://www.terraform.io).
 
 ### Requirements
 
-- [Terraform](https://www.terraform.io/downloads.html) >= 0.13
+- [Terraform](https://www.terraform.io/downloads.html) >= 1.7.5
 - [Go](https://golang.org/doc/install) >= 1.17
 
 ### Installation
@@ -22,7 +23,7 @@ cd terraform-provider-mongodb
 make install
 ````
 
-### To test locally 
+### To test locally
 
 **1.1: create mongo image  with ssl**
 
@@ -41,7 +42,7 @@ https://ritesh-yadav.github.io/tech/getting-valid-ssl-certificate-for-localhost-
 
 ````bash
 nano /etc/hosts
-127.0.0.1   kaginar.herokuapp.com   ### add this line 
+127.0.0.1   kaginar.herokuapp.com   ### add this line
 ````
 
 
