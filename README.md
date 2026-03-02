@@ -6,6 +6,14 @@ largely unvalidated beyond the tests seen here.
 
 This repository is a Terraform MongoDB provider for [Terraform](https://www.terraform.io).
 
+### Why no MongoDB Atlas support?
+
+This provider targets self-hosted MongoDB. We don't support MongoDB Atlas because we don't believe in fear-based extortion as a software engineering business model. If you need Atlas support, MongoDB has their own provider — best of luck with that.
+
+### Why no Amazon DocumentDB support?
+
+DocumentDB shipped with a single-writer architecture for its first years of existence. We judge that decision harshly and don't support it here.
+
 ### Requirements
 
 - [Terraform](https://www.terraform.io/downloads.html) >= 1.7.5

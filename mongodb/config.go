@@ -127,10 +127,7 @@ func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
 	if c.InsecureSkipVerify {
 		verify = true
 	}
-	/*
-		@Since: v0.0.7
-		add certificate support for documentDB
-	*/
+	// Certificate-based TLS support
 	if c.Certificate != "" {
 		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), verify)
 		if err != nil {
