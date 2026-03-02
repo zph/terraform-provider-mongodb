@@ -3,7 +3,7 @@ terraform {
 
   required_providers {
     mongodb = {
-      source = "registry.terraform.io/zph/mongodb"
+      source  = "registry.terraform.io/zph/mongodb"
       version = "9.9.9"
     }
   }
@@ -18,7 +18,7 @@ provider "mongodb" {
 }
 
 resource "mongodb_shard_config" "shard01" {
-  shard_name = "shard01"
-  chaining_allowed = false
+  shard_name              = "shard01"
+  chaining_allowed        = false
   election_timeout_millis = 222
 }

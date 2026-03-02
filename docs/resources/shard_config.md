@@ -1,0 +1,56 @@
+# mongodb_shard_config
+
+`mongodb_shard_config` manages replica set configuration settings for a MongoDB shard. This resource modifies the replica set settings via `replSetReconfig`.
+
+~> **IMPORTANT:** Delete is a no-op. When this resource is destroyed, Terraform removes it from state but does **not** reset the MongoDB replica set configuration. To restore defaults, manually reconfigure the replica set.
+
+~> **IMPORTANT:** Read currently only retrieves the `shard_name` and resource ID. Changes made to settings outside of Terraform (drift) will not be detected. This is a known limitation.
+
+## Example Usage
+
+### Basic settings
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name              = "shard01"
+  chaining_allowed        = false
+  election_timeout_millis = 5000
+}
+```
+
+### All settings
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name                = "shard01"
+  chaining_allowed          = true
+  heartbeat_interval_millis = 2000
+  heartbeat_timeout_secs    = 10
+  election_timeout_millis   = 10000
+}
+```
+
+## Argument Reference
+
+* `shard_name` - (Required) The name of the replica set (shard) to configure.
+* `chaining_allowed` - (Optional) When `true`, allows secondary members to replicate from other secondaries. Default: `true`.
+* `heartbeat_interval_millis` - (Optional) Frequency in milliseconds of the heartbeats. Default: `1000`.
+* `heartbeat_timeout_secs` - (Optional) Number of seconds that the replica set members wait for a successful heartbeat before marking a member as unreachable. Default: `10`.
+* `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
+
+## Import
+
+MongoDB shard configs can be imported using the base64-encoded shard name:
+
+```sh
+$ printf '%s' "shard01" | base64
+c2hhcmQwMQ==
+
+$ terraform import mongodb_shard_config.shard01 c2hhcmQwMQ==
+```
+
+## Known Limitations
+
+* **Delete is a no-op:** Destroying this resource only removes it from Terraform state. The replica set configuration in MongoDB is not reverted.
+* **No drift detection on settings:** Read only populates `shard_name` and the resource ID. If settings are changed outside Terraform, `terraform plan` will not show a diff.
+* **No force reconfiguration:** The provider does not support the `force` flag for `replSetReconfig`, which is needed when a majority of members are unreachable.

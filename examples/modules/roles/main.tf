@@ -3,14 +3,14 @@ terraform {
 
   required_providers {
     mongodb = {
-      source = "registry.terraform.io/zph/mongodb"
+      source  = "registry.terraform.io/zph/mongodb"
       version = "9.9.9"
     }
   }
 }
 
 resource "mongodb_db_role" "failover_role" {
-  name = "FailoversAndReplSetManagerRole"
+  name     = "FailoversAndReplSetManagerRole"
   database = "admin"
   privilege {
     cluster = true
@@ -24,42 +24,42 @@ resource "mongodb_db_role" "failover_role" {
 
 resource "mongodb_db_role" "staff_role" {
   database = "admin"
-  name = "StaffRole"
+  name     = "StaffRole"
   inherited_role {
     role = "clusterMonitor"
-    db = "admin"
+    db   = "admin"
   }
 
   privilege {
-    db = "*"
+    db         = "*"
     collection = "*"
-    actions = ["collStats"]
+    actions    = ["collStats"]
   }
 }
 
 resource "mongodb_db_role" "staff_administrator_role" {
   depends_on = [mongodb_db_role.staff_role]
-  database = "admin"
-  name = "StaffAdministratorRole"
+  database   = "admin"
+  name       = "StaffAdministratorRole"
   inherited_role {
     role = "clusterAdmin"
-    db = "admin"
+    db   = "admin"
   }
   inherited_role {
     role = "clusterManager"
-    db = "admin"
+    db   = "admin"
   }
 
   inherited_role {
     role = "clusterMonitor"
-    db = "admin"
+    db   = "admin"
   }
   inherited_role {
     role = mongodb_db_role.staff_role.name
-    db = "admin"
+    db   = "admin"
   }
   inherited_role {
     role = "readWriteAnyDatabase"
-    db = "admin"
+    db   = "admin"
   }
 }
