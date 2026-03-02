@@ -70,7 +70,7 @@ type RSConfig struct {
 
 // Settings document from 'replSetGetConfig': https://docs.mongodb.com/manual/reference/command/replSetGetConfig/#dbcmd.replSetGetConfig
 type Settings struct {
-	ChainingAllowed         bool                   `bson:"chainingAllowed,omitempty" json:"chainingAllowed,omitempty"`
+	ChainingAllowed         bool                   `bson:"chainingAllowed" json:"chainingAllowed"`
 	HeartbeatIntervalMillis int64                  `bson:"heartbeatIntervalMillis,omitempty" json:"heartbeatIntervalMillis,omitempty"`
 	HeartbeatTimeoutSecs    int                    `bson:"heartbeatTimeoutSecs,omitempty" json:"heartbeatTimeoutSecs,omitempty"`
 	ElectionTimeoutMillis   int64                  `bson:"electionTimeoutMillis,omitempty" json:"electionTimeoutMillis,omitempty"`
@@ -284,6 +284,27 @@ func SetReplSetConfig(ctx context.Context, rsClient *mongo.Client, cfg *RSConfig
 	}
 
 	return nil
+}
+
+// GetReplSetStatus retrieves the current replica set status via replSetGetStatus.
+func GetReplSetStatus(ctx context.Context, client *mongo.Client) (*ReplSetStatus, error) {
+	resp := ReplSetStatus{}
+	res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "replSetGetStatus", Value: 1}})
+	if res.Err() != nil {
+		err := errors.Wrap(res.Err(), "replSetGetStatus")
+		return nil, err
+	}
+	if err := res.Decode(&resp); err != nil {
+		err = errors.Wrap(err, "failed to decode replSetGetStatus")
+		return nil, err
+	}
+
+	if resp.OK != 1 {
+		err := errors.Errorf("mongo says: %s", resp.Errmsg)
+		return nil, err
+	}
+
+	return &resp, nil
 }
 
 func GetReplSetConfig(ctx context.Context, client *mongo.Client) (*RSConfig, error) {
