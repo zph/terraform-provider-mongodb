@@ -90,13 +90,7 @@ func Provider() *schema.Provider {
 				ValidateDiagFunc: validateDiagFunc(validation.StringMatch(regexp.MustCompile("^socks5h?://.*:\\d+$"), "The proxy URL is not a valid socks url.")),
 			},
 		},
-		ResourcesMap: map[string]*schema.Resource{
-			"mongodb_db_user":       resourceDatabaseUser(),
-			"mongodb_db_role":       resourceDatabaseRole(),
-			"mongodb_shard_config":  resourceShardConfig(),
-			"mongodb_shard":         resourceShard(),
-			"mongodb_original_user": resourceOriginalUser(),
-		},
+		ResourcesMap:         BuildResourceMap(AllResources(), parseEnableList()),
 		DataSourcesMap:       map[string]*schema.Resource{},
 		ConfigureContextFunc: providerConfigure,
 	}

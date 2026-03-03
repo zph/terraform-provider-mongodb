@@ -6,19 +6,30 @@
 
 ## Provider Resources
 
-| Resource | File | Description |
-|----------|------|-------------|
-| `mongodb_db_user` | `mongodb/resource_db_user.go` | Manage MongoDB database users |
-| `mongodb_db_role` | `mongodb/resource_db_role.go` | Manage MongoDB database roles |
-| `mongodb_shard_config` | `mongodb/resource_shard_config.go` | Configure replica set settings and initialize uninitialized RS |
-| `mongodb_shard` | `mongodb/resource_shard.go` | Add/remove shards from a mongos router |
-| `mongodb_original_user` | `mongodb/resource_original_user.go` | Bootstrap the initial admin user |
+| Resource | File | Maturity | Description |
+|----------|------|----------|-------------|
+| `mongodb_db_user` | `mongodb/resource_db_user.go` | mature | Manage MongoDB database users |
+| `mongodb_db_role` | `mongodb/resource_db_role.go` | mature | Manage MongoDB database roles |
+| `mongodb_original_user` | `mongodb/resource_original_user.go` | mature | Bootstrap the initial admin user |
+| `mongodb_shard_config` | `mongodb/resource_shard_config.go` | experimental | Configure replica set settings and initialize uninitialized RS |
+| `mongodb_shard` | `mongodb/resource_shard.go` | experimental | Add/remove shards from a mongos router |
+
+### Resource Capability Gating
+
+Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
+
+```bash
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
+```
+
+The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resource-gating-requirements.md` for the EARS spec (GATE-001 through GATE-010).
 
 ## Provider Key Files
 
 | File | Purpose |
 |------|---------|
 | `mongodb/provider.go` | Provider schema, resource registration, configuration |
+| `mongodb/resource_registry.go` | Resource maturity classification, allowlist gating, env var parsing |
 | `mongodb/config.go` | Client configuration, connection, TLS, proxy |
 | `mongodb/replica_set_types.go` | RS config types, `GetReplSetConfig`, `SetReplSetConfig`, `GetReplSetStatus` |
 | `mongodb/shard_discovery.go` | Connection type detection, `ListShards`, `ResolveShardClient` |
@@ -36,6 +47,7 @@
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-021 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
+| Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -49,6 +61,7 @@
 | `mongodb/replica_set_types_test.go` | RS type tests | none |
 | `mongodb/config_test.go` | Config tests | none |
 | `mongodb/golden_test.go` | Golden file tests | integration |
+| `mongodb/resource_registry_test.go` | GATE-T01..T15 (15 tests) | none |
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 

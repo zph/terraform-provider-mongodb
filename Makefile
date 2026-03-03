@@ -7,7 +7,7 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
 
 OS_ARCH=linux_amd64
 #
@@ -72,6 +72,8 @@ prek-install: ## Install prek git hooks (pre-commit + pre-push)
 
 test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cdktn + plan)
 
+test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
+
 test-unit: ## Run Go unit tests
 	cd $(PROVIDER_ROOT) && go test ./...
 
@@ -81,8 +83,9 @@ test-integration: ## Run integration tests (requires Docker)
 test-plan: re-install ## Build provider and run terraform plan against examples
 	cd $(PROVIDER_ROOT)/examples && terraform plan
 
-test-shard-plan: ## Build provider and run terraform plan for shard_config example
-	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && make build
+test-shard-plan: export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
+test-shard-plan: re-install ## Build provider and run terraform plan for shard_config example
+	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && terraform plan
 
 run: install ## Alias for install
 
