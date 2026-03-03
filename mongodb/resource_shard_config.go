@@ -54,6 +54,9 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		// INIT-003: member blocks required for initialization
 		return diag.Errorf("member blocks are required for replica set initialization")
 	}
+	if errD := validateMemberOverrides(overrides); errD != nil {
+		return errD
+	}
 
 	shardName := data.Get("shard_name").(string)
 	timeout := time.Duration(data.Get("init_timeout_secs").(int)) * time.Second
@@ -270,7 +273,19 @@ func RSConfigMembersToState(members ConfigMembers, managedHosts map[string]bool)
 	return result
 }
 
+// validateMemberOverrides returns diagnostics if any member has an empty or missing host.
+// Call this before using overrides so MergeMembers does not receive invalid hosts.
+func validateMemberOverrides(overrides []MemberOverride) diag.Diagnostics {
+	for i, o := range overrides {
+		if strings.TrimSpace(o.Host) == "" {
+			return diag.Errorf("member at index %d: host is required and must be non-empty (host:port)", i)
+		}
+	}
+	return nil
+}
+
 // extractMemberOverrides parses the Terraform "member" block into MemberOverride structs.
+// Host is read safely; use validateMemberOverrides after extraction to reject empty or missing host.
 func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) {
 	v, ok := data.GetOk("member")
 	if !ok {
@@ -283,8 +298,14 @@ func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) 
 	overrides := make([]MemberOverride, 0, len(tfMembers))
 	for _, raw := range tfMembers {
 		m := raw.(map[string]interface{})
+		var host string
+		if v, ok := m["host"]; ok && v != nil {
+			if s, ok := v.(string); ok {
+				host = s
+			}
+		}
 		override := MemberOverride{
-			Host:         m["host"].(string),
+			Host:         host,
 			Priority:     m["priority"].(int),
 			Votes:        m["votes"].(int),
 			Hidden:       m["hidden"].(bool),
@@ -303,6 +324,7 @@ func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) 
 }
 
 // managedHostsFromState extracts the set of managed hosts from the current TF state.
+// Entries with missing or empty host are skipped so we do not panic on invalid state.
 func managedHostsFromState(data *schema.ResourceData) map[string]bool {
 	v, ok := data.GetOk("member")
 	if !ok {
@@ -315,7 +337,15 @@ func managedHostsFromState(data *schema.ResourceData) map[string]bool {
 	managed := make(map[string]bool, len(tfMembers))
 	for _, raw := range tfMembers {
 		m := raw.(map[string]interface{})
-		managed[m["host"].(string)] = true
+		var host string
+		if v, ok := m["host"]; ok && v != nil {
+			if s, ok := v.(string); ok {
+				host = s
+			}
+		}
+		if strings.TrimSpace(host) != "" {
+			managed[host] = true
+		}
 	}
 	return managed
 }
@@ -352,6 +382,21 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 
 	// SHARD-003/005/006: Apply member overrides if present
 	if overrides, ok := extractMemberOverrides(data); ok {
+		if errD := validateMemberOverrides(overrides); errD != nil {
+			return errD
+		}
+		// Reject any override whose host is not in the current replica set (e.g. user changed host).
+		// Changing host is not allowed; remove the member and add a new one.
+		rsHosts := make(map[string]bool, len(config.Members))
+		for _, m := range config.Members {
+			rsHosts[m.Host] = true
+		}
+		for _, o := range overrides {
+			if !rsHosts[o.Host] {
+				return diag.Errorf("changing member host is not allowed: %q is not in the replica set (current members: %v). Remove the member and add a new one with the desired host",
+					o.Host, memberHosts(config.Members))
+			}
+		}
 		merged, mergeErr := MergeMembers(config.Members, overrides)
 		if mergeErr != nil {
 			return diag.FromErr(mergeErr)
