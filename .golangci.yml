@@ -1,31 +1,28 @@
+version: "2"
+
 run:
   timeout: 10m
 
-issues:
-  max-per-linter: 0
-  max-same-issues: 0
-
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - nakedret
     - misspell
-    - typecheck
+
     - unused
     - unconvert
     - unparam
-
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - github.com/hashicorp/terraform-plugin-sdk/helper/schema.ForceNew
-      - github.com/hashicorp/terraform-plugin-sdk/helper/schema.Set
-      - fmt.*
-      - io.Close
-  misspell:
-    ignore-words:
-      - hdinsight
-      - exportfs
+  settings:
+    errcheck:
+      exclude-functions:
+        - github.com/hashicorp/terraform-plugin-sdk/helper/schema.ForceNew
+        - github.com/hashicorp/terraform-plugin-sdk/helper/schema.Set
+        - fmt.*
+        - io.Close
+    misspell:
+      ignore-words:
+        - hdinsight
+        - exportfs
