@@ -38,6 +38,11 @@ func NewMongoShard(stack *TerraformStack, id string, props *MongoShardProps) (*M
 	// CDKTN-015: One shard_config targeting first member (primary)
 	BuildShardConfig(stack, props.ReplicaSetName, aliases[0], props.ShardConfig)
 
+	// CDKTN-052: Original users (bootstrap) targeting first member
+	if len(props.OriginalUsers) > 0 {
+		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
+	}
+
 	return &MongoShard{
 		ReplicaSetName: props.ReplicaSetName,
 		Aliases:        aliases,

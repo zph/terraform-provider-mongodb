@@ -30,6 +30,11 @@ func NewMongoConfigServer(stack *TerraformStack, id string, props *ConfigServerP
 	BuildUsers(stack, aliases, props.Users, roleDeps)
 	BuildShardConfig(stack, props.ReplicaSetName, aliases[0], props.ShardConfig)
 
+	// CDKTN-052: Original users (bootstrap) targeting first member
+	if len(props.OriginalUsers) > 0 {
+		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
+	}
+
 	return &MongoConfigServer{
 		ReplicaSetName: props.ReplicaSetName,
 		Aliases:        aliases,

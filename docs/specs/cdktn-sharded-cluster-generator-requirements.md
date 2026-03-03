@@ -765,6 +765,36 @@ Inspect L2 construct source code and verify all Terraform resources are created 
 
 ---
 
+### 19. Per-Member Shard Configuration Overrides
+
+**CDKTN-051:** Optional Feature
+
+**Requirement:**
+WHERE `Members` overrides are specified in `ShardConfigSettings`, the CDKTN Sharded Cluster Generator SHALL emit a `member` block list in the `mongodb_shard_config` resource containing each override's `host`, `priority`, `votes`, `hidden`, `arbiter_only`, `build_indexes`, `secondary_delay_secs`, and `tags` (when non-nil). WHEN `Members` is empty or nil, the `member` key SHALL be omitted entirely.
+
+**Rationale:**
+The provider's `mongodb_shard_config` resource supports per-member configuration via the `member` block (SHARD-001 through SHARD-008). The CDKTN generator MUST be able to produce these blocks for operators who need to set member-level priorities, votes, hidden mode, or tags.
+
+**Verification:**
+Synthesize a shard config with member overrides and verify the `member` list appears with correct field mappings. Synthesize without overrides and verify no `member` key is present.
+
+---
+
+### 20. Original User Bootstrap Resource
+
+**CDKTN-052:** Optional Feature
+
+**Requirement:**
+WHERE `OriginalUsers` are specified on an L2 construct's props or at the cluster level, the CDKTN Sharded Cluster Generator SHALL generate a `mongodb_original_user` resource for each entry with inline connection parameters (`host`, `port`, `username`, `password`, `auth_database`) and no provider alias reference. WHERE `SSL` is configured, SSL fields SHALL be emitted. WHERE `ReplicaSet` is specified, the `replica_set` field SHALL be emitted. Cluster-level `OriginalUsers` SHALL cascade to the first alias of each component (mongos, config server, and each shard).
+
+**Rationale:**
+The `mongodb_original_user` resource (ORIG-001) bootstraps an admin user on a no-auth MongoDB instance. It carries its own connection parameters independent of the provider config. The CDKTN generator MUST support generating these resources for initial cluster bootstrap workflows.
+
+**Verification:**
+Synthesize with original users at L2 level and verify resources have inline connection params and no provider ref. Synthesize with cluster-level original users and verify they cascade to all component first aliases.
+
+---
+
 ## Traceability Matrix
 
 | Req ID | Category | EARS Pattern | Priority |
@@ -819,6 +849,8 @@ Inspect L2 construct source code and verify all Terraform resources are created 
 | CDKTN-048 | Build/Dist | Ubiquitous | Must |
 | CDKTN-049 | L1 Bindings | Ubiquitous | Must |
 | CDKTN-050 | L1 Bindings | Ubiquitous | Must |
+| CDKTN-051 | Member Overrides | Optional Feature | Should |
+| CDKTN-052 | Original User | Optional Feature | Should |
 
 ## Design Considerations
 

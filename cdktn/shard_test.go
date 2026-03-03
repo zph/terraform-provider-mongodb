@@ -193,6 +193,237 @@ func TestNewMongoShard_EmptyRSName(t *testing.T) {
 	assert.Contains(t, err.Error(), "replica set name")
 }
 
+// CDKTN-051: Member overrides emitted in shard config
+func TestNewMongoShard_WithMemberOverrides(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	props := shardProps()
+	props.ShardConfig = &ShardConfigSettings{
+		ChainingAllowed:         true,
+		HeartbeatIntervalMillis: 1000,
+		HeartbeatTimeoutSecs:    10,
+		ElectionTimeoutMillis:   10000,
+		Members: []MemberOverrideConfig{
+			{Host: "s1m1:27018", Priority: 10, Votes: 1},
+			{Host: "s1m3:27020", Priority: 0, Votes: 0, Hidden: true, Tags: map[string]string{"dc": "east"}},
+		},
+	}
+	_, err := NewMongoShard(stack, "test-shard", props)
+	require.NoError(t, err)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	configs := resources["mongodb_shard_config"].(map[string]interface{})
+	cfg := configs["shard01_config"].(map[string]interface{})
+
+	members := cfg["member"].([]interface{})
+	assert.Len(t, members, 2)
+
+	m0 := members[0].(map[string]interface{})
+	assert.Equal(t, "s1m1:27018", m0["host"])
+	assert.Equal(t, float64(10), m0["priority"])
+	assert.Equal(t, float64(1), m0["votes"])
+
+	m1 := members[1].(map[string]interface{})
+	assert.Equal(t, "s1m3:27020", m1["host"])
+	assert.Equal(t, float64(0), m1["priority"])
+	assert.Equal(t, float64(0), m1["votes"])
+	assert.Equal(t, true, m1["hidden"])
+	tags := m1["tags"].(map[string]interface{})
+	assert.Equal(t, "east", tags["dc"])
+}
+
+// CDKTN-051: No member key when Members slice is empty (backwards compat)
+func TestNewMongoShard_WithoutMemberOverrides(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	props := shardProps()
+	props.ShardConfig = nil // use defaults, no members
+	_, err := NewMongoShard(stack, "test-shard", props)
+	require.NoError(t, err)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	configs := resources["mongodb_shard_config"].(map[string]interface{})
+	cfg := configs["shard01_config"].(map[string]interface{})
+
+	_, hasMember := cfg["member"]
+	assert.False(t, hasMember, "member key should be absent when no overrides")
+}
+
+// CDKTN-051: Golden file with member overrides
+func TestNewMongoShard_MemberOverrides_GoldenFile(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	props := shardProps()
+	props.ShardConfig = &ShardConfigSettings{
+		ChainingAllowed:         true,
+		HeartbeatIntervalMillis: 1000,
+		HeartbeatTimeoutSecs:    10,
+		ElectionTimeoutMillis:   10000,
+		Members: []MemberOverrideConfig{
+			{Host: "s1m1:27018", Priority: 10, Votes: 1, BuildIndexes: true},
+			{Host: "s1m3:27020", Priority: 0, Votes: 0, Hidden: true, Tags: map[string]string{"dc": "east"}},
+		},
+	}
+	_, err := NewMongoShard(stack, "test-shard", props)
+	require.NoError(t, err)
+
+	data, err := stack.Synth()
+	require.NoError(t, err)
+	assert.True(t, json.Valid(data))
+	goldenCompare(t, "shard_with_members.json", data)
+}
+
+// CDKTN-052: Basic original user resource generation
+func TestBuildOriginalUsers_Basic(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	// Need at least one provider for a valid stack
+	stack.AddProvider("test_alias", map[string]interface{}{"host": "localhost"})
+
+	users := []OriginalUserConfig{
+		{
+			Host:     "mongo1",
+			Port:     27017,
+			Username: "admin",
+			Password: "secret",
+			Roles:    []UserRoleRef{{Role: "root", DB: "admin"}},
+		},
+	}
+	BuildOriginalUsers(stack, "shard_shard01_0", users)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+	assert.Len(t, origUsers, 1)
+
+	ou := origUsers["shard_shard01_0_origuser_admin"].(map[string]interface{})
+	assert.Equal(t, "mongo1", ou["host"])
+	assert.Equal(t, "27017", ou["port"])
+	assert.Equal(t, "admin", ou["username"])
+	assert.Equal(t, "secret", ou["password"])
+	assert.Equal(t, "admin", ou["auth_database"])
+	// No provider ref — original_user uses inline connection
+	_, hasProvider := ou["provider"]
+	assert.False(t, hasProvider, "original_user should not have provider ref")
+	// Roles
+	roles := ou["role"].([]interface{})
+	assert.Len(t, roles, 1)
+	r := roles[0].(map[string]interface{})
+	assert.Equal(t, "root", r["role"])
+	assert.Equal(t, "admin", r["db"])
+}
+
+// CDKTN-052: Original user with SSL
+func TestBuildOriginalUsers_WithSSL(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	stack.AddProvider("test_alias", map[string]interface{}{"host": "localhost"})
+
+	users := []OriginalUserConfig{
+		{
+			Host:     "mongo1",
+			Port:     27017,
+			Username: "admin",
+			Password: "secret",
+			SSL:      &SSLConfig{Enabled: true, Certificate: "CERT_PEM", InsecureSkipVerify: true},
+		},
+	}
+	BuildOriginalUsers(stack, "shard_shard01_0", users)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+	ou := origUsers["shard_shard01_0_origuser_admin"].(map[string]interface{})
+	assert.Equal(t, true, ou["ssl"])
+	assert.Equal(t, "CERT_PEM", ou["certificate"])
+	assert.Equal(t, true, ou["insecure_skip_verify"])
+}
+
+// CDKTN-052: Original user with replica set
+func TestBuildOriginalUsers_WithReplicaSet(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	stack.AddProvider("test_alias", map[string]interface{}{"host": "localhost"})
+
+	users := []OriginalUserConfig{
+		{
+			Host:       "mongo1",
+			Port:       27017,
+			Username:   "admin",
+			Password:   "secret",
+			ReplicaSet: "rs0",
+		},
+	}
+	BuildOriginalUsers(stack, "shard_shard01_0", users)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+	ou := origUsers["shard_shard01_0_origuser_admin"].(map[string]interface{})
+	assert.Equal(t, "rs0", ou["replica_set"])
+}
+
+// CDKTN-052: Original user with custom auth database
+func TestBuildOriginalUsers_CustomAuthDB(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	stack.AddProvider("test_alias", map[string]interface{}{"host": "localhost"})
+
+	users := []OriginalUserConfig{
+		{
+			Host:         "mongo1",
+			Port:         27017,
+			Username:     "admin",
+			Password:     "secret",
+			AuthDatabase: "custom_db",
+		},
+	}
+	BuildOriginalUsers(stack, "shard_shard01_0", users)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+	ou := origUsers["shard_shard01_0_origuser_admin"].(map[string]interface{})
+	assert.Equal(t, "custom_db", ou["auth_database"])
+}
+
+// CDKTN-052: Original users wired into shard L2
+func TestNewMongoShard_WithOriginalUsers(t *testing.T) {
+	stack := NewTerraformStack(">= 1.7.5", "9.9.9")
+	props := shardProps()
+	props.OriginalUsers = []OriginalUserConfig{
+		{
+			Host:     "s1m1",
+			Port:     27018,
+			Username: "bootstrap",
+			Password: "initial",
+			Roles:    []UserRoleRef{{Role: "root", DB: "admin"}},
+		},
+	}
+	_, err := NewMongoShard(stack, "test-shard", props)
+	require.NoError(t, err)
+
+	m, err := stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+	assert.Len(t, origUsers, 1)
+
+	// Resource name should use first alias as prefix
+	ou := origUsers["shard_shard01_0_origuser_bootstrap"].(map[string]interface{})
+	assert.Equal(t, "s1m1", ou["host"])
+	assert.Equal(t, "27018", ou["port"])
+	assert.Equal(t, "bootstrap", ou["username"])
+}
+
 // Golden file test // CDKTN-043
 func TestNewMongoShard_GoldenFile(t *testing.T) {
 	stack := NewTerraformStack(">= 1.7.5", "9.9.9")

@@ -41,7 +41,7 @@ func BuildUsers(stack *TerraformStack, aliases []string, users []UserConfig, rol
 }
 
 // BuildShardConfig adds a mongodb_shard_config resource targeting the first member's alias.
-// CDKTN-015, CDKTN-016
+// CDKTN-015, CDKTN-016, CDKTN-051
 func BuildShardConfig(stack *TerraformStack, rsName string, primaryAlias string, settings *ShardConfigSettings) {
 	if settings == nil {
 		settings = DefaultShardConfigSettings()
@@ -50,12 +50,88 @@ func BuildShardConfig(stack *TerraformStack, rsName string, primaryAlias string,
 	resName := fmt.Sprintf("%s_config", sanitizeName(rsName))
 	config := map[string]interface{}{
 		"shard_name":                rsName,
-		"chaining_allowed":         settings.ChainingAllowed,
+		"chaining_allowed":          settings.ChainingAllowed,
 		"heartbeat_interval_millis": settings.HeartbeatIntervalMillis,
 		"heartbeat_timeout_secs":    settings.HeartbeatTimeoutSecs,
 		"election_timeout_millis":   settings.ElectionTimeoutMillis,
 	}
+
+	// CDKTN-051: Per-member overrides
+	if len(settings.Members) > 0 {
+		members := make([]map[string]interface{}, 0, len(settings.Members))
+		for _, mo := range settings.Members {
+			entry := map[string]interface{}{
+				"host":                 mo.Host,
+				"priority":             mo.Priority,
+				"votes":                mo.Votes,
+				"hidden":               mo.Hidden,
+				"arbiter_only":         mo.ArbiterOnly,
+				"build_indexes":        mo.BuildIndexes,
+				"secondary_delay_secs": mo.SecondaryDelaySecs,
+			}
+			if mo.Tags != nil {
+				entry["tags"] = mo.Tags
+			}
+			members = append(members, entry)
+		}
+		config["member"] = members
+	}
+
 	stack.AddResource(ResourceTypeShardConfig, resName, config, ProviderRef(primaryAlias), nil)
+}
+
+// BuildOriginalUsers adds mongodb_original_user resources for bootstrap admin users.
+// Each resource has inline connection params (no provider alias ref). // CDKTN-052
+func BuildOriginalUsers(stack *TerraformStack, prefix string, users []OriginalUserConfig) {
+	for _, user := range users {
+		resName := fmt.Sprintf("%s_origuser_%s", prefix, sanitizeName(user.Username))
+
+		port := user.Port
+		if port == 0 {
+			port = DefaultPort
+		}
+
+		db := user.AuthDatabase
+		if db == "" {
+			db = DefaultAuthDatabase
+		}
+
+		config := map[string]interface{}{
+			"host":          user.Host,
+			"port":          fmt.Sprintf("%d", port),
+			"username":      user.Username,
+			"password":      user.Password,
+			"auth_database": db,
+		}
+
+		if len(user.Roles) > 0 {
+			roles := make([]map[string]interface{}, 0, len(user.Roles))
+			for _, r := range user.Roles {
+				roles = append(roles, map[string]interface{}{
+					"role": r.Role,
+					"db":   r.DB,
+				})
+			}
+			config["role"] = roles
+		}
+
+		if user.ReplicaSet != "" {
+			config["replica_set"] = user.ReplicaSet
+		}
+
+		if user.SSL != nil {
+			config["ssl"] = user.SSL.Enabled
+			if user.SSL.Certificate != "" {
+				config["certificate"] = user.SSL.Certificate
+			}
+			if user.SSL.InsecureSkipVerify {
+				config["insecure_skip_verify"] = true
+			}
+		}
+
+		// No provider ref — original_user uses inline connection params
+		stack.AddResource(ResourceTypeOriginalUser, resName, config, "", nil)
+	}
 }
 
 func buildRoleConfig(role RoleConfig) map[string]interface{} {

@@ -31,6 +31,11 @@ func NewMongoMongosWithOffset(stack *TerraformStack, id string, props *MongosPro
 
 	// CDKTN-017: No shard_config for mongos
 
+	// CDKTN-052: Original users (bootstrap) targeting first member
+	if len(props.OriginalUsers) > 0 {
+		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
+	}
+
 	return &MongoMongos{
 		Aliases: aliases,
 	}, nil

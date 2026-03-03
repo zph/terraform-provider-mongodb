@@ -262,6 +262,61 @@ func TestNewMongoShardedCluster_FullGolden(t *testing.T) {
 	goldenCompare(t, "cluster_full.json", data)
 }
 
+// CDKTN-052: Cluster-level original users cascade to components
+func TestNewMongoShardedCluster_ClusterOriginalUsers(t *testing.T) {
+	props := minimalClusterProps()
+	props.OriginalUsers = []OriginalUserConfig{
+		{
+			Host:     "bootstrap-host",
+			Port:     27017,
+			Username: "root_admin",
+			Password: "bootstrap_pass",
+			Roles:    []UserRoleRef{{Role: "root", DB: "admin"}},
+		},
+	}
+	cluster, err := NewMongoShardedCluster("test-cluster", props)
+	require.NoError(t, err)
+
+	m, err := cluster.Stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+
+	// Should cascade to: mongos_0, configsvr_csrs_0, shard_shard01_0
+	assert.Contains(t, origUsers, "mongos_0_origuser_root_admin")
+	assert.Contains(t, origUsers, "configsvr_csrs_0_origuser_root_admin")
+	assert.Contains(t, origUsers, "shard_shard01_0_origuser_root_admin")
+	assert.Len(t, origUsers, 3, "one original user per component first alias")
+}
+
+// CDKTN-052: Component-level original users stay scoped
+func TestNewMongoShardedCluster_ComponentOriginalUsers(t *testing.T) {
+	props := minimalClusterProps()
+	props.Shards[0].OriginalUsers = []OriginalUserConfig{
+		{
+			Host:     "shard-bootstrap",
+			Port:     27018,
+			Username: "shard_admin",
+			Password: "shard_pass",
+		},
+	}
+	cluster, err := NewMongoShardedCluster("test-cluster", props)
+	require.NoError(t, err)
+
+	m, err := cluster.Stack.SynthToMap()
+	require.NoError(t, err)
+
+	resources := m["resource"].(map[string]interface{})
+	origUsers := resources[ResourceTypeOriginalUser].(map[string]interface{})
+
+	// Should only be on shard_shard01_0, not on mongos or config server
+	assert.Contains(t, origUsers, "shard_shard01_0_origuser_shard_admin")
+	assert.NotContains(t, origUsers, "mongos_0_origuser_shard_admin")
+	assert.NotContains(t, origUsers, "configsvr_csrs_0_origuser_shard_admin")
+	assert.Len(t, origUsers, 1)
+}
+
 // CDKTN-042: Provider version constraint
 func TestNewMongoShardedCluster_ProviderVersion(t *testing.T) {
 	props := minimalClusterProps()

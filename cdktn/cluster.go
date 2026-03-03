@@ -54,6 +54,7 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 		Users:          props.ConfigServers.Users,
 		Roles:          mergeRoles(props.Roles, props.ConfigServers.Roles),
 		ShardConfig:    props.ConfigServers.ShardConfig,
+		OriginalUsers:  props.ConfigServers.OriginalUsers, // CDKTN-052
 	})
 	if err != nil {
 		return nil, fmt.Errorf("config server: %w", err)
@@ -71,6 +72,7 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 			Users:          shardCfg.Users,
 			Roles:          mergeRoles(props.Roles, shardCfg.Roles),
 			ShardConfig:    shardCfg.ShardConfig,
+			OriginalUsers:  shardCfg.OriginalUsers, // CDKTN-052
 		})
 		if err != nil {
 			return nil, fmt.Errorf("shard %q: %w", shardCfg.ReplicaSetName, err)
@@ -82,12 +84,13 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 	mongosOffset := 0
 	for i, mongosCfg := range props.Mongos {
 		mongos, err := NewMongoMongosWithOffset(stack, fmt.Sprintf("%s-mongos-%d", id, i), &MongosProps{
-			Members:     mongosCfg.Members,
-			Credentials: props.Credentials,
-			SSL:         props.SSL,
-			Proxy:       props.Proxy,
-			Users:       mongosCfg.Users,
-			Roles:       mergeRoles(props.Roles, mongosCfg.Roles),
+			Members:       mongosCfg.Members,
+			Credentials:   props.Credentials,
+			SSL:           props.SSL,
+			Proxy:         props.Proxy,
+			Users:         mongosCfg.Users,
+			Roles:         mergeRoles(props.Roles, mongosCfg.Roles),
+			OriginalUsers: mongosCfg.OriginalUsers, // CDKTN-052
 		}, mongosOffset)
 		if err != nil {
 			return nil, fmt.Errorf("mongos %d: %w", i, err)
@@ -104,7 +107,35 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 		BuildUsers(stack, clusterUserAliases, props.Users, roleDeps)
 	}
 
+	// CDKTN-052: Propagate cluster-level original users to first alias of each component
+	if len(props.OriginalUsers) > 0 {
+		targets := collectClusterOriginalUserTargets(cluster)
+		for _, alias := range targets {
+			BuildOriginalUsers(stack, alias, props.OriginalUsers)
+		}
+	}
+
 	return cluster, nil
+}
+
+// collectClusterOriginalUserTargets returns first alias of each component
+// (mongos, config server, shards) for cluster-level original user propagation. // CDKTN-052
+func collectClusterOriginalUserTargets(cluster *MongoShardedCluster) []string {
+	var aliases []string
+	for _, m := range cluster.MongosL2s {
+		if len(m.Aliases) > 0 {
+			aliases = append(aliases, m.Aliases[0])
+		}
+	}
+	if len(cluster.ConfigServer.Aliases) > 0 {
+		aliases = append(aliases, cluster.ConfigServer.Aliases[0])
+	}
+	for _, s := range cluster.Shards {
+		if len(s.Aliases) > 0 {
+			aliases = append(aliases, s.Aliases[0])
+		}
+	}
+	return aliases
 }
 
 // collectClusterUserTargets returns aliases that receive cluster-level users:

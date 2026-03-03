@@ -57,12 +57,39 @@ type SSLConfig struct {
 	InsecureSkipVerify bool
 }
 
+// MemberOverrideConfig specifies per-member replica set configuration overrides.
+// Maps to the provider's `member` block in mongodb_shard_config. // CDKTN-051
+type MemberOverrideConfig struct {
+	Host               string
+	Priority           int
+	Votes              int
+	Hidden             bool
+	ArbiterOnly        bool
+	BuildIndexes       bool
+	SecondaryDelaySecs int
+	Tags               map[string]string
+}
+
+// OriginalUserConfig defines a bootstrap admin user on a no-auth MongoDB instance.
+// Each produces a mongodb_original_user resource with inline connection params. // CDKTN-052
+type OriginalUserConfig struct {
+	Host         string
+	Port         int
+	Username     string
+	Password     string
+	AuthDatabase string // default "admin"
+	Roles        []UserRoleRef
+	ReplicaSet   string // optional, auto-discovered if empty
+	SSL          *SSLConfig
+}
+
 // ShardConfigSettings holds replica set configuration knobs. // CDKTN-015, CDKTN-016
 type ShardConfigSettings struct {
 	ChainingAllowed         bool
 	HeartbeatIntervalMillis int
 	HeartbeatTimeoutSecs    int
 	ElectionTimeoutMillis   int
+	Members                 []MemberOverrideConfig // CDKTN-051: per-member overrides
 }
 
 // DefaultShardConfigSettings returns settings matching provider schema defaults. // CDKTN-016
@@ -85,6 +112,7 @@ type MongoShardProps struct {
 	Users          []UserConfig
 	Roles          []RoleConfig
 	ShardConfig    *ShardConfigSettings
+	OriginalUsers  []OriginalUserConfig // CDKTN-052
 }
 
 // ConfigServerProps configures a MongoConfigServer L2 construct. // CDKTN-001
@@ -97,16 +125,18 @@ type ConfigServerProps struct {
 	Users          []UserConfig
 	Roles          []RoleConfig
 	ShardConfig    *ShardConfigSettings
+	OriginalUsers  []OriginalUserConfig // CDKTN-052
 }
 
 // MongosProps configures a MongoMongos L2 construct. // CDKTN-001
 type MongosProps struct {
-	Members     []MemberConfig
-	Credentials CredentialSource
-	SSL         *SSLConfig
-	Proxy       string
-	Users       []UserConfig
-	Roles       []RoleConfig
+	Members       []MemberConfig
+	Credentials   CredentialSource
+	SSL           *SSLConfig
+	Proxy         string
+	Users         []UserConfig
+	Roles         []RoleConfig
+	OriginalUsers []OriginalUserConfig // CDKTN-052
 }
 
 // ShardConfig is an entry in MongoShardedClusterProps.Shards. // CDKTN-033
@@ -116,6 +146,7 @@ type ShardConfig struct {
 	Users          []UserConfig
 	Roles          []RoleConfig
 	ShardConfig    *ShardConfigSettings
+	OriginalUsers  []OriginalUserConfig // CDKTN-052
 }
 
 // ConfigServerConfig is the config server definition in cluster props.
@@ -125,13 +156,15 @@ type ConfigServerConfig struct {
 	Users          []UserConfig
 	Roles          []RoleConfig
 	ShardConfig    *ShardConfigSettings
+	OriginalUsers  []OriginalUserConfig // CDKTN-052
 }
 
 // MongosConfig is a mongos instance definition in cluster props.
 type MongosConfig struct {
-	Members []MemberConfig
-	Users   []UserConfig
-	Roles   []RoleConfig
+	Members       []MemberConfig
+	Users         []UserConfig
+	Roles         []RoleConfig
+	OriginalUsers []OriginalUserConfig // CDKTN-052
 }
 
 // MongoShardedClusterProps configures the L3 cluster construct. // CDKTN-032
@@ -144,5 +177,6 @@ type MongoShardedClusterProps struct {
 	Proxy           string           // CDKTN-034: cluster-level proxy
 	Users           []UserConfig     // CDKTN-037: cluster-level users
 	Roles           []RoleConfig
-	ProviderVersion string // CDKTN-042
+	ProviderVersion string               // CDKTN-042
+	OriginalUsers   []OriginalUserConfig // CDKTN-052: cluster-level original users
 }

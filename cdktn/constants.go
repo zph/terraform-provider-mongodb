@@ -28,6 +28,9 @@ const (
 	DefaultTerraformVersion = ">= 1.7.5"
 )
 
+// Resource type for original user bootstrap. // CDKTN-052
+const ResourceTypeOriginalUser = "mongodb_original_user"
+
 // ComponentType identifies the role of a MongoDB node in a sharded cluster.
 type ComponentType int
 
