@@ -2,7 +2,16 @@ Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
 Command: createUser
 Database: golden_app_db
 Body:
-{}
+{
+  "createUser": "golden_app_reader",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "read",
+      "db": "golden_app_db"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
 Command: usersInfo
@@ -27,7 +36,16 @@ Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
 Command: createUser
 Database: golden_app_db
 Body:
-{}
+{
+  "createUser": "golden_app_reader",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "read",
+      "db": "golden_app_db"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
 Command: usersInfo

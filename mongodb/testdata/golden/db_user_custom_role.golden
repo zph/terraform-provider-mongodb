@@ -37,7 +37,20 @@ Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_app_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_app_readwrite_role",
+      "db": "admin"
+    },
+    {
+      "role": "read",
+      "db": "config"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
 Command: usersInfo

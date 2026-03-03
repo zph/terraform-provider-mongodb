@@ -54,7 +54,20 @@ Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_mongodb_exporter",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_metrics_exporter",
+      "db": "admin"
+    },
+    {
+      "role": "clusterMonitor",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
 Command: usersInfo

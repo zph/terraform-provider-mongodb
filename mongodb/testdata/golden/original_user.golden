@@ -2,7 +2,16 @@ Source: TestGolden_OriginalUser (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_orig_admin",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "root",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_OriginalUser (mongodb/golden_test.go)
 Command: usersInfo

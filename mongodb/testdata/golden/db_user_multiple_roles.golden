@@ -2,7 +2,28 @@ Source: TestGolden_DbUser_MultipleRoles (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_backend_svc",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "readWrite",
+      "db": "orders"
+    },
+    {
+      "role": "readWrite",
+      "db": "inventory"
+    },
+    {
+      "role": "read",
+      "db": "analytics"
+    },
+    {
+      "role": "clusterMonitor",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_MultipleRoles (mongodb/golden_test.go)
 Command: usersInfo
@@ -27,7 +48,28 @@ Source: TestGolden_DbUser_MultipleRoles (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_backend_svc",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "readWrite",
+      "db": "orders"
+    },
+    {
+      "role": "readWrite",
+      "db": "inventory"
+    },
+    {
+      "role": "read",
+      "db": "analytics"
+    },
+    {
+      "role": "clusterMonitor",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_MultipleRoles (mongodb/golden_test.go)
 Command: usersInfo

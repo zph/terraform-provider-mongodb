@@ -124,7 +124,16 @@ Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_viewer_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_app_viewer",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: usersInfo
@@ -141,7 +150,16 @@ Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_editor_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_app_editor",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: usersInfo
@@ -158,7 +176,16 @@ Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_admin_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_app_admin",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
 Command: usersInfo

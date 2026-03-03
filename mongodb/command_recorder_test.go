@@ -52,18 +52,59 @@ type recordedCommand struct {
 	Body     string // pretty-printed JSON
 }
 
+// sensitiveCommands are commands whose bodies the MongoDB driver redacts in
+// CommandStartedEvent per the Command Monitoring spec. We reconstruct the body
+// from pre-registered data when the driver sends an empty body.
+var sensitiveCommands = map[string]bool{
+	"createUser":      true,
+	"updateUser":      true,
+	"authenticate":    true,
+	"saslStart":       true,
+	"saslContinue":    true,
+	"getnonce":        true,
+	"copydbgetnonce":  true,
+	"copydbsaslstart": true,
+	"copydb":          true,
+}
+
 // CommandRecorder captures MongoDB commands via an event.CommandMonitor.
 // It is safe for concurrent use.
 type CommandRecorder struct {
-	mu       sync.Mutex
-	source   string // e.g. "TestGolden_DbUser_Basic (mongodb/golden_test.go)"
-	commands []recordedCommand
+	mu            sync.Mutex
+	source        string // e.g. "TestGolden_DbUser_Basic (mongodb/golden_test.go)"
+	commands      []recordedCommand
+	pendingBodies map[string][]bson.D // command name → queue of pre-registered bodies
 }
 
 // NewCommandRecorder creates a CommandRecorder with source provenance metadata.
 // source identifies where commands originate from (test name + file).
 func NewCommandRecorder(source string) *CommandRecorder {
 	return &CommandRecorder{source: source}
+}
+
+// RecordBody pre-registers a command body for a sensitive command whose body
+// the MongoDB driver will redact. Call this immediately before executing the
+// command. The body is consumed (FIFO) when the corresponding
+// CommandStartedEvent arrives with an empty/redacted body.
+func (r *CommandRecorder) RecordBody(commandName string, body bson.D) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingBodies == nil {
+		r.pendingBodies = make(map[string][]bson.D)
+	}
+	r.pendingBodies[commandName] = append(r.pendingBodies[commandName], body)
+}
+
+// popPendingBody returns and removes the next pre-registered body for the
+// given command name. Returns nil if none is queued. Caller must hold r.mu.
+func (r *CommandRecorder) popPendingBody(commandName string) bson.D {
+	queue := r.pendingBodies[commandName]
+	if len(queue) == 0 {
+		return nil
+	}
+	body := queue[0]
+	r.pendingBodies[commandName] = queue[1:]
+	return body
 }
 
 // Monitor returns an event.CommandMonitor that records started commands,
@@ -74,17 +115,43 @@ func (r *CommandRecorder) Monitor() *event.CommandMonitor {
 			if noiseCommands[e.CommandName] {
 				return
 			}
-			body, err := bsonToRedactedJSON(e.Command)
-			if err != nil {
-				body = fmt.Sprintf("<error: %v>", err)
-			}
+
 			r.mu.Lock()
+			defer r.mu.Unlock()
+
+			var body string
+			// The MongoDB driver redacts bodies of sensitive commands
+			// (createUser, updateUser, etc.) per the Command Monitoring spec.
+			// Use a pre-registered body if available.
+			if sensitiveCommands[e.CommandName] && len(e.Command) == 0 {
+				if pending := r.popPendingBody(e.CommandName); pending != nil {
+					cleaned := cleanDoc(pending)
+					converted := bsonDToOrderedMap(cleaned)
+					var buf strings.Builder
+					enc := json.NewEncoder(&buf)
+					enc.SetEscapeHTML(false)
+					enc.SetIndent("", "  ")
+					if err := enc.Encode(converted); err != nil {
+						body = fmt.Sprintf("<error: %v>", err)
+					} else {
+						body = strings.TrimSuffix(buf.String(), "\n")
+					}
+				} else {
+					body = "<redacted by driver>"
+				}
+			} else {
+				var err error
+				body, err = bsonToRedactedJSON(e.Command)
+				if err != nil {
+					body = fmt.Sprintf("<error: %v>", err)
+				}
+			}
+
 			r.commands = append(r.commands, recordedCommand{
 				Name:     e.CommandName,
 				Database: e.DatabaseName,
 				Body:     body,
 			})
-			r.mu.Unlock()
 		},
 	}
 }
@@ -111,10 +178,11 @@ func (r *CommandRecorder) String() string {
 	return sb.String()
 }
 
-// Reset clears all recorded commands.
+// Reset clears all recorded commands and pending bodies.
 func (r *CommandRecorder) Reset() {
 	r.mu.Lock()
 	r.commands = nil
+	r.pendingBodies = nil
 	r.mu.Unlock()
 }
 
@@ -428,6 +496,68 @@ func TestBsonToRedactedJSON_NestedDocClean(t *testing.T) {
 	}
 	if strings.Contains(result, "should-strip") {
 		t.Error("nested $db field was not stripped")
+	}
+}
+
+// GOLDEN-022: WHEN a sensitive command (createUser) has an empty body from the
+// driver AND a pre-registered body exists, the CommandRecorder SHALL use the
+// pre-registered body with password redaction applied.
+func TestCommandRecorder_RecordBody_SensitiveCommand(t *testing.T) {
+	rec := &CommandRecorder{}
+	mon := rec.Monitor()
+
+	// Pre-register the body before the event fires
+	rec.RecordBody("createUser", bson.D{
+		{Key: "createUser", Value: "testuser"},
+		{Key: "pwd", Value: "supersecret"},
+		{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "read"}, {Key: "db", Value: "mydb"}}}},
+	})
+
+	// Simulate the driver sending an empty body for createUser
+	mon.Started(context.Background(), &event.CommandStartedEvent{
+		Command:      bson.Raw{}, // empty — driver redacts sensitive commands
+		DatabaseName: "admin",
+		CommandName:  "createUser",
+	})
+
+	cmds := rec.Commands()
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+
+	body := cmds[0].Body
+	if strings.Contains(body, "supersecret") {
+		t.Error("password was not redacted in reconstructed body")
+	}
+	if !strings.Contains(body, "[REDACTED]") {
+		t.Error("expected [REDACTED] placeholder in reconstructed body")
+	}
+	if !strings.Contains(body, "testuser") {
+		t.Error("expected username in reconstructed body")
+	}
+	if !strings.Contains(body, "read") {
+		t.Error("expected role name in reconstructed body")
+	}
+}
+
+// GOLDEN-023: WHEN a sensitive command has an empty body AND no pre-registered
+// body exists, the CommandRecorder SHALL output "<redacted by driver>".
+func TestCommandRecorder_RecordBody_NoPending(t *testing.T) {
+	rec := &CommandRecorder{}
+	mon := rec.Monitor()
+
+	mon.Started(context.Background(), &event.CommandStartedEvent{
+		Command:      bson.Raw{},
+		DatabaseName: "admin",
+		CommandName:  "createUser",
+	})
+
+	cmds := rec.Commands()
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	if cmds[0].Body != "<redacted by driver>" {
+		t.Errorf("expected '<redacted by driver>', got %q", cmds[0].Body)
 	}
 }
 

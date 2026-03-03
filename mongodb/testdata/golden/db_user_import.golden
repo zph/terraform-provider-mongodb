@@ -2,7 +2,16 @@ Source: TestGolden_DbUser_Import (mongodb/golden_test.go)
 Command: createUser
 Database: admin
 Body:
-{}
+{
+  "createUser": "golden_existing_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "readWriteAnyDatabase",
+      "db": "admin"
+    }
+  ]
+}
 
 Source: TestGolden_DbUser_Import (mongodb/golden_test.go)
 Command: usersInfo

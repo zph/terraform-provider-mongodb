@@ -55,6 +55,22 @@ func newGoldenTestClient(t *testing.T) (*mongo.Client, *CommandRecorder) {
 	return client, rec
 }
 
+// recordCreateUserBody pre-registers the createUser command body so the
+// CommandRecorder can reconstruct it (the driver redacts sensitive commands).
+func recordCreateUserBody(rec *CommandRecorder, user DbUser, roles []Role) {
+	var roleVal interface{}
+	if len(roles) != 0 {
+		roleVal = roles
+	} else {
+		roleVal = []bson.M{}
+	}
+	rec.RecordBody("createUser", bson.D{
+		{Key: "createUser", Value: user.Name},
+		{Key: "pwd", Value: user.Password},
+		{Key: "roles", Value: roleVal},
+	})
+}
+
 // dropUserSafe drops a user, ignoring "not found" errors.
 func dropUserSafe(client *mongo.Client, username, database string) {
 	_ = client.Database(database).RunCommand(
@@ -126,6 +142,7 @@ func TestGolden_DbUser_Basic(t *testing.T) {
 	t.Cleanup(func() { dropUserSafe(client, "golden_app_reader", db) })
 
 	// Create
+	recordCreateUserBody(rec, DbUser{Name: "golden_app_reader", Password: "testpass1"}, []Role{{Role: "read", Db: db}})
 	err := createUser(client, DbUser{Name: "golden_app_reader", Password: "testpass1"}, []Role{{Role: "read", Db: db}}, db)
 	if err != nil {
 		t.Fatalf("createUser: %v", err)
@@ -142,6 +159,7 @@ func TestGolden_DbUser_Basic(t *testing.T) {
 	if result.Err() != nil {
 		t.Fatalf("dropUser for update: %v", result.Err())
 	}
+	recordCreateUserBody(rec, DbUser{Name: "golden_app_reader", Password: "testpass2"}, []Role{{Role: "read", Db: db}})
 	err = createUser(client, DbUser{Name: "golden_app_reader", Password: "testpass2"}, []Role{{Role: "read", Db: db}}, db)
 	if err != nil {
 		t.Fatalf("createUser (update): %v", err)
@@ -186,6 +204,10 @@ func TestGolden_DbUser_CustomRole(t *testing.T) {
 	}
 
 	// Create user with custom role + built-in role
+	recordCreateUserBody(rec, DbUser{Name: "golden_app_user", Password: "testpass1"}, []Role{
+		{Role: "golden_app_readwrite_role", Db: db},
+		{Role: "read", Db: "config"},
+	})
 	err = createUser(client, DbUser{Name: "golden_app_user", Password: "testpass1"}, []Role{
 		{Role: "golden_app_readwrite_role", Db: db},
 		{Role: "read", Db: "config"},
@@ -222,6 +244,12 @@ func TestGolden_DbUser_MultipleRoles(t *testing.T) {
 	t.Cleanup(func() { dropUserSafe(client, "golden_backend_svc", db) })
 
 	// Create user with 4 roles
+	recordCreateUserBody(rec, DbUser{Name: "golden_backend_svc", Password: "testpass1"}, []Role{
+		{Role: "readWrite", Db: "orders"},
+		{Role: "readWrite", Db: "inventory"},
+		{Role: "read", Db: "analytics"},
+		{Role: "clusterMonitor", Db: db},
+	})
 	err := createUser(client, DbUser{Name: "golden_backend_svc", Password: "testpass1"}, []Role{
 		{Role: "readWrite", Db: "orders"},
 		{Role: "readWrite", Db: "inventory"},
@@ -243,6 +271,12 @@ func TestGolden_DbUser_MultipleRoles(t *testing.T) {
 	if result.Err() != nil {
 		t.Fatalf("dropUser for update: %v", result.Err())
 	}
+	recordCreateUserBody(rec, DbUser{Name: "golden_backend_svc", Password: "testpass2"}, []Role{
+		{Role: "readWrite", Db: "orders"},
+		{Role: "readWrite", Db: "inventory"},
+		{Role: "read", Db: "analytics"},
+		{Role: "clusterMonitor", Db: db},
+	})
 	err = createUser(client, DbUser{Name: "golden_backend_svc", Password: "testpass2"}, []Role{
 		{Role: "readWrite", Db: "orders"},
 		{Role: "readWrite", Db: "inventory"},
@@ -275,6 +309,9 @@ func TestGolden_DbUser_Import(t *testing.T) {
 	t.Cleanup(func() { dropUserSafe(client, "golden_existing_user", db) })
 
 	// Setup: pre-create the user (simulating existing user)
+	recordCreateUserBody(rec, DbUser{Name: "golden_existing_user", Password: "existingpass"}, []Role{
+		{Role: "readWriteAnyDatabase", Db: db},
+	})
 	err := createUser(client, DbUser{Name: "golden_existing_user", Password: "existingpass"}, []Role{
 		{Role: "readWriteAnyDatabase", Db: db},
 	}, db)
@@ -728,6 +765,9 @@ func TestGolden_OriginalUser(t *testing.T) {
 	t.Cleanup(func() { dropUserSafe(client, "golden_orig_admin", db) })
 
 	// Create (simulates original_user create — same createUser command)
+	recordCreateUserBody(rec, DbUser{Name: "golden_orig_admin", Password: "origpass"}, []Role{
+		{Role: "root", Db: db},
+	})
 	err := createUser(client, DbUser{Name: "golden_orig_admin", Password: "origpass"}, []Role{
 		{Role: "root", Db: db},
 	}, db)
@@ -780,6 +820,10 @@ func TestGolden_Pattern_MonitoringUser(t *testing.T) {
 	}
 
 	// Create user with custom + built-in role
+	recordCreateUserBody(rec, DbUser{Name: "golden_mongodb_exporter", Password: "exporterpass"}, []Role{
+		{Role: "golden_metrics_exporter", Db: db},
+		{Role: "clusterMonitor", Db: db},
+	})
 	err = createUser(client, DbUser{Name: "golden_mongodb_exporter", Password: "exporterpass"}, []Role{
 		{Role: "golden_metrics_exporter", Db: db},
 		{Role: "clusterMonitor", Db: db},
@@ -874,6 +918,9 @@ func TestGolden_Pattern_RoleHierarchy(t *testing.T) {
 		{"golden_editor_user", "golden_app_editor"},
 		{"golden_admin_user", "golden_app_admin"},
 	} {
+		recordCreateUserBody(rec, DbUser{Name: u.name, Password: u.name + "_pass"}, []Role{
+			{Role: u.role, Db: db},
+		})
 		err = createUser(client, DbUser{Name: u.name, Password: u.name + "_pass"}, []Role{
 			{Role: u.role, Db: db},
 		}, db)
