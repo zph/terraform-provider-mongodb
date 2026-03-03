@@ -17,6 +17,7 @@ mongodb/
   resource_shard_config.go       # mongodb_shard_config resource
   resource_original_user.go      # mongodb_original_user resource (bootstrap, no-auth)
   replica_set_types.go           # MongoDB replica set types + GetReplSetConfig/SetReplSetConfig
+  shard_discovery.go             # Shard auto-discovery via mongos (DetectConnectionType, ListShards, etc.)
 ```
 
 ## Resources
@@ -25,12 +26,12 @@ mongodb/
 |---|---|---|
 | `mongodb_db_user` | Complete | CRUD + import |
 | `mongodb_db_role` | Complete | CRUD + import |
-| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block. |
+| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block. Mongos auto-discovery via `listShards`. |
 | `mongodb_original_user` | Complete | CRUD (bootstrap no-auth, idempotent adopt) |
 
 ## Test Coverage
 
-### Unit Tests (70 tests)
+### Unit Tests (92 tests)
 
 All pure Go tests, no MongoDB required. Run with `make test-unit`.
 
@@ -43,9 +44,10 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
 | `resource_shard_config_test.go` | 15 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation |
+| `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
-Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056), SHARD-011
+Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056), SHARD-011, `docs/specs/shard-discovery-requirements.md` (DISC-001 through DISC-010)
 
 ### Integration Tests (21 tests)
 
@@ -116,6 +118,29 @@ EARS spec: SHARD-011 in `docs/specs/shard-member-requirements.md`.
 
 EARS specs: LOG-001 through LOG-004 in `config.go`.
 
+## Shard Auto-Discovery
+
+When the provider connects to a **mongos** router, `mongodb_shard_config` automatically discovers the target shard's replica set topology and creates a temporary direct connection for `replSetGetConfig`/`replSetReconfig`. This eliminates the need for provider aliases per shard.
+
+**Flow:**
+
+1. `getShardClient` creates a provider client via `MongoClientInit`.
+2. `DetectConnectionType` runs `isMaster` — if `msg == "isdbgrid"`, it's mongos.
+3. `ListShards` runs the `listShards` admin command.
+4. `FindShardByName` matches `shard_name` against shard `_id` values.
+5. `ParseShardHost` extracts `rsName` and host list from `"rsName/host1:port,host2:port"`.
+6. `BuildShardClientConfig` clones provider creds/TLS/proxy into a direct-mode config.
+7. `MongoClientInit` creates the temporary shard client.
+8. CRUD runs against the shard client; cleanup disconnects both clients.
+
+If the provider connects directly to a replica set member (`setName` present in isMaster), the provider client is used as-is with no discovery.
+
+**`host_override` escape hatch:** When `listShards` returns internal hostnames unreachable from the Terraform runner, set `host_override` on the resource to specify an accessible `host:port`.
+
+EARS spec: DISC-001 through DISC-010 in `docs/specs/shard-discovery-requirements.md`.
+
+Implementation: `mongodb/shard_discovery.go`.
+
 ## Examples
 
 Exhaustive standalone examples organized by capability. See [examples/README.md](examples/README.md) for full index.
@@ -131,7 +156,7 @@ Exhaustive standalone examples organized by capability. See [examples/README.md]
 | `provider/direct` | direct |
 | `provider/replica-set` | replica_set, retrywrites |
 
-### Resource Examples (10 examples)
+### Resource Examples (11 examples)
 
 | Example | Attributes Covered |
 |---|---|
@@ -145,6 +170,7 @@ Exhaustive standalone examples organized by capability. See [examples/README.md]
 | `resources/db_role/composite` | privilege + inherited_role + depends_on chain |
 | `resources/shard_config/all-settings` | All 5 shard_config attributes |
 | `resources/shard_config/multi-shard` | Provider aliases for multi-shard |
+| `resources/shard_config/mongos-discovery` | Mongos auto-discovery, host_override |
 | `resources/original_user` | Bootstrap admin user on no-auth instance |
 
 ### Pattern Examples (3 examples)
@@ -162,7 +188,7 @@ Every provider attribute and resource attribute appears in at least one example:
 - **Provider:** host, port, username, password, auth_database, ssl, certificate, insecure_skip_verify, replica_set, retrywrites, direct, proxy
 - **mongodb_db_user:** auth_database, name, password, role.role, role.db
 - **mongodb_db_role:** name, database, privilege.db, privilege.collection, privilege.cluster, privilege.actions, inherited_role.role, inherited_role.db
-- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes
+- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes, host_override
 - **mongodb_original_user:** host, port, username, password, auth_database, role.role, role.db, direct, ssl, certificate, insecure_skip_verify
 
 ### Cluster Configuration Audit Findings
@@ -172,10 +198,25 @@ Every provider attribute and resource attribute appears in at least one example:
 | 1 | RESOLVED | `resource_shard_config.go` | Read now reads back settings and member config for drift detection. |
 | 2 | HIGH | `resource_shard_config.go:102-123` | Delete is a no-op (returns nil). Documented in shard_config.md. |
 | 3 | MED | `replica_set_types.go` | CatchUpTimeoutMillis in Settings type but not in resource schema |
-| 4 | MED | `resource_shard_config.go` | No client Disconnect() after getClient() - potential connection leak |
+| 4 | RESOLVED | `resource_shard_config.go` | getShardClient now returns cleanup function; all CRUD methods defer cleanup(). |
 | 5 | MED | `resource_db_user.go:142`, `resource_db_role.go:179,202` | Wrong error variable in error messages (3 instances) |
 | 6 | LOW | `config.go:128` | MaxConnLifetime hardcoded to 10s |
 | 7 | LOW | `replica_set_types.go` | No force flag support for replSetReconfig |
+
+## CDKTN Construct Library
+
+Go construct library for generating Terraform JSON targeting `terraform-provider-mongodb`. Lives in `cdktn/` sub-module.
+
+### Resource Coverage
+
+| Provider Resource | CDKTN Support | Notes |
+|---|---|---|
+| `mongodb_db_user` | Complete | Per-member + cluster-level propagation |
+| `mongodb_db_role` | Complete | Per-member + cluster-level merging |
+| `mongodb_shard_config` | Complete | Per-RS config + per-member overrides via `member` blocks (CDKTN-051) |
+| `mongodb_original_user` | Complete | Inline connection params, L2 + cluster-level cascade (CDKTN-052) |
+
+Spec: `docs/specs/cdktn-sharded-cluster-generator-requirements.md` (CDKTN-001 through CDKTN-052)
 
 ## Dependencies
 

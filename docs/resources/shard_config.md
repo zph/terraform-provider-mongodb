@@ -30,6 +30,43 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
+### Mongos auto-discovery (sharded cluster)
+
+When the provider is connected to a mongos router, the resource automatically discovers shard topology via `listShards` and creates temporary direct connections to the appropriate replica set member.
+
+```hcl
+provider "mongodb" {
+  host     = "mongos.example.com"
+  port     = "27017"
+  username = "admin"
+  password = "secret"
+}
+
+resource "mongodb_shard_config" "shard01" {
+  shard_name                = "shard01"
+  chaining_allowed          = true
+  heartbeat_interval_millis = 2000
+  heartbeat_timeout_secs    = 10
+  election_timeout_millis   = 10000
+}
+
+resource "mongodb_shard_config" "shard02" {
+  shard_name                = "shard02"
+  election_timeout_millis   = 5000
+}
+```
+
+### Using host_override
+
+When the hostnames returned by `listShards` are internal to the cluster and unreachable from the Terraform runner, use `host_override` to specify an accessible address.
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name    = "shard01"
+  host_override = "shard01-external.example.com:27018"
+}
+```
+
 ## Argument Reference
 
 * `shard_name` - (Required) The name of the replica set (shard) to configure.
@@ -37,6 +74,21 @@ resource "mongodb_shard_config" "shard01" {
 * `heartbeat_interval_millis` - (Optional) Frequency in milliseconds of the heartbeats. Default: `1000`.
 * `heartbeat_timeout_secs` - (Optional) Number of seconds that the replica set members wait for a successful heartbeat before marking a member as unreachable. Default: `10`.
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
+* `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
+
+## Mongos Auto-Discovery
+
+When the provider connects to a **mongos** router instead of a direct replica set member, the resource automatically:
+
+1. Runs `isMaster` to detect the connection type (`msg: "isdbgrid"` indicates mongos).
+2. Runs `listShards` to discover all shard replica sets.
+3. Matches `shard_name` against the shard `_id` in the response.
+4. Parses the shard's `host` field (format: `rsName/host1:port,host2:port`).
+5. Creates a temporary direct connection to the first host, inheriting the provider's credentials, TLS, and proxy settings.
+6. Executes `replSetGetConfig`/`replSetReconfig` against the temporary connection.
+7. Disconnects the temporary client when done.
+
+If the provider is already connected directly to a replica set member, no discovery is performed and the provider connection is used as-is.
 
 ## Import
 

@@ -202,10 +202,11 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	m.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
 	m.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
 	m.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
-	client, errD := r.getClient(ctx, i)
+	client, cleanup, errD := r.getShardClient(ctx, data, i)
 	if errD != nil {
 		return errD
 	}
+	defer cleanup()
 
 	config, errD := r.getReplSetConfig(ctx, client)
 	if errD != nil {
@@ -274,10 +275,11 @@ func (r *ResourceShardConfig) getReplSetConfig(ctx context.Context, client *mong
 }
 
 func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, errD := r.getClient(ctx, i)
+	client, cleanup, errD := r.getShardClient(ctx, data, i)
 	if errD != nil {
 		return errD
 	}
+	defer cleanup()
 
 	config, errD := r.getReplSetConfig(ctx, client)
 	if errD != nil {
@@ -312,10 +314,11 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 }
 
 func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, err := r.getClient(ctx, i)
-	if err != nil {
-		return err
+	client, cleanup, errD := r.getShardClient(ctx, data, i)
+	if errD != nil {
+		return errD
 	}
+	defer cleanup()
 
 	_ = client
 	//	var stateId = data.State().ID
@@ -335,13 +338,47 @@ func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceD
 	return nil
 }
 
-func (r *ResourceShardConfig) getClient(ctx context.Context, i interface{}) (*mongo.Client, diag.Diagnostics) {
-	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(ctx, config)
-	if connectionError != nil {
-		return nil, diag.Errorf("Error connecting to database : %s ", connectionError)
+// getShardClient returns a MongoDB client connected to the appropriate shard.
+// If the provider is connected to a mongos, it auto-discovers the shard via
+// listShards and creates a temporary direct connection. The returned cleanup
+// function MUST be called via defer to disconnect temporary clients.
+// DISC-001 through DISC-010
+func (r *ResourceShardConfig) getShardClient(ctx context.Context, data *schema.ResourceData, i interface{}) (*mongo.Client, func(), diag.Diagnostics) {
+	providerConf := i.(*MongoDatabaseConfiguration)
+	providerClient, err := MongoClientInit(ctx, providerConf)
+	if err != nil {
+		return nil, func() {}, diag.Errorf("Error connecting to database: %s", err)
 	}
-	return client, nil
+
+	shardName := data.Get("shard_name").(string)
+	hostOverride := ""
+	if v, ok := data.GetOk("host_override"); ok {
+		hostOverride = v.(string)
+	}
+
+	shardClient, shardCleanup, err := ResolveShardClient(
+		ctx, providerClient, providerConf.Config,
+		shardName, hostOverride, providerConf.MaxConnLifetime,
+	)
+	if err != nil {
+		_ = providerClient.Disconnect(ctx)
+		return nil, func() {}, diag.Errorf("Error resolving shard client: %s", err)
+	}
+
+	// Build a combined cleanup that disconnects both clients when the shard
+	// client is a separate temporary connection, or just the provider client.
+	cleanup := func() {
+		shardCleanup()
+		// If shard client is the same as provider client, shardCleanup is a
+		// noop, so we still need to disconnect the provider client.
+		if shardClient != providerClient {
+			_ = providerClient.Disconnect(ctx)
+		} else {
+			_ = providerClient.Disconnect(ctx)
+		}
+	}
+
+	return shardClient, cleanup, nil
 }
 
 func (r *ResourceShardConfig) ParseId(id string) (string, string, error) {
@@ -444,6 +481,13 @@ func resourceShardConfig() *schema.Resource {
 						},
 					},
 				},
+			},
+			// DISC-008: Override the shard host discovered via listShards
+			"host_override": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Description: "Override the shard host:port discovered via listShards. " +
+					"Use when internal hostnames from listShards are unreachable from the Terraform runner.",
 			},
 		},
 	}

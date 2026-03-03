@@ -1,0 +1,174 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "shard_shard01_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m1",
+        "password": "pass",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m2",
+        "password": "pass",
+        "port": "27019",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m3",
+        "password": "pass",
+        "port": "27020",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_db_role": {
+      "shard_shard01_0_role_FailoverRole": {
+        "database": "admin",
+        "name": "FailoverRole",
+        "privilege": [
+          {
+            "actions": [
+              "replSetGetConfig",
+              "replSetGetStatus"
+            ],
+            "cluster": true
+          }
+        ],
+        "provider": "mongodb.shard_shard01_0"
+      },
+      "shard_shard01_1_role_FailoverRole": {
+        "database": "admin",
+        "name": "FailoverRole",
+        "privilege": [
+          {
+            "actions": [
+              "replSetGetConfig",
+              "replSetGetStatus"
+            ],
+            "cluster": true
+          }
+        ],
+        "provider": "mongodb.shard_shard01_1"
+      },
+      "shard_shard01_2_role_FailoverRole": {
+        "database": "admin",
+        "name": "FailoverRole",
+        "privilege": [
+          {
+            "actions": [
+              "replSetGetConfig",
+              "replSetGetStatus"
+            ],
+            "cluster": true
+          }
+        ],
+        "provider": "mongodb.shard_shard01_2"
+      }
+    },
+    "mongodb_db_user": {
+      "shard_shard01_0_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.shard_shard01_0_role_FailoverRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.shard_shard01_0",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      },
+      "shard_shard01_1_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.shard_shard01_1_role_FailoverRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.shard_shard01_1",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      },
+      "shard_shard01_2_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.shard_shard01_2_role_FailoverRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.shard_shard01_2",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      }
+    },
+    "mongodb_shard_config": {
+      "shard01_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "member": [
+          {
+            "arbiter_only": false,
+            "build_indexes": true,
+            "hidden": false,
+            "host": "s1m1:27018",
+            "priority": 10,
+            "secondary_delay_secs": 0,
+            "votes": 1
+          },
+          {
+            "arbiter_only": false,
+            "build_indexes": false,
+            "hidden": true,
+            "host": "s1m3:27020",
+            "priority": 0,
+            "secondary_delay_secs": 0,
+            "tags": {
+              "dc": "east"
+            },
+            "votes": 0
+          }
+        ],
+        "provider": "mongodb.shard_shard01_0",
+        "shard_name": "shard01"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

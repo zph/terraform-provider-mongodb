@@ -38,6 +38,7 @@
 | [modules/shard_config/basic](modules/shard_config/basic) | Minimal shard configuration (existing) |
 | [resources/shard_config/all-settings](resources/shard_config/all-settings) | All configurable settings explicitly set |
 | [resources/shard_config/multi-shard](resources/shard_config/multi-shard) | Multiple shards via provider aliases |
+| [resources/shard_config/mongos-discovery](resources/shard_config/mongos-discovery) | Mongos auto-discovery (single provider, multiple shards) |
 
 ## Patterns
 
