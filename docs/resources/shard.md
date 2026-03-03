@@ -27,6 +27,26 @@ resource "mongodb_shard" "shard02" {
 }
 ```
 
+### Multiple shards
+
+```hcl
+resource "mongodb_shard" "shard01" {
+  shard_name = "shard01"
+  hosts      = ["shard01-a:27018", "shard01-b:27018", "shard01-c:27018"]
+}
+
+resource "mongodb_shard" "shard02" {
+  shard_name = "shard02"
+  hosts      = ["shard02-a:27018", "shard02-b:27018", "shard02-c:27018"]
+}
+
+resource "mongodb_shard" "shard03" {
+  shard_name          = "shard03"
+  hosts               = ["shard03-a:27018", "shard03-b:27018", "shard03-c:27018"]
+  remove_timeout_secs = 600
+}
+```
+
 ## Argument Reference
 
 * `shard_name` - (Required, ForceNew) The replica set name of the shard to add.
@@ -57,6 +77,14 @@ resource "mongodb_shard" "shard02" {
 1. Runs `removeShard` against the mongos router
 2. Polls every 5 seconds until the state is `"completed"` or the timeout is reached
 3. Returns an error if the timeout is exceeded
+
+## Import
+
+MongoDB shards can be imported using the shard name:
+
+```sh
+$ terraform import mongodb_shard.shard01 shard01
+```
 
 ## Known Limitations
 
