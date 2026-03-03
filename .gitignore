@@ -5,3 +5,4 @@
 **/*.locl.hcl
 **/testgo/**
 **/.terraform.lock.hcl
+**/terraform-provider-mongodb
