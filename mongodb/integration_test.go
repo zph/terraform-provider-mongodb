@@ -511,5 +511,175 @@ func TestIntegration_SetReplSetConfig_MultiSetting(t *testing.T) {
 	}
 }
 
+// INTEG-017: MergeMembers priority update persists through SetReplSetConfig round-trip
+func TestIntegration_MergeMembers_PriorityUpdate(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig failed: %v", err)
+	}
+	if len(config.Members) < 1 {
+		t.Fatal("need at least 1 member")
+	}
+
+	host := config.Members[0].Host
+	newPriority := 3
+	if config.Members[0].Priority == newPriority {
+		newPriority = 4
+	}
+
+	overrides := []MemberOverride{
+		{Host: host, Priority: newPriority, Votes: derefInt(config.Members[0].Votes), BuildIndexes: derefBool(config.Members[0].BuildIndexes)},
+	}
+	merged, err := MergeMembers(config.Members, overrides)
+	if err != nil {
+		t.Fatalf("MergeMembers failed: %v", err)
+	}
+	config.Members = merged
+	config.Version++
+
+	err = SetReplSetConfig(ctx, client, config)
+	if err != nil {
+		t.Fatalf("SetReplSetConfig failed: %v", err)
+	}
+
+	updated, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after update failed: %v", err)
+	}
+	if updated.Members[0].Priority != newPriority {
+		t.Errorf("priority: want %d, got %d", newPriority, updated.Members[0].Priority)
+	}
+}
+
+// INTEG-018: MergeMembers tags update persists through round-trip
+func TestIntegration_MergeMembers_TagsUpdate(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig failed: %v", err)
+	}
+	if len(config.Members) < 1 {
+		t.Fatal("need at least 1 member")
+	}
+
+	host := config.Members[0].Host
+	overrides := []MemberOverride{
+		{
+			Host: host, Priority: config.Members[0].Priority,
+			Votes: derefInt(config.Members[0].Votes), BuildIndexes: derefBool(config.Members[0].BuildIndexes),
+			Tags: map[string]string{"dc": "east", "rack": "r1"},
+		},
+	}
+	merged, err := MergeMembers(config.Members, overrides)
+	if err != nil {
+		t.Fatalf("MergeMembers failed: %v", err)
+	}
+	config.Members = merged
+	config.Version++
+
+	err = SetReplSetConfig(ctx, client, config)
+	if err != nil {
+		t.Fatalf("SetReplSetConfig failed: %v", err)
+	}
+
+	updated, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after update failed: %v", err)
+	}
+	if updated.Members[0].Tags["dc"] != "east" {
+		t.Errorf("tags dc: want east, got %v", updated.Members[0].Tags["dc"])
+	}
+	if updated.Members[0].Tags["rack"] != "r1" {
+		t.Errorf("tags rack: want r1, got %v", updated.Members[0].Tags["rack"])
+	}
+}
+
+// INTEG-019: MergeMembers votes update persists through round-trip
+func TestIntegration_MergeMembers_VotesUpdate(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig failed: %v", err)
+	}
+	if len(config.Members) < 1 {
+		t.Fatal("need at least 1 member")
+	}
+
+	host := config.Members[0].Host
+	overrides := []MemberOverride{
+		{Host: host, Priority: config.Members[0].Priority, Votes: 1, BuildIndexes: derefBool(config.Members[0].BuildIndexes)},
+	}
+	merged, err := MergeMembers(config.Members, overrides)
+	if err != nil {
+		t.Fatalf("MergeMembers failed: %v", err)
+	}
+	config.Members = merged
+	config.Version++
+
+	err = SetReplSetConfig(ctx, client, config)
+	if err != nil {
+		t.Fatalf("SetReplSetConfig failed: %v", err)
+	}
+
+	updated, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after update failed: %v", err)
+	}
+	if derefInt(updated.Members[0].Votes) != 1 {
+		t.Errorf("votes: want 1, got %d", derefInt(updated.Members[0].Votes))
+	}
+}
+
+// INTEG-020: MergeMembers with bogus host returns error
+func TestIntegration_MergeMembers_HostNotFound(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig failed: %v", err)
+	}
+
+	overrides := []MemberOverride{
+		{Host: "nonexistent:99999", Priority: 1},
+	}
+	_, err = MergeMembers(config.Members, overrides)
+	if err == nil {
+		t.Fatal("expected error for nonexistent host, got nil")
+	}
+}
+
+// INTEG-021: RSConfigMembersToState round-trip matches applied config
+func TestIntegration_ReadMembers_RoundTrip(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig failed: %v", err)
+	}
+	if len(config.Members) < 1 {
+		t.Fatal("need at least 1 member")
+	}
+
+	host := config.Members[0].Host
+	managed := map[string]bool{host: true}
+	state := RSConfigMembersToState(config.Members, managed)
+	if len(state) != 1 {
+		t.Fatalf("expected 1 member in state, got %d", len(state))
+	}
+	m := state[0].(map[string]interface{})
+	if m["host"] != host {
+		t.Errorf("host: want %s, got %v", host, m["host"])
+	}
+}
+
 // Ensure testcontainers import is used (compile guard).
 var _ testcontainers.Container = (*tcmongodb.MongoDBContainer)(nil)

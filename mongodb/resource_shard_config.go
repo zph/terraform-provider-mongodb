@@ -31,6 +31,183 @@ type ShardModel struct {
 	Settings SettingsModel `tfsdk:"settings"`
 }
 
+// MemberOverride represents Terraform-declared member configuration.
+// SHARD-003: Members are identified by host (case-sensitive exact match).
+type MemberOverride struct {
+	Host               string
+	Priority           int
+	Votes              int
+	Hidden             bool
+	ArbiterOnly        bool
+	BuildIndexes       bool
+	SecondaryDelaySecs int64
+	Tags               map[string]string
+}
+
+func intPtr(v int) *int       { return &v }
+func boolPtr(v bool) *bool    { return &v }
+func int64Ptr(v int64) *int64 { return &v }
+
+func derefBool(p *bool) bool {
+	if p == nil {
+		return false
+	}
+	return *p
+}
+
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// MergeMembers applies Terraform member overrides onto RSConfig members,
+// matching by host. Returns error if any override host is not found.
+// SHARD-004: Error when host not found.
+// SHARD-005: All fields from the override are applied.
+// SHARD-006: Unlisted members are left unchanged.
+func MergeMembers(rsMembers ConfigMembers, overrides []MemberOverride) (ConfigMembers, error) {
+	if len(overrides) == 0 {
+		return rsMembers, nil
+	}
+
+	hostIndex := make(map[string]int, len(rsMembers))
+	for i, m := range rsMembers {
+		hostIndex[m.Host] = i
+	}
+
+	for _, o := range overrides {
+		idx, found := hostIndex[o.Host]
+		if !found {
+			return nil, fmt.Errorf("member host %q not found in replica set members: %v",
+				o.Host, memberHosts(rsMembers))
+		}
+
+		rsMembers[idx].Priority = o.Priority
+		rsMembers[idx].Votes = intPtr(o.Votes)
+		rsMembers[idx].Hidden = boolPtr(o.Hidden)
+		rsMembers[idx].ArbiterOnly = boolPtr(o.ArbiterOnly)
+		rsMembers[idx].BuildIndexes = boolPtr(o.BuildIndexes)
+		rsMembers[idx].SecondaryDelaySecs = int64Ptr(o.SecondaryDelaySecs)
+		if o.Tags != nil {
+			rsMembers[idx].Tags = ReplsetTags(o.Tags)
+		} else {
+			rsMembers[idx].Tags = nil
+		}
+	}
+
+	return rsMembers, nil
+}
+
+func memberHosts(members ConfigMembers) []string {
+	hosts := make([]string, len(members))
+	for i, m := range members {
+		hosts[i] = m.Host
+	}
+	return hosts
+}
+
+// RSConfigMembersToState converts ConfigMembers to the []interface{} format
+// for Terraform state. If managedHosts is nil, returns nil (no member block
+// declared). Only members whose host is in managedHosts are included.
+// SHARD-007: Read-back for drift detection.
+// SHARD-008: Only managed hosts returned.
+func RSConfigMembersToState(members ConfigMembers, managedHosts map[string]bool) []interface{} {
+	if managedHosts == nil {
+		return nil
+	}
+
+	result := make([]interface{}, 0, len(managedHosts))
+	for _, m := range members {
+		if !managedHosts[m.Host] {
+			continue
+		}
+
+		memberMap := map[string]interface{}{
+			"host":                 m.Host,
+			"priority":             m.Priority,
+			"arbiter_only":         derefBool(m.ArbiterOnly),
+			"build_indexes":        derefBool(m.BuildIndexes),
+			"hidden":               derefBool(m.Hidden),
+			"votes":                derefInt(m.Votes),
+			"secondary_delay_secs": derefInt64(m.SecondaryDelaySecs),
+		}
+
+		if m.Tags != nil {
+			tags := make(map[string]interface{}, len(m.Tags))
+			for k, v := range m.Tags {
+				tags[k] = v
+			}
+			memberMap["tags"] = tags
+		} else {
+			memberMap["tags"] = map[string]interface{}{}
+		}
+
+		result = append(result, memberMap)
+	}
+
+	return result
+}
+
+// extractMemberOverrides parses the Terraform "member" block into MemberOverride structs.
+func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) {
+	v, ok := data.GetOk("member")
+	if !ok {
+		return nil, false
+	}
+	tfMembers := v.([]interface{})
+	if len(tfMembers) == 0 {
+		return nil, false
+	}
+	overrides := make([]MemberOverride, 0, len(tfMembers))
+	for _, raw := range tfMembers {
+		m := raw.(map[string]interface{})
+		override := MemberOverride{
+			Host:               m["host"].(string),
+			Priority:           m["priority"].(int),
+			Votes:              m["votes"].(int),
+			Hidden:             m["hidden"].(bool),
+			ArbiterOnly:        m["arbiter_only"].(bool),
+			BuildIndexes:       m["build_indexes"].(bool),
+			SecondaryDelaySecs: int64(m["secondary_delay_secs"].(int)),
+		}
+		if tags, ok := m["tags"].(map[string]interface{}); ok && len(tags) > 0 {
+			override.Tags = make(map[string]string, len(tags))
+			for k, v := range tags {
+				override.Tags[k] = v.(string)
+			}
+		}
+		overrides = append(overrides, override)
+	}
+	return overrides, true
+}
+
+// managedHostsFromState extracts the set of managed hosts from the current TF state.
+func managedHostsFromState(data *schema.ResourceData) map[string]bool {
+	v, ok := data.GetOk("member")
+	if !ok {
+		return nil
+	}
+	tfMembers := v.([]interface{})
+	if len(tfMembers) == 0 {
+		return nil
+	}
+	managed := make(map[string]bool, len(tfMembers))
+	for _, raw := range tfMembers {
+		m := raw.(map[string]interface{})
+		managed[m["host"].(string)] = true
+	}
+	return managed
+}
+
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var m ShardModel
 
@@ -60,6 +237,15 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	config.Settings.HeartbeatTimeoutSecs = m.Settings.HeartbeatTimeoutSecs
 	config.Settings.ElectionTimeoutMillis = m.Settings.ElectionTimeoutMillis
 
+	// SHARD-003/005/006: Apply member overrides if present
+	if overrides, ok := extractMemberOverrides(data); ok {
+		merged, mergeErr := MergeMembers(config.Members, overrides)
+		if mergeErr != nil {
+			return diag.FromErr(mergeErr)
+		}
+		config.Members = merged
+	}
+
 	ctx = tflog.SetField(ctx, `updated replSetConfig`, config)
 	tflog.Debug(ctx, `replacement ReplSetConfig`)
 
@@ -82,6 +268,13 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 		return diag.FromErr(err)
 	}
 	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
+
+	// SHARD-007/008: Read back member state for drift detection
+	managedHosts := managedHostsFromState(data)
+	memberState := RSConfigMembersToState(config.Members, managedHosts)
+	if err := data.Set("member", memberState); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -120,6 +313,14 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
 		return diag.FromErr(err)
 	}
+
+	// SHARD-007/008/010: Read back managed members for drift detection
+	managedHosts := managedHostsFromState(data)
+	memberState := RSConfigMembersToState(config.Members, managedHosts)
+	if err := data.Set("member", memberState); err != nil {
+		return diag.FromErr(err)
+	}
+
 	return nil
 }
 
@@ -208,6 +409,59 @@ func resourceShardConfig() *schema.Resource {
 				Type:     schema.TypeInt,
 				Optional: true,
 				Default:  10000,
+			},
+			// SHARD-001: Optional member block for per-member configuration
+			"member": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"host": {
+							Type:        schema.TypeString,
+							Required:    true,
+							Description: "The host:port of the replica set member to configure",
+						},
+						"arbiter_only": {
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Description: "Whether this member is an arbiter",
+						},
+						"build_indexes": {
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Default:     true,
+							Description: "Whether this member builds indexes",
+						},
+						"hidden": {
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Description: "Whether this member is hidden from client discovery",
+						},
+						"priority": {
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Description: "Election priority for this member (0 = never primary)",
+						},
+						"tags": {
+							Type:     schema.TypeMap,
+							Optional: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+							Description: "Replica set tags for this member (zone, dc, rack, etc.)",
+						},
+						"secondary_delay_secs": {
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Description: "Seconds this member lags behind the primary",
+						},
+						"votes": {
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Description: "Number of votes this member has in elections (0 or 1)",
+						},
+					},
+				},
 			},
 		},
 	}

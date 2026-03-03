@@ -25,12 +25,12 @@ mongodb/
 |---|---|---|
 | `mongodb_db_user` | Complete | CRUD + import |
 | `mongodb_db_role` | Complete | CRUD + import |
-| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op) |
+| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block. |
 | `mongodb_original_user` | Complete | CRUD (bootstrap no-auth, idempotent adopt) |
 
 ## Test Coverage
 
-### Unit Tests (56 tests)
+### Unit Tests (69 tests)
 
 All pure Go tests, no MongoDB required. Run with `make test-unit`.
 
@@ -42,12 +42,12 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `provider_test.go` | 3 | Schema validation, resource map |
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
-| `resource_shard_config_test.go` | 2 | ID parsing |
+| `resource_shard_config_test.go` | 15 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
 Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056)
 
-### Integration Tests (16 tests)
+### Integration Tests (21 tests)
 
 Testcontainer-based tests against a live MongoDB replica set. Run with `make test-integration`. Requires Docker.
 
@@ -69,8 +69,13 @@ Testcontainer-based tests against a live MongoDB replica set. Run with `make tes
 | INTEG-014 | GetMembersByState(SECONDARY) empty on single-node |
 | INTEG-015 | createRole with Cluster=true privilege |
 | INTEG-016 | SetReplSetConfig multi-setting update |
+| INTEG-017 | MergeMembers priority update round-trip |
+| INTEG-018 | MergeMembers tags update round-trip |
+| INTEG-019 | MergeMembers votes update round-trip |
+| INTEG-020 | MergeMembers host-not-found error |
+| INTEG-021 | RSConfigMembersToState read-back round-trip |
 
-Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016)
+Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-010)
 
 ## Make Targets
 
@@ -151,14 +156,14 @@ Every provider attribute and resource attribute appears in at least one example:
 - **Provider:** host, port, username, password, auth_database, ssl, certificate, insecure_skip_verify, replica_set, retrywrites, direct, proxy
 - **mongodb_db_user:** auth_database, name, password, role.role, role.db
 - **mongodb_db_role:** name, database, privilege.db, privilege.collection, privilege.cluster, privilege.actions, inherited_role.role, inherited_role.db
-- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis
+- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes, member.secondary_delay_secs
 - **mongodb_original_user:** host, port, username, password, auth_database, role.role, role.db, direct, ssl, certificate, insecure_skip_verify
 
 ### Cluster Configuration Audit Findings
 
 | # | Severity | Location | Issue |
 |---|---|---|---|
-| 1 | HIGH | `resource_shard_config.go:86-100` | Read only sets shard_name/ID, never reads back settings. No drift detection. |
+| 1 | RESOLVED | `resource_shard_config.go` | Read now reads back settings and member config for drift detection. |
 | 2 | HIGH | `resource_shard_config.go:102-123` | Delete is a no-op (returns nil). Documented in shard_config.md. |
 | 3 | MED | `replica_set_types.go` | CatchUpTimeoutMillis in Settings type but not in resource schema |
 | 4 | MED | `resource_shard_config.go` | No client Disconnect() after getClient() - potential connection leak |
