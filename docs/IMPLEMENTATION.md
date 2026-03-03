@@ -35,6 +35,7 @@
 | Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-018 |
+| Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -49,6 +50,7 @@
 | `mongodb/config_test.go` | Config tests | none |
 | `mongodb/golden_test.go` | Golden file tests | integration |
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
+| `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
 ---
 
@@ -377,6 +379,52 @@ make test-golden-update
 ### Skipped Tests
 
 `TestGolden_ShardConfig_MongosDiscovery` and `TestGolden_ShardConfig_MultiShard` are skipped because they require a mongos + multi-shard topology unavailable in the single-node test container.
+
+---
+
+## Sharded Integration Tests
+
+End-to-end integration tests exercising shard discovery and multi-shard configuration against a real MongoDB sharded cluster running in Docker via testcontainers-go.
+
+### Cluster Topology
+
+| Component | Network Alias | RS Name | Internal Port | Process |
+|-----------|--------------|---------|---------------|---------|
+| Config Server | `configsvr0` | `configRS` | 27019 | `mongod --configsvr` |
+| Shard 1 | `shard01svr0` | `shard01` | 27018 | `mongod --shardsvr` |
+| Shard 2 | `shard02svr0` | `shard02` | 27018 | `mongod --shardsvr` |
+| Mongos | `mongos0` | N/A | 27017 | `mongos` |
+
+The cluster is lazily initialized on first test use via `sync.Once` and torn down in `TestMain`. No inter-component authentication (no keyfile). Admin user created on mongos and each shard after formation.
+
+### Tests
+
+| Test | EARS ID | Validates |
+|------|---------|-----------|
+| `TestShardedIntegration_DetectConnectionType_Mongos` | SINTEG-005 | `DetectConnectionType` returns `ConnTypeMongos` against mongos |
+| `TestShardedIntegration_DetectConnectionType_ShardRS` | SINTEG-013 | `DetectConnectionType` returns `ConnTypeReplicaSet` against shard direct |
+| `TestShardedIntegration_ListShards_ReturnsBothShards` | SINTEG-006 | `ListShards` returns 2 shards with correct IDs |
+| `TestShardedIntegration_FindShardByName_Found` | SINTEG-007 | `FindShardByName` matches real shard |
+| `TestShardedIntegration_FindShardByName_NotFound` | SINTEG-008 | `FindShardByName` errors for bogus name, lists available |
+| `TestShardedIntegration_ResolveShardClient_WithHostOverride` | SINTEG-009 | `ResolveShardClient` with `host_override` returns working client |
+| `TestShardedIntegration_ResolveShardClient_GetReplSetConfig` | SINTEG-010 | `GetReplSetConfig` via resolved shard client returns correct RS name |
+| `TestShardedIntegration_ResolveShardClient_SetReplSetConfig_RoundTrip` | SINTEG-011 | `SetReplSetConfig` on shard via discovery persists and round-trips |
+| `TestShardedIntegration_MultiShard_IndependentClients` | SINTEG-012 | Both shards discoverable, have different RS names |
+| `TestShardedIntegration_ResolveShardClient_DirectRS_Passthrough` | SINTEG-014 | `ResolveShardClient` on direct RS returns same client (no mongos discovery) |
+
+### host_override Strategy
+
+Containers use internal Docker hostnames (e.g., `shard01svr0:27018`). `ListShards` returns these internal names, which are unreachable from the test host. Each shard container exposes its port via testcontainers port mapping. Tests pass `host_override = "localhost:<mapped_port>"` to `ResolveShardClient`, which uses the override instead of the internal hostname.
+
+### Usage
+
+```bash
+# Run sharded integration tests (requires Docker)
+make test-sharded-integration
+
+# Or directly:
+go test -tags integration -run TestShardedIntegration -v -timeout 600s ./mongodb/
+```
 
 ---
 

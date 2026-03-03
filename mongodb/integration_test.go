@@ -104,6 +104,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	// Tear down sharded cluster if it was started
+	teardownShardedCluster()
+
 	_ = client.Disconnect(ctx)
 	_ = container.Terminate(ctx)
 	os.Exit(code)
