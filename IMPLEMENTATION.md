@@ -9,12 +9,13 @@ Terraform provider for MongoDB that manages database users, roles, and replica s
 ```
 main.go                          # Entry point
 mongodb/
-  provider.go                    # Provider schema (11 attrs, 3 resources)
-  config.go                      # ClientConfig, MongoClient, user/role CRUD
+  provider.go                    # Provider schema (11 attrs, 4 resources)
+  config.go                      # ClientConfig, MongoClient/MongoClientNoAuth, user/role CRUD
   helpers.go                     # validateDiagFunc wrapper
   resource_db_user.go            # mongodb_db_user resource
   resource_db_role.go            # mongodb_db_role resource
   resource_shard_config.go       # mongodb_shard_config resource
+  resource_original_user.go      # mongodb_original_user resource (bootstrap, no-auth)
   replica_set_types.go           # MongoDB replica set types + GetReplSetConfig/SetReplSetConfig
 ```
 
@@ -25,24 +26,26 @@ mongodb/
 | `mongodb_db_user` | Complete | CRUD + import |
 | `mongodb_db_role` | Complete | CRUD + import |
 | `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op) |
+| `mongodb_original_user` | Complete | CRUD (bootstrap no-auth, idempotent adopt) |
 
 ## Test Coverage
 
-### Unit Tests (40 tests)
+### Unit Tests (56 tests)
 
 All pure Go tests, no MongoDB required. Run with `make test-unit`.
 
 | File | Count | Covers |
 |---|---|---|
-| `config_test.go` | 14 | URI builder, proxy dialer, type strings, JSON round-trips, TLS |
+| `config_test.go` | 19 | URI builder, proxy dialer, type strings, JSON round-trips, TLS, MongoClientNoAuth |
 | `replica_set_types_test.go` | 10 | GetSelf, GetMembersByState, Primary, constants, BSON round-trips |
 | `helpers_test.go` | 4 | validateDiagFunc warning/error propagation |
 | `provider_test.go` | 3 | Schema validation, resource map |
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
 | `resource_shard_config_test.go` | 2 | ID parsing |
+| `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
-Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-040)
+Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056)
 
 ### Integration Tests (16 tests)
 
@@ -74,6 +77,7 @@ Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016
 | Target | Description |
 |---|---|
 | `help` | Show available targets |
+| `setup` | Set up dev environment (hermit, git hooks, go deps) |
 | `build` | Build provider binary |
 | `install` | Build + install to Terraform plugins dir |
 | `test` | Run unit + plan tests |
@@ -81,7 +85,9 @@ Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016
 | `test-integration` | Run integration tests (requires Docker) |
 | `test-plan` | Build + terraform plan against examples |
 | `test-shard-plan` | Build + terraform plan for shard_config |
-| `lint` | Run golangci-lint |
+| `lint` | Run all prek hooks on all files |
+| `prek` | Alias for lint |
+| `prek-install` | Install prek as git pre-commit hook |
 | `run` | Alias for install |
 
 ## Examples
@@ -113,6 +119,7 @@ Exhaustive standalone examples organized by capability. See [examples/README.md]
 | `resources/db_role/composite` | privilege + inherited_role + depends_on chain |
 | `resources/shard_config/all-settings` | All 5 shard_config attributes |
 | `resources/shard_config/multi-shard` | Provider aliases for multi-shard |
+| `resources/original_user` | Bootstrap admin user on no-auth instance |
 
 ### Pattern Examples (3 examples)
 
@@ -130,6 +137,7 @@ Every provider attribute and resource attribute appears in at least one example:
 - **mongodb_db_user:** auth_database, name, password, role.role, role.db
 - **mongodb_db_role:** name, database, privilege.db, privilege.collection, privilege.cluster, privilege.actions, inherited_role.role, inherited_role.db
 - **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis
+- **mongodb_original_user:** host, port, username, password, auth_database, role.role, role.db, direct, ssl, certificate, insecure_skip_verify
 
 ### Cluster Configuration Audit Findings
 

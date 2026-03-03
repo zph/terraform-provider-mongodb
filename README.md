@@ -14,6 +14,14 @@ This provider targets self-hosted MongoDB. We don't support MongoDB Atlas becaus
 
 DocumentDB shipped with a single-writer architecture for its first years of existence. We judge that decision harshly and don't support it here.
 
+### CDKTN Construct Library
+
+The [`cdktn/`](cdktn/) directory contains a Go construct library for generating Terraform JSON
+configs for sharded MongoDB clusters. Instead of hand-writing provider aliases and resources for
+every node, define your cluster topology in Go and synthesize deterministic Terraform JSON.
+
+See [`cdktn/README.md`](cdktn/README.md) for usage examples and API documentation.
+
 ### Requirements
 
 - [Terraform](https://www.terraform.io/downloads.html) >= 1.7.5

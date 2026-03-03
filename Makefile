@@ -4,7 +4,7 @@ endif
 
 default: help
 
-.PHONY: help build install re-install lint test test-unit test-integration test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-unit test-integration test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
 
 OS_ARCH=linux_amd64
 #
@@ -25,10 +25,25 @@ NAMESPACE=zph
 NAME=mongodb
 VERSION=9.9.9
 ## on linux base os
-TERRAFORM_PLUGINS_DIRECTORY=~/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+TERRAFORMRC=$(HOME)/.terraformrc
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+setup: dev-overrides ## Set up dev environment (hermit, git hooks, go deps, dev_overrides)
+	.hermit/bin/hermit install
+	prek install
+	go mod download
+
+dev-overrides: ## Configure Terraform dev_overrides for local provider builds
+	@if [ -f "$(TERRAFORMRC)" ] && grep -q 'dev_overrides' "$(TERRAFORMRC)"; then \
+		echo "dev_overrides already configured in $(TERRAFORMRC)"; \
+	else \
+		printf 'provider_installation {\n  dev_overrides {\n    "%s/%s" = "%s"\n  }\n  direct {}\n}\n' \
+			"$(NAMESPACE)" "$(NAME)" "$(TERRAFORM_PLUGINS_DIRECTORY)" >> "$(TERRAFORMRC)"; \
+		echo "Added dev_overrides to $(TERRAFORMRC)"; \
+	fi
 
 build: ## Build the provider binary
 	go build -o terraform-provider-${NAME}
@@ -36,8 +51,6 @@ build: ## Build the provider binary
 install: ## Build and install provider to Terraform plugins directory
 	mkdir -p ${TERRAFORM_PLUGINS_DIRECTORY}
 	go build -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
-	cd examples && rm -rf .terraform
-	cd examples && make init
 
 re-install: ## Clean reinstall of the provider
 	rm -f examples/.terraform.lock.hcl
@@ -46,8 +59,13 @@ re-install: ## Clean reinstall of the provider
 	cd examples && rm -rf .terraform
 	cd examples && make init
 
-lint: ## Run golangci-lint
-	golangci-lint run
+lint: ## Run all prek hooks on all files
+	prek run --all-files
+
+prek: lint ## Alias for lint
+
+prek-install: ## Install prek as git pre-commit hook
+	prek install
 
 test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cdktn + plan)
 
