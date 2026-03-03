@@ -1,15 +1,17 @@
-TERRAFORM_PLUGINS_DIRECTORY=${HOME}/.terraform.d/plugins
+ROOT_DIR := $(shell git rev-parse --show-toplevel)
+include $(ROOT_DIR)/Makefile
 
-init:
-	cd
+TF_PLUGINS_DIR=${HOME}/.terraform.d/plugins
+
+init: ## Initialize terraform with local plugin directory
 	terraform init \
-	-plugin-dir=${TERRAFORM_PLUGINS_DIRECTORY}
+	-plugin-dir=$(TF_PLUGINS_DIR)
 
-apply:
+apply: ## Run terraform apply
 	terraform apply
 
-plan:
+plan: ## Run terraform plan
 	terraform plan
 
-destroy:
+destroy: ## Run terraform destroy
 	terraform destroy
