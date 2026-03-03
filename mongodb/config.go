@@ -94,9 +94,9 @@ func addArgs(arguments string, newArg string) string {
 
 }
 
-func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
-
-	var verify = false
+// mongoClientOptions builds the shared *options.ClientOptions (URI, TLS, proxy)
+// without setting authentication credentials.
+func (c *ClientConfig) mongoClientOptions() (*options.ClientOptions, error) {
 	var arguments = ""
 
 	arguments = addArgs(arguments, "retrywrites="+strconv.FormatBool(c.RetryWrites))
@@ -105,52 +105,56 @@ func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
 		arguments = addArgs(arguments, "ssl=true")
 	}
 
-	if c.ReplicaSet != "" && c.Direct == false {
+	if c.ReplicaSet != "" && !c.Direct {
 		arguments = addArgs(arguments, "replicaSet="+c.ReplicaSet)
 	}
 
 	if c.Direct {
-		arguments = addArgs(arguments, "connect="+"direct")
+		arguments = addArgs(arguments, "connect=direct")
 	}
 
-	var uri = "mongodb://" + c.Host + ":" + c.Port + arguments
+	uri := "mongodb://" + c.Host + ":" + c.Port + arguments
 
 	dialer, dialerErr := proxyDialer(c)
-
 	if dialerErr != nil {
 		return nil, dialerErr
 	}
-	/*
-		@Since: v0.0.9
-		verify certificate
-	*/
-	if c.InsecureSkipVerify {
-		verify = true
-	}
-	// Certificate-based TLS support
+
+	opts := options.Client().ApplyURI(uri).SetDialer(dialer)
+
 	if c.Certificate != "" {
+		verify := c.InsecureSkipVerify
 		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), verify)
 		if err != nil {
 			return nil, err
 		}
-		clientOptions := options.
-			Client().
-			ApplyURI(uri).
-			SetAuth(options.Credential{
-				AuthSource: c.DB, Username: c.Username, Password: c.Password,
-			}).
-			SetTLSConfig(tlsConfig).
-			SetDialer(dialer)
-
-		mongoClient, err := mongo.NewClient(clientOptions)
-
-		return mongoClient, err
+		opts.SetTLSConfig(tlsConfig)
 	}
 
-	client, err := mongo.NewClient(options.Client().ApplyURI(uri).SetAuth(options.Credential{
+	return opts, nil
+}
+
+// MongoClient creates a mongo.Client WITH authentication credentials.
+func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions()
+	if err != nil {
+		return nil, err
+	}
+	opts.SetAuth(options.Credential{
 		AuthSource: c.DB, Username: c.Username, Password: c.Password,
-	}).SetDialer(dialer))
-	return client, err
+	})
+	return mongo.NewClient(opts)
+}
+
+// MongoClientNoAuth creates a mongo.Client WITHOUT authentication credentials.
+// Used by the original_user resource to connect to a fresh MongoDB instance
+// that has no users yet.
+func (c *ClientConfig) MongoClientNoAuth() (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions()
+	if err != nil {
+		return nil, err
+	}
+	return mongo.NewClient(opts)
 }
 
 func getTLSConfigWithAllServerCertificates(ca []byte, verify bool) (*tls.Config, error) {
@@ -274,19 +278,30 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 }
 
 func MongoClientInit(conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
-
 	client, err := conf.Config.MongoClient()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), conf.MaxConnLifetime*time.Second)
-	defer cancel()
-	err = client.Connect(ctx)
+	return connectAndPing(client, conf.MaxConnLifetime)
+}
+
+// MongoClientInitNoAuth creates, connects, and pings a MongoDB client without
+// authentication. Used for bootstrapping the original admin user.
+func MongoClientInitNoAuth(conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+	client, err := conf.Config.MongoClientNoAuth()
 	if err != nil {
 		return nil, err
 	}
-	err = client.Ping(ctx, nil)
-	if err != nil {
+	return connectAndPing(client, conf.MaxConnLifetime)
+}
+
+func connectAndPing(client *mongo.Client, maxConnLifetime time.Duration) (*mongo.Client, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), maxConnLifetime*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		return nil, err
+	}
+	if err := client.Ping(ctx, nil); err != nil {
 		return nil, err
 	}
 	return client, nil

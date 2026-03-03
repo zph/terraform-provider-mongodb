@@ -209,3 +209,96 @@ func TestGetTLSConfig_RootCAsPopulated(t *testing.T) {
 		t.Error("expected non-nil RootCAs")
 	}
 }
+
+// TEST-041: mongoClientOptions builds correct URI with all params
+func TestMongoClientOptions_FullParams(t *testing.T) {
+	c := &ClientConfig{
+		Host:        "myhost",
+		Port:        "27018",
+		Ssl:         true,
+		ReplicaSet:  "rs0",
+		RetryWrites: true,
+		Direct:      false,
+	}
+	opts, err := c.mongoClientOptions()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts == nil {
+		t.Fatal("expected non-nil options")
+	}
+}
+
+// TEST-042: mongoClientOptions with Direct=true omits replicaSet
+func TestMongoClientOptions_DirectMode(t *testing.T) {
+	c := &ClientConfig{
+		Host:        "myhost",
+		Port:        "27017",
+		ReplicaSet:  "rs0",
+		Direct:      true,
+		RetryWrites: false,
+	}
+	opts, err := c.mongoClientOptions()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts == nil {
+		t.Fatal("expected non-nil options")
+	}
+}
+
+// TEST-043: MongoClientNoAuth returns client without auth credentials
+func TestMongoClientNoAuth_NoError(t *testing.T) {
+	c := &ClientConfig{
+		Host:        "localhost",
+		Port:        "27017",
+		RetryWrites: false,
+		Direct:      true,
+	}
+	client, err := c.MongoClientNoAuth()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+// TEST-044: MongoClient returns client with auth credentials
+func TestMongoClient_NoError(t *testing.T) {
+	c := &ClientConfig{
+		Host:        "localhost",
+		Port:        "27017",
+		Username:    "admin",
+		Password:    "secret",
+		DB:          "admin",
+		RetryWrites: false,
+		Direct:      true,
+	}
+	client, err := c.MongoClient()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+// TEST-045: MongoClientNoAuth with certificate uses TLS without auth
+func TestMongoClientNoAuth_WithCertificate(t *testing.T) {
+	pemData := generateTestPEM(t)
+	c := &ClientConfig{
+		Host:        "localhost",
+		Port:        "27017",
+		RetryWrites: false,
+		Direct:      true,
+		Certificate: string(pemData),
+	}
+	client, err := c.MongoClientNoAuth()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}

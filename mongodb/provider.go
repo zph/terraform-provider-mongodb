@@ -91,9 +91,10 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"mongodb_db_user":      resourceDatabaseUser(),
-			"mongodb_db_role":      resourceDatabaseRole(),
-			"mongodb_shard_config": resourceShardConfig(),
+			"mongodb_db_user":       resourceDatabaseUser(),
+			"mongodb_db_role":       resourceDatabaseRole(),
+			"mongodb_shard_config":  resourceShardConfig(),
+			"mongodb_original_user": resourceOriginalUser(),
 		},
 		DataSourcesMap:       map[string]*schema.Resource{},
 		ConfigureContextFunc: providerConfigure,

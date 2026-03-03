@@ -139,7 +139,7 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	}
 	result, decodeError := getUser(client, username, database)
 	if decodeError != nil {
-		return diag.Errorf("Error decoding user : %s ", err)
+		return diag.Errorf("Error decoding user : %s ", decodeError)
 	}
 	if len(result.Users) == 0 {
 		return diag.Errorf("user does not exist")

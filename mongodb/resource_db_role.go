@@ -176,7 +176,7 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 	err2 := createRole(client, role, roleList, privileges, database)
 
 	if err2 != nil {
-		return diag.Errorf("Could not create the role  :  %s ", err)
+		return diag.Errorf("Could not create the role  :  %s ", err2)
 	}
 	str := database + "." + role
 	encoded := base64.StdEncoding.EncodeToString([]byte(str))
@@ -199,7 +199,7 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 	}
 	result, decodeError := getRole(client, roleName, database)
 	if decodeError != nil {
-		return diag.Errorf("Error decoding role : %s ", err)
+		return diag.Errorf("Error decoding role : %s ", decodeError)
 	}
 	if len(result.Roles) == 0 {
 		return diag.Errorf("Role does not exist")
@@ -214,7 +214,7 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 	}
 	dataSetError := data.Set("inherited_role", inheritedRoles)
 	if dataSetError != nil {
-		return diag.Errorf("Error setting  inherited roles : %s ", err)
+		return diag.Errorf("Error setting  inherited roles : %s ", dataSetError)
 	}
 	privileges := make([]interface{}, len(result.Roles[0].Privileges))
 

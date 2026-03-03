@@ -69,11 +69,21 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	}
 
 	data.SetId(config.ID)
-	data.Set("shard_name", config.ID)
-	data.Set("chaining_allowed", config.Settings.ChainingAllowed)
-	data.Set("heartbeat_interval_millis", config.Settings.HeartbeatIntervalMillis)
-	data.Set("heartbeat_timeout_secs", config.Settings.HeartbeatTimeoutSecs)
-	data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis)
+	if err := data.Set("shard_name", config.ID); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("chaining_allowed", config.Settings.ChainingAllowed); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_interval_millis", config.Settings.HeartbeatIntervalMillis); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_timeout_secs", config.Settings.HeartbeatTimeoutSecs); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
 
 	return nil
 }
@@ -95,7 +105,21 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	}
 
 	data.SetId(config.ID)
-	data.Set("shard_name", config.ID)
+	if err := data.Set("shard_name", config.ID); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("chaining_allowed", config.Settings.ChainingAllowed); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_interval_millis", config.Settings.HeartbeatIntervalMillis); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_timeout_secs", config.Settings.HeartbeatTimeoutSecs); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
 	return nil
 }
 
