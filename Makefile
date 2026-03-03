@@ -36,7 +36,7 @@ help: ## Show this help
 
 setup: dev-overrides ## Set up dev environment (hermit, git hooks, go deps, dev_overrides)
 	cd $(PROVIDER_ROOT) && .hermit/bin/hermit install
-	prek install
+	prek install -t pre-commit -t pre-push
 	cd $(PROVIDER_ROOT) && go mod download
 
 dev-overrides: ## Configure Terraform dev_overrides for local provider builds
@@ -67,8 +67,8 @@ lint: ## Run all prek hooks on all files
 
 prek: lint ## Alias for lint
 
-prek-install: ## Install prek as git pre-commit hook
-	prek install
+prek-install: ## Install prek git hooks (pre-commit + pre-push)
+	prek install -t pre-commit -t pre-push
 
 test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cdktn + plan)
 
