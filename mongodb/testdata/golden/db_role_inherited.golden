@@ -1,0 +1,76 @@
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_base_operations",
+  "privileges": [
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "insert",
+        "update"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_base_operations",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_extended_operations",
+  "privileges": [],
+  "roles": [
+    {
+      "role": "golden_base_operations",
+      "db": "admin"
+    }
+  ]
+}
+
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_extended_operations",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_extended_operations"
+}
+
+Source: TestGolden_DbRole_Inherited (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_base_operations"
+}

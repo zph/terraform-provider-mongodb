@@ -40,6 +40,12 @@
 | [resources/shard_config/multi-shard](resources/shard_config/multi-shard) | Multiple shards via provider aliases |
 | [resources/shard_config/mongos-discovery](resources/shard_config/mongos-discovery) | Mongos auto-discovery (single provider, multiple shards) |
 
+### mongodb_shard
+
+| Example | Description |
+|---|---|
+| (no examples yet) | Register/remove shards via `addShard`/`removeShard` on a mongos router |
+
 ## Patterns
 
 Compositions combining multiple resources for real-world scenarios.

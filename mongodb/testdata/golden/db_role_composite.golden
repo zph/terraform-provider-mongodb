@@ -1,0 +1,143 @@
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_custom_monitoring",
+  "privileges": [
+    {
+      "resource": {
+        "cluster": true
+      },
+      "actions": [
+        "replSetGetStatus",
+        "serverStatus"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_custom_monitoring",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_custom_data_access",
+  "privileges": [
+    {
+      "resource": {
+        "db": "orders",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "insert",
+        "update",
+        "remove",
+        "createIndex"
+      ]
+    },
+    {
+      "resource": {
+        "db": "orders",
+        "collection": "audit_log"
+      },
+      "actions": [
+        "find"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_custom_data_access",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_admin_composite_role",
+  "privileges": [
+    {
+      "resource": {
+        "db": "admin",
+        "collection": ""
+      },
+      "actions": [
+        "collStats",
+        "dbStats",
+        "listCollections"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "role": "golden_custom_monitoring",
+      "db": "admin"
+    },
+    {
+      "role": "golden_custom_data_access",
+      "db": "admin"
+    }
+  ]
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_admin_composite_role",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_admin_composite_role"
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_custom_data_access"
+}
+
+Source: TestGolden_DbRole_Composite (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_custom_monitoring"
+}

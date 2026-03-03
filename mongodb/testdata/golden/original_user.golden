@@ -1,0 +1,24 @@
+Source: TestGolden_OriginalUser (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{}
+
+Source: TestGolden_OriginalUser (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_orig_admin",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_OriginalUser (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_orig_admin"
+}

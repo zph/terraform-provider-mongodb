@@ -74,7 +74,49 @@ resource "mongodb_shard_config" "shard01" {
 * `heartbeat_interval_millis` - (Optional) Frequency in milliseconds of the heartbeats. Default: `1000`.
 * `heartbeat_timeout_secs` - (Optional) Number of seconds that the replica set members wait for a successful heartbeat before marking a member as unreachable. Default: `10`.
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
+* `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election and majority health). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
+
+## Replica Set Initialization
+
+When the target replica set has not yet been initialized (MongoDB returns error code 94 — `NotYetInitialized`), the resource automatically handles initialization:
+
+1. Connects in direct mode to the first `member` block's host (with auth fallback for fresh instances).
+2. Runs `replSetInitiate` with a single-member config.
+3. Waits for the member to reach PRIMARY state.
+4. If additional `member` blocks exist, runs `replSetReconfig` to add them with all configured fields.
+5. Waits for a majority of members to be healthy (PRIMARY or SECONDARY).
+
+If `replSetInitiate` returns code 23 (`AlreadyInitialized`), the resource falls through to the standard reconfiguration flow.
+
+### Initialization example
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name              = "shard01"
+  chaining_allowed        = true
+  election_timeout_millis = 10000
+  init_timeout_secs       = 120
+
+  member {
+    host     = "mongo1:27017"
+    priority = 2
+    votes    = 1
+  }
+
+  member {
+    host     = "mongo2:27017"
+    priority = 1
+    votes    = 1
+  }
+
+  member {
+    host     = "mongo3:27017"
+    priority = 1
+    votes    = 1
+  }
+}
+```
 
 ## Mongos Auto-Discovery
 

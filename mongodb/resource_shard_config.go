@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -15,8 +16,132 @@ import (
 type ResourceShardConfig struct {
 }
 
+// Create detects whether the target replica set is initialized.
+// INIT-001: If replSetGetConfig returns code 94, enter init flow.
+// INIT-002: If replSetGetConfig returns a valid config, delegate to Update.
+// INIT-015: If replSetGetConfig returns code 23, delegate to Update.
 func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	return r.Update(ctx, data, i)
+	client, cleanup, errD := r.getShardClient(ctx, data, i)
+	if errD != nil {
+		return errD
+	}
+	defer cleanup()
+
+	_, err := GetReplSetConfig(ctx, client)
+	switch {
+	case err == nil:
+		// INIT-002: Already configured, delegate to Update
+		return r.Update(ctx, data, i)
+	case IsAlreadyInitialized(err):
+		// INIT-015: Already initialized, delegate to Update
+		return r.Update(ctx, data, i)
+	case IsNotYetInitialized(err):
+		// INIT-001: Enter initialization flow
+		return r.initializeReplicaSet(ctx, data, i, client)
+	default:
+		return diag.FromErr(err)
+	}
+}
+
+// initializeReplicaSet performs a two-phase RS initialization:
+// Phase 1: replSetInitiate with a single member (INIT-007)
+// Phase 2: replSetReconfig to add remaining members (INIT-010)
+func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *schema.ResourceData, i interface{}, _ *mongo.Client) diag.Diagnostics {
+	providerConf := i.(*MongoDatabaseConfiguration)
+
+	overrides, ok := extractMemberOverrides(data)
+	if !ok || len(overrides) == 0 {
+		// INIT-003: member blocks required for initialization
+		return diag.Errorf("member blocks are required for replica set initialization")
+	}
+
+	shardName := data.Get("shard_name").(string)
+	timeout := time.Duration(data.Get("init_timeout_secs").(int)) * time.Second
+	firstHost := overrides[0].Host
+
+	host, port, err := SplitHostPort(firstHost)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("invalid first member host %q: %w", firstHost, err))
+	}
+
+	// INIT-006/017/018/022: Direct connect with auth fallback
+	initClient, initCleanup, err := ConnectForInit(ctx, providerConf.Config, host, port, providerConf.MaxConnLifetime)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	defer initCleanup()
+
+	// INIT-007: replSetInitiate with single member
+	err = InitiateReplicaSet(ctx, initClient, shardName, firstHost)
+	if err != nil {
+		if IsAlreadyInitialized(err) {
+			// INIT-015: Idempotent — fall through to Update
+			return r.Update(ctx, data, i)
+		}
+		return diag.FromErr(err)
+	}
+
+	// INIT-008/009: Wait for PRIMARY
+	if err := WaitForPrimary(ctx, initClient, timeout); err != nil {
+		return diag.FromErr(err)
+	}
+
+	// INIT-010/011/012: Add remaining members and apply settings
+	if len(overrides) > 1 {
+		config, err := GetReplSetConfig(ctx, initClient)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+
+		config.Members = BuildInitialMembers(overrides)
+		config.Version++
+
+		// INIT-012: Apply RS settings from HCL
+		config.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
+		config.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
+		config.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
+		config.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
+
+		if err := SetReplSetConfig(ctx, initClient, config); err != nil {
+			return diag.FromErr(err)
+		}
+
+		// INIT-013/014: Wait for majority healthy
+		if err := WaitForMajorityHealthy(ctx, initClient, len(overrides), timeout); err != nil {
+			return diag.FromErr(err)
+		}
+	}
+
+	// Read back final config and set Terraform state
+	finalConfig, err := GetReplSetConfig(ctx, initClient)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
+	data.SetId(finalConfig.ID)
+	if err := data.Set("shard_name", finalConfig.ID); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("chaining_allowed", finalConfig.Settings.ChainingAllowed); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_interval_millis", finalConfig.Settings.HeartbeatIntervalMillis); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("heartbeat_timeout_secs", finalConfig.Settings.HeartbeatTimeoutSecs); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := data.Set("election_timeout_millis", finalConfig.Settings.ElectionTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
+
+	managedHosts := managedHostsFromState(data)
+	memberState := RSConfigMembersToState(finalConfig.Members, managedHosts)
+	if err := data.Set("member", memberState); err != nil {
+		return diag.FromErr(err)
+	}
+
+	return nil
 }
 
 type SettingsModel struct {
@@ -481,6 +606,13 @@ func resourceShardConfig() *schema.Resource {
 						},
 					},
 				},
+			},
+			// INIT-020/021: Timeout for replica set initialization
+			"init_timeout_secs": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     DefaultInitTimeoutSecs,
+				Description: "Timeout in seconds for replica set initialization.",
 			},
 			// DISC-008: Override the shard host discovered via listShards
 			"host_override": {

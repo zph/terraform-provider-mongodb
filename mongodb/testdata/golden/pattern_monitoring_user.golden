@@ -1,0 +1,84 @@
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_metrics_exporter",
+  "privileges": [
+    {
+      "resource": {
+        "cluster": true
+      },
+      "actions": [
+        "serverStatus",
+        "replSetGetStatus"
+      ]
+    },
+    {
+      "resource": {
+        "db": "",
+        "collection": ""
+      },
+      "actions": [
+        "dbStats",
+        "collStats",
+        "indexStats"
+      ]
+    },
+    {
+      "resource": {
+        "db": "local",
+        "collection": "oplog.rs"
+      },
+      "actions": [
+        "find"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_metrics_exporter",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{}
+
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_mongodb_exporter",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_mongodb_exporter"
+}
+
+Source: TestGolden_Pattern_MonitoringUser (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_metrics_exporter"
+}

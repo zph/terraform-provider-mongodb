@@ -7,7 +7,7 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-unit test-integration test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-unit test-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
 
 OS_ARCH=linux_amd64
 #
@@ -85,6 +85,12 @@ test-shard-plan: ## Build provider and run terraform plan for shard_config examp
 	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && make build
 
 run: install ## Alias for install
+
+test-golden: ## Run golden file tests against MongoDB container
+	cd $(PROVIDER_ROOT) && go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+
+test-golden-update: ## Regenerate golden files
+	cd $(PROVIDER_ROOT) && UPDATE_GOLDEN=1 go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
 
 cdktn-build: ## Build the CDKTN construct library
 	cd $(PROVIDER_ROOT)/cdktn && go build ./...

@@ -1,0 +1,220 @@
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_app_viewer",
+  "privileges": [
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "listCollections"
+      ]
+    },
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "collStats",
+        "dbStats"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_app_viewer",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_app_editor",
+  "privileges": [
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "insert",
+        "update",
+        "remove"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "role": "golden_app_viewer",
+      "db": "admin"
+    }
+  ]
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_app_editor",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_app_admin",
+  "privileges": [
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "createIndex",
+        "dropIndex",
+        "createCollection",
+        "dropCollection"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "role": "golden_app_editor",
+      "db": "admin"
+    }
+  ]
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_app_admin",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_viewer_user",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_editor_user",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_admin_user",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_admin_user"
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_editor_user"
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_viewer_user"
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_app_admin"
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_app_editor"
+}
+
+Source: TestGolden_Pattern_RoleHierarchy (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_app_viewer"
+}

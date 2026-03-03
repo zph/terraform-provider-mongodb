@@ -14,10 +14,10 @@ func TestProviderSchemaValid(t *testing.T) {
 	}
 }
 
-// TEST-031: Provider defines exactly 4 expected resources
+// TEST-031: Provider defines exactly 5 expected resources
 func TestProviderResourceMap(t *testing.T) {
 	p := Provider()
-	expected := []string{"mongodb_db_user", "mongodb_db_role", "mongodb_shard_config", "mongodb_original_user"}
+	expected := []string{"mongodb_db_user", "mongodb_db_role", "mongodb_shard_config", "mongodb_shard", "mongodb_original_user"}
 	sort.Strings(expected)
 
 	got := make([]string, 0, len(p.ResourcesMap))

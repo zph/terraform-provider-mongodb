@@ -1,0 +1,751 @@
+//go:build integration
+
+package mongodb
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"testing"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// GOLDEN-009: WHEN a golden integration test runs, it SHALL capture all
+// MongoDB commands for the resource lifecycle and compare against a golden file.
+// GOLDEN-010: WHEN the shard config golden test runs, it SHALL normalize
+// dynamic values (ObjectIDs, host:port, version numbers) before comparison.
+
+const goldenTestFile = "mongodb/golden_test.go"
+
+// newGoldenTestClient creates a CommandRecorder tagged with the test's source
+// provenance and a mongo.Client wired to that recorder.
+func newGoldenTestClient(t *testing.T) (*mongo.Client, *CommandRecorder) {
+	t.Helper()
+
+	source := fmt.Sprintf("%s (%s)", t.Name(), goldenTestFile)
+	rec := NewCommandRecorder(source)
+
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%s/?replicaSet=%s&directConnection=true&retrywrites=false",
+		testAdminUser, testAdminPassword,
+		testMongoContainer.host, testMongoContainer.port,
+		testReplSetName)
+
+	opts := options.Client().ApplyURI(uri).SetMonitor(rec.Monitor())
+	client, err := mongo.Connect(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("connect with recorder: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("ping with recorder: %v", err)
+	}
+
+	// Reset recorder after connection handshake noise.
+	rec.Reset()
+
+	t.Cleanup(func() {
+		_ = client.Disconnect(context.Background())
+	})
+	return client, rec
+}
+
+// dropUserSafe drops a user, ignoring "not found" errors.
+func dropUserSafe(client *mongo.Client, username, database string) {
+	_ = client.Database(database).RunCommand(
+		context.Background(),
+		bson.D{{Key: "dropUser", Value: username}},
+	).Err()
+}
+
+// dropRoleSafe drops a role, ignoring "not found" errors.
+func dropRoleSafe(client *mongo.Client, roleName, database string) {
+	_ = client.Database(database).RunCommand(
+		context.Background(),
+		bson.D{{Key: "dropRole", Value: roleName}},
+	).Err()
+}
+
+// createRoleRaw creates a role using direct BSON construction to avoid the
+// omitempty bug in Resource{} where collection="" gets dropped from BSON.
+// MongoDB requires both db and collection to be present, or neither.
+func createRoleRaw(client *mongo.Client, roleName string, inheritedRoles []Role, privileges []PrivilegeDto, database string) error {
+	var privDocs bson.A
+	for _, p := range privileges {
+		var resource bson.D
+		if p.Cluster {
+			resource = bson.D{{Key: "cluster", Value: true}}
+		} else {
+			resource = bson.D{
+				{Key: "db", Value: p.Db},
+				{Key: "collection", Value: p.Collection},
+			}
+		}
+		privDocs = append(privDocs, bson.D{
+			{Key: "resource", Value: resource},
+			{Key: "actions", Value: p.Actions},
+		})
+	}
+	if privDocs == nil {
+		privDocs = bson.A{}
+	}
+
+	var roleDocs bson.A
+	for _, r := range inheritedRoles {
+		roleDocs = append(roleDocs, bson.D{
+			{Key: "role", Value: r.Role},
+			{Key: "db", Value: r.Db},
+		})
+	}
+	if roleDocs == nil {
+		roleDocs = bson.A{}
+	}
+
+	cmd := bson.D{
+		{Key: "createRole", Value: roleName},
+		{Key: "privileges", Value: privDocs},
+		{Key: "roles", Value: roleDocs},
+	}
+	result := client.Database(database).RunCommand(context.Background(), cmd)
+	return result.Err()
+}
+
+// --- Golden Tests: db_user ---
+
+// GOLDEN-011: WHEN TestGolden_DbUser_Basic runs, it SHALL capture createUser,
+// usersInfo, dropUser+createUser (update), usersInfo, dropUser commands.
+func TestGolden_DbUser_Basic(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "golden_app_db"
+
+	t.Cleanup(func() { dropUserSafe(client, "golden_app_reader", db) })
+
+	// Create
+	err := createUser(client, DbUser{Name: "golden_app_reader", Password: "testpass1"}, []Role{{Role: "read", Db: db}}, db)
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+
+	// Read
+	_, err = getUser(client, "golden_app_reader", db)
+	if err != nil {
+		t.Fatalf("getUser: %v", err)
+	}
+
+	// Update (drop + recreate with different password)
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_app_reader"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser for update: %v", result.Err())
+	}
+	err = createUser(client, DbUser{Name: "golden_app_reader", Password: "testpass2"}, []Role{{Role: "read", Db: db}}, db)
+	if err != nil {
+		t.Fatalf("createUser (update): %v", err)
+	}
+
+	// Read after update
+	_, err = getUser(client, "golden_app_reader", db)
+	if err != nil {
+		t.Fatalf("getUser after update: %v", err)
+	}
+
+	// Delete
+	result = client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_app_reader"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_user_basic.golden", rec.String())
+}
+
+func TestGolden_DbUser_CustomRole(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() {
+		dropUserSafe(client, "golden_app_user", db)
+		dropRoleSafe(client, "golden_app_readwrite_role", db)
+	})
+
+	// Create role
+	err := createRoleRaw(client, "golden_app_readwrite_role", nil, []PrivilegeDto{
+		{Db: "golden_app_db", Collection: "", Actions: []string{"find", "insert", "update", "remove"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole: %v", err)
+	}
+
+	// Read role
+	_, err = getRole(client, "golden_app_readwrite_role", db)
+	if err != nil {
+		t.Fatalf("getRole: %v", err)
+	}
+
+	// Create user with custom role + built-in role
+	err = createUser(client, DbUser{Name: "golden_app_user", Password: "testpass1"}, []Role{
+		{Role: "golden_app_readwrite_role", Db: db},
+		{Role: "read", Db: "config"},
+	}, db)
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+
+	// Read user
+	_, err = getUser(client, "golden_app_user", db)
+	if err != nil {
+		t.Fatalf("getUser: %v", err)
+	}
+
+	// Delete user
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_app_user"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	// Delete role
+	result = client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: "golden_app_readwrite_role"}})
+	if result.Err() != nil {
+		t.Fatalf("dropRole: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_user_custom_role.golden", rec.String())
+}
+
+func TestGolden_DbUser_MultipleRoles(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() { dropUserSafe(client, "golden_backend_svc", db) })
+
+	// Create user with 4 roles
+	err := createUser(client, DbUser{Name: "golden_backend_svc", Password: "testpass1"}, []Role{
+		{Role: "readWrite", Db: "orders"},
+		{Role: "readWrite", Db: "inventory"},
+		{Role: "read", Db: "analytics"},
+		{Role: "clusterMonitor", Db: db},
+	}, db)
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+
+	// Read
+	_, err = getUser(client, "golden_backend_svc", db)
+	if err != nil {
+		t.Fatalf("getUser: %v", err)
+	}
+
+	// Update (drop + recreate)
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_backend_svc"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser for update: %v", result.Err())
+	}
+	err = createUser(client, DbUser{Name: "golden_backend_svc", Password: "testpass2"}, []Role{
+		{Role: "readWrite", Db: "orders"},
+		{Role: "readWrite", Db: "inventory"},
+		{Role: "read", Db: "analytics"},
+		{Role: "clusterMonitor", Db: db},
+	}, db)
+	if err != nil {
+		t.Fatalf("createUser (update): %v", err)
+	}
+
+	// Read after update
+	_, err = getUser(client, "golden_backend_svc", db)
+	if err != nil {
+		t.Fatalf("getUser after update: %v", err)
+	}
+
+	// Delete
+	result = client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_backend_svc"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_user_multiple_roles.golden", rec.String())
+}
+
+func TestGolden_DbUser_Import(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() { dropUserSafe(client, "golden_existing_user", db) })
+
+	// Setup: pre-create the user (simulating existing user)
+	err := createUser(client, DbUser{Name: "golden_existing_user", Password: "existingpass"}, []Role{
+		{Role: "readWriteAnyDatabase", Db: db},
+	}, db)
+	if err != nil {
+		t.Fatalf("setup createUser: %v", err)
+	}
+
+	// Import read (what terraform import does)
+	_, err = getUser(client, "golden_existing_user", db)
+	if err != nil {
+		t.Fatalf("getUser (import): %v", err)
+	}
+
+	// Cleanup
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_existing_user"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_user_import.golden", rec.String())
+}
+
+// --- Golden Tests: db_role ---
+
+func TestGolden_DbRole_Basic(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() { dropRoleSafe(client, "golden_analyst_role", db) })
+
+	// Create
+	err := createRoleRaw(client, "golden_analyst_role", nil, []PrivilegeDto{
+		{Db: "analytics", Collection: "", Actions: []string{"find", "collStats", "dbStats", "listCollections"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole: %v", err)
+	}
+
+	// Read
+	_, err = getRole(client, "golden_analyst_role", db)
+	if err != nil {
+		t.Fatalf("getRole: %v", err)
+	}
+
+	// Update (drop + recreate)
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: "golden_analyst_role"}})
+	if result.Err() != nil {
+		t.Fatalf("dropRole for update: %v", result.Err())
+	}
+	err = createRoleRaw(client, "golden_analyst_role", nil, []PrivilegeDto{
+		{Db: "analytics", Collection: "", Actions: []string{"find", "collStats", "dbStats", "listCollections"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole (update): %v", err)
+	}
+
+	// Read after update
+	_, err = getRole(client, "golden_analyst_role", db)
+	if err != nil {
+		t.Fatalf("getRole after update: %v", err)
+	}
+
+	// Delete
+	result = client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: "golden_analyst_role"}})
+	if result.Err() != nil {
+		t.Fatalf("dropRole: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_role_basic.golden", rec.String())
+}
+
+func TestGolden_DbRole_ClusterPrivilege(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() { dropRoleSafe(client, "golden_failover_operator", db) })
+
+	// Create
+	err := createRoleRaw(client, "golden_failover_operator", nil, []PrivilegeDto{
+		{Cluster: true, Actions: []string{"replSetGetConfig", "replSetGetStatus", "replSetStateChange"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole: %v", err)
+	}
+
+	// Read
+	_, err = getRole(client, "golden_failover_operator", db)
+	if err != nil {
+		t.Fatalf("getRole: %v", err)
+	}
+
+	// Delete
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: "golden_failover_operator"}})
+	if result.Err() != nil {
+		t.Fatalf("dropRole: %v", result.Err())
+	}
+
+	goldenCompare(t, "db_role_cluster_privilege.golden", rec.String())
+}
+
+func TestGolden_DbRole_Composite(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() {
+		dropRoleSafe(client, "golden_admin_composite_role", db)
+		dropRoleSafe(client, "golden_custom_monitoring", db)
+		dropRoleSafe(client, "golden_custom_data_access", db)
+	})
+
+	// Create leaf role: monitoring
+	err := createRoleRaw(client, "golden_custom_monitoring", nil, []PrivilegeDto{
+		{Cluster: true, Actions: []string{"replSetGetStatus", "serverStatus"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole monitoring: %v", err)
+	}
+
+	// Read monitoring
+	_, err = getRole(client, "golden_custom_monitoring", db)
+	if err != nil {
+		t.Fatalf("getRole monitoring: %v", err)
+	}
+
+	// Create leaf role: data access
+	err = createRoleRaw(client, "golden_custom_data_access", nil, []PrivilegeDto{
+		{Db: "orders", Collection: "", Actions: []string{"find", "insert", "update", "remove", "createIndex"}},
+		{Db: "orders", Collection: "audit_log", Actions: []string{"find"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole data_access: %v", err)
+	}
+
+	// Read data access
+	_, err = getRole(client, "golden_custom_data_access", db)
+	if err != nil {
+		t.Fatalf("getRole data_access: %v", err)
+	}
+
+	// Create composite role inheriting both
+	err = createRoleRaw(client, "golden_admin_composite_role",
+		[]Role{
+			{Role: "golden_custom_monitoring", Db: db},
+			{Role: "golden_custom_data_access", Db: db},
+		},
+		[]PrivilegeDto{
+			{Db: db, Collection: "", Actions: []string{"collStats", "dbStats", "listCollections"}},
+		}, db)
+	if err != nil {
+		t.Fatalf("createRole composite: %v", err)
+	}
+
+	// Read composite
+	_, err = getRole(client, "golden_admin_composite_role", db)
+	if err != nil {
+		t.Fatalf("getRole composite: %v", err)
+	}
+
+	// Delete all (reverse dependency order)
+	for _, name := range []string{"golden_admin_composite_role", "golden_custom_data_access", "golden_custom_monitoring"} {
+		result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: name}})
+		if result.Err() != nil {
+			t.Fatalf("dropRole %s: %v", name, result.Err())
+		}
+	}
+
+	goldenCompare(t, "db_role_composite.golden", rec.String())
+}
+
+func TestGolden_DbRole_Inherited(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() {
+		dropRoleSafe(client, "golden_extended_operations", db)
+		dropRoleSafe(client, "golden_base_operations", db)
+	})
+
+	// Create base role
+	err := createRoleRaw(client, "golden_base_operations", nil, []PrivilegeDto{
+		{Db: "golden_app_db", Collection: "", Actions: []string{"find", "insert", "update"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole base: %v", err)
+	}
+
+	// Read base
+	_, err = getRole(client, "golden_base_operations", db)
+	if err != nil {
+		t.Fatalf("getRole base: %v", err)
+	}
+
+	// Create derived role
+	err = createRoleRaw(client, "golden_extended_operations",
+		[]Role{{Role: "golden_base_operations", Db: db}},
+		nil, db)
+	if err != nil {
+		t.Fatalf("createRole derived: %v", err)
+	}
+
+	// Read derived
+	_, err = getRole(client, "golden_extended_operations", db)
+	if err != nil {
+		t.Fatalf("getRole derived: %v", err)
+	}
+
+	// Delete (reverse order)
+	for _, name := range []string{"golden_extended_operations", "golden_base_operations"} {
+		result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: name}})
+		if result.Err() != nil {
+			t.Fatalf("dropRole %s: %v", name, result.Err())
+		}
+	}
+
+	goldenCompare(t, "db_role_inherited.golden", rec.String())
+}
+
+// --- Golden Tests: shard_config ---
+
+// normalizeReplSetBody replaces dynamic values in replSetReconfig/replSetGetConfig
+// output with stable placeholders for golden comparison.
+func normalizeReplSetBody(output string) string {
+	// ObjectID hex strings (24 hex chars)
+	reOID := regexp.MustCompile(`[0-9a-f]{24}`)
+	output = reOID.ReplaceAllString(output, "<OBJECT_ID>")
+
+	// host:port patterns from container (e.g., "localhost:55123" or "172.17.0.2:27017")
+	reHostPort := regexp.MustCompile(`"[a-zA-Z0-9._-]+:\d{4,5}"`)
+	output = reHostPort.ReplaceAllString(output, `"<HOST:PORT>"`)
+
+	// Version numbers in replSetReconfig
+	reVersion := regexp.MustCompile(`"version":\s*\d+`)
+	output = reVersion.ReplaceAllString(output, `"version": <VERSION>`)
+
+	// Term numbers
+	reTerm := regexp.MustCompile(`"term":\s*\d+`)
+	output = reTerm.ReplaceAllString(output, `"term": <TERM>`)
+
+	return output
+}
+
+func TestGolden_ShardConfig_Basic(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	ctx := context.Background()
+
+	// Read current config
+	_, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig: %v", err)
+	}
+
+	// Perform a settings update (simulates terraform apply)
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig for update: %v", err)
+	}
+
+	// Reset to capture only the update operations
+	rec.Reset()
+
+	config.Version++
+	config.Settings.ChainingAllowed = true
+	config.Settings.HeartbeatIntervalMillis = 1000
+	config.Settings.HeartbeatTimeoutSecs = 10
+	config.Settings.ElectionTimeoutMillis = 10000
+
+	err = SetReplSetConfig(ctx, client, config)
+	if err != nil {
+		t.Fatalf("SetReplSetConfig: %v", err)
+	}
+
+	// Read after update
+	_, err = GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after update: %v", err)
+	}
+
+	output := normalizeReplSetBody(rec.String())
+	goldenCompare(t, "shard_config_basic.golden", output)
+}
+
+func TestGolden_ShardConfig_MongosDiscovery(t *testing.T) {
+	t.Skip("mongos-discovery requires a mongos + multi-shard topology unavailable in single-node test container")
+}
+
+func TestGolden_ShardConfig_MultiShard(t *testing.T) {
+	t.Skip("multi-shard requires a mongos + multi-shard topology unavailable in single-node test container")
+}
+
+// --- Golden Tests: original_user ---
+
+func TestGolden_OriginalUser(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() { dropUserSafe(client, "golden_orig_admin", db) })
+
+	// Create (simulates original_user create — same createUser command)
+	err := createUser(client, DbUser{Name: "golden_orig_admin", Password: "origpass"}, []Role{
+		{Role: "root", Db: db},
+	}, db)
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+
+	// Read
+	_, err = getUser(client, "golden_orig_admin", db)
+	if err != nil {
+		t.Fatalf("getUser: %v", err)
+	}
+
+	// Delete
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_orig_admin"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	goldenCompare(t, "original_user.golden", rec.String())
+}
+
+// --- Golden Tests: patterns ---
+
+// GOLDEN-012: WHEN TestGolden_Pattern_MonitoringUser runs, it SHALL capture
+// the full lifecycle of a monitoring role + exporter user.
+func TestGolden_Pattern_MonitoringUser(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() {
+		dropUserSafe(client, "golden_mongodb_exporter", db)
+		dropRoleSafe(client, "golden_metrics_exporter", db)
+	})
+
+	// Create role with 3 privileges
+	err := createRoleRaw(client, "golden_metrics_exporter", nil, []PrivilegeDto{
+		{Cluster: true, Actions: []string{"serverStatus", "replSetGetStatus"}},
+		{Db: "", Collection: "", Actions: []string{"dbStats", "collStats", "indexStats"}},
+		{Db: "local", Collection: "oplog.rs", Actions: []string{"find"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole: %v", err)
+	}
+
+	// Read role
+	_, err = getRole(client, "golden_metrics_exporter", db)
+	if err != nil {
+		t.Fatalf("getRole: %v", err)
+	}
+
+	// Create user with custom + built-in role
+	err = createUser(client, DbUser{Name: "golden_mongodb_exporter", Password: "exporterpass"}, []Role{
+		{Role: "golden_metrics_exporter", Db: db},
+		{Role: "clusterMonitor", Db: db},
+	}, db)
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+
+	// Read user
+	_, err = getUser(client, "golden_mongodb_exporter", db)
+	if err != nil {
+		t.Fatalf("getUser: %v", err)
+	}
+
+	// Delete user
+	result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: "golden_mongodb_exporter"}})
+	if result.Err() != nil {
+		t.Fatalf("dropUser: %v", result.Err())
+	}
+
+	// Delete role
+	result = client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: "golden_metrics_exporter"}})
+	if result.Err() != nil {
+		t.Fatalf("dropRole: %v", result.Err())
+	}
+
+	goldenCompare(t, "pattern_monitoring_user.golden", rec.String())
+}
+
+// GOLDEN-013: WHEN TestGolden_Pattern_RoleHierarchy runs, it SHALL capture
+// the full lifecycle of a 3-tier role hierarchy with 3 users.
+func TestGolden_Pattern_RoleHierarchy(t *testing.T) {
+	client, rec := newGoldenTestClient(t)
+	db := "admin"
+
+	t.Cleanup(func() {
+		dropUserSafe(client, "golden_admin_user", db)
+		dropUserSafe(client, "golden_editor_user", db)
+		dropUserSafe(client, "golden_viewer_user", db)
+		dropRoleSafe(client, "golden_app_admin", db)
+		dropRoleSafe(client, "golden_app_editor", db)
+		dropRoleSafe(client, "golden_app_viewer", db)
+	})
+
+	// Layer 1: viewer role
+	err := createRoleRaw(client, "golden_app_viewer", nil, []PrivilegeDto{
+		{Db: "golden_app_db", Collection: "", Actions: []string{"find", "listCollections"}},
+		{Db: "golden_app_db", Collection: "", Actions: []string{"collStats", "dbStats"}},
+	}, db)
+	if err != nil {
+		t.Fatalf("createRole viewer: %v", err)
+	}
+	_, err = getRole(client, "golden_app_viewer", db)
+	if err != nil {
+		t.Fatalf("getRole viewer: %v", err)
+	}
+
+	// Layer 2: editor inherits viewer
+	err = createRoleRaw(client, "golden_app_editor",
+		[]Role{{Role: "golden_app_viewer", Db: db}},
+		[]PrivilegeDto{
+			{Db: "golden_app_db", Collection: "", Actions: []string{"insert", "update", "remove"}},
+		}, db)
+	if err != nil {
+		t.Fatalf("createRole editor: %v", err)
+	}
+	_, err = getRole(client, "golden_app_editor", db)
+	if err != nil {
+		t.Fatalf("getRole editor: %v", err)
+	}
+
+	// Layer 3: admin inherits editor
+	err = createRoleRaw(client, "golden_app_admin",
+		[]Role{{Role: "golden_app_editor", Db: db}},
+		[]PrivilegeDto{
+			{Db: "golden_app_db", Collection: "", Actions: []string{"createIndex", "dropIndex", "createCollection", "dropCollection"}},
+		}, db)
+	if err != nil {
+		t.Fatalf("createRole admin: %v", err)
+	}
+	_, err = getRole(client, "golden_app_admin", db)
+	if err != nil {
+		t.Fatalf("getRole admin: %v", err)
+	}
+
+	// Create users at each tier
+	for _, u := range []struct {
+		name string
+		role string
+	}{
+		{"golden_viewer_user", "golden_app_viewer"},
+		{"golden_editor_user", "golden_app_editor"},
+		{"golden_admin_user", "golden_app_admin"},
+	} {
+		err = createUser(client, DbUser{Name: u.name, Password: u.name + "_pass"}, []Role{
+			{Role: u.role, Db: db},
+		}, db)
+		if err != nil {
+			t.Fatalf("createUser %s: %v", u.name, err)
+		}
+		_, err = getUser(client, u.name, db)
+		if err != nil {
+			t.Fatalf("getUser %s: %v", u.name, err)
+		}
+	}
+
+	// Delete users
+	for _, name := range []string{"golden_admin_user", "golden_editor_user", "golden_viewer_user"} {
+		result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: name}})
+		if result.Err() != nil {
+			t.Fatalf("dropUser %s: %v", name, result.Err())
+		}
+	}
+
+	// Delete roles (reverse dependency order)
+	for _, name := range []string{"golden_app_admin", "golden_app_editor", "golden_app_viewer"} {
+		result := client.Database(db).RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: name}})
+		if result.Err() != nil {
+			t.Fatalf("dropRole %s: %v", name, result.Err())
+		}
+	}
+
+	goldenCompare(t, "pattern_role_hierarchy.golden", rec.String())
+}

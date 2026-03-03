@@ -1,3 +1,57 @@
+# terraform-provider-mongodb — Implementation
+
+**Last Updated:** 2026-03-03
+
+---
+
+## Provider Resources
+
+| Resource | File | Description |
+|----------|------|-------------|
+| `mongodb_db_user` | `mongodb/resource_db_user.go` | Manage MongoDB database users |
+| `mongodb_db_role` | `mongodb/resource_db_role.go` | Manage MongoDB database roles |
+| `mongodb_shard_config` | `mongodb/resource_shard_config.go` | Configure replica set settings and initialize uninitialized RS |
+| `mongodb_shard` | `mongodb/resource_shard.go` | Add/remove shards from a mongos router |
+| `mongodb_original_user` | `mongodb/resource_original_user.go` | Bootstrap the initial admin user |
+
+## Provider Key Files
+
+| File | Purpose |
+|------|---------|
+| `mongodb/provider.go` | Provider schema, resource registration, configuration |
+| `mongodb/config.go` | Client configuration, connection, TLS, proxy |
+| `mongodb/replica_set_types.go` | RS config types, `GetReplSetConfig`, `SetReplSetConfig`, `GetReplSetStatus` |
+| `mongodb/shard_discovery.go` | Connection type detection, `ListShards`, `ResolveShardClient` |
+| `mongodb/shard_init.go` | RS initialization: `IsNotYetInitialized`, `IsAlreadyInitialized`, `BuildInitialMembers`, `InitiateReplicaSet`, `WaitForPrimary`, `WaitForMajorityHealthy`, `ConnectForInit` |
+| `mongodb/resource_shard.go` | `mongodb_shard` resource: `addShard`, `removeShard` with polling |
+| `mongodb/resource_shard_config.go` | `mongodb_shard_config` resource: RS config + initialization flow |
+
+## EARS Specifications
+
+| Spec | File | ID Range |
+|------|------|----------|
+| Shard Config | `docs/specs/` (inline in code) | SHARD-001 through SHARD-011 |
+| Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
+| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
+| Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
+| Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-018 |
+| Command Logging | (inline in code) | LOG-001 through LOG-004 |
+
+## Test Files
+
+| File | Tests | Build Tag |
+|------|-------|-----------|
+| `mongodb/shard_init_test.go` | INIT-T01..T12 (12 tests) | none |
+| `mongodb/resource_shard_test.go` | CLUS-T01..T06 (6 tests) | none |
+| `mongodb/resource_shard_config_test.go` | SHARD-T01..T13 (15 tests) | none |
+| `mongodb/shard_discovery_test.go` | DISC tests | none |
+| `mongodb/replica_set_types_test.go` | RS type tests | none |
+| `mongodb/config_test.go` | Config tests | none |
+| `mongodb/golden_test.go` | Golden file tests | integration |
+| `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
+
+---
+
 # CDKTN Sharded MongoDB Cluster Construct Library — Implementation
 
 **Status:** Core implementation complete. Tests passing. Integration and E2E tests pending.
@@ -232,6 +286,8 @@ All commands run from the repository root. Terraform is managed via [Hermit](htt
 | `make cdktn-build` | Build the construct library (`go build ./...` in `cdktn/`) |
 | `make cdktn-test` | Run unit tests (`go test ./...` in `cdktn/`) |
 | `make cdktn-test-golden` | Regenerate golden files (`UPDATE_GOLDEN=1 go test ./...`) |
+| `make test-golden` | Run golden file tests against MongoDB container |
+| `make test-golden-update` | Regenerate provider golden files |
 | `make test` | Run all tests: unit + cdktn + terraform plan |
 | `make help` | Show all Makefile targets |
 
@@ -261,6 +317,66 @@ Tests live in `cdktn/*_test.go` (package `cdktn`, same package — white-box acc
 **Golden files** (`testdata/*.json`) are committed JSON snapshots of known-good synthesis output. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
 
 **Integration and E2E tests are not yet implemented** (CDKTN-044, CDKTN-045).
+
+---
+
+## Golden File Testing Engine
+
+The provider includes a golden file testing engine that captures deterministic snapshots of all MongoDB commands sent during each example's resource lifecycle (Create, Read, Update, Delete). Golden files are stored in `mongodb/testdata/golden/` as human-readable audit trails.
+
+### Architecture
+
+| File | Purpose |
+|------|---------|
+| `mongodb/command_recorder_test.go` | `CommandRecorder` type + unit tests (no build tag) |
+| `mongodb/golden_compare_test.go` | `goldenCompare` helper (integration tag) |
+| `mongodb/golden_test.go` | All golden integration tests (integration tag) |
+| `mongodb/testdata/golden/*.golden` | Auto-generated golden files |
+| `docs/specs/golden-test-requirements.md` | EARS specification (GOLDEN-001 through GOLDEN-018) |
+
+### CommandRecorder
+
+`CommandRecorder` hooks into the MongoDB driver's `event.CommandMonitor` to capture commands:
+
+- **Filters** noise commands: `hello`, `saslStart`, `saslContinue`, `ping`, `endSessions`, `isMaster`, `ismaster`, `buildInfo`, `getFreeMonitoringStatus`, `getLog`
+- **Strips** driver-injected metadata: `$db`, `$readPreference`, `lsid`, `$clusterTime`
+- **Redacts** password fields: `pwd` values become `[REDACTED]`
+- **Output format**: deterministic multi-line string with `Source:` (test name + file), `Command:`, `Database:`, and `Body:` sections
+
+### Golden Files
+
+Each test captures commands for one example configuration's lifecycle and compares against a committed `.golden` file:
+
+- `db_user_basic.golden` — single user with one role (CRUD)
+- `db_user_custom_role.golden` — custom role + user (create + delete)
+- `db_user_multiple_roles.golden` — user with 4 roles (CRUD)
+- `db_user_import.golden` — import existing user
+- `db_role_basic.golden` — single privilege role (CRUD)
+- `db_role_cluster_privilege.golden` — cluster-level privilege
+- `db_role_composite.golden` — 3 roles with inheritance
+- `db_role_inherited.golden` — base + derived role
+- `shard_config_basic.golden` — replSetReconfig + read (normalized)
+- `original_user.golden` — bootstrap admin user
+- `pattern_monitoring_user.golden` — monitoring role + exporter user
+- `pattern_role_hierarchy.golden` — 3-tier role hierarchy with 3 users
+
+### Shard Config Normalization
+
+Shard config output contains dynamic values (ObjectIDs, container-assigned host:port, version numbers). `normalizeReplSetBody()` replaces these with stable placeholders before golden comparison.
+
+### Usage
+
+```bash
+# Run golden tests (requires Docker)
+make test-golden
+
+# Regenerate golden files after intentional changes
+make test-golden-update
+```
+
+### Skipped Tests
+
+`TestGolden_ShardConfig_MongosDiscovery` and `TestGolden_ShardConfig_MultiShard` are skipped because they require a mongos + multi-shard topology unavailable in the single-node test container.
 
 ---
 

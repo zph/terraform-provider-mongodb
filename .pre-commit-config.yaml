@@ -8,9 +8,9 @@ repos:
   - repo: builtin
     hooks:
       - id: trailing-whitespace
-        exclude: '^cdktn/testdata/'
+        exclude: '^(cdktn|mongodb)/testdata/'
       - id: end-of-file-fixer
-        exclude: '^cdktn/testdata/'
+        exclude: '^(cdktn|mongodb)/testdata/'
       - id: check-added-large-files
         args: ['--maxkb=500']
       - id: check-yaml
@@ -67,6 +67,23 @@ repos:
         entry: bash -c 'cd cdktn && go test ./...'
         files: '^cdktn/.*\.go$'
         pass_filenames: false
+
+      # Integration tests (require Docker via testcontainers)
+      - id: integration-test
+        name: integration test
+        language: system
+        entry: go test -tags integration -v -timeout 300s ./mongodb/
+        files: '^mongodb/.*\.go$'
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: golden-test
+        name: golden test
+        language: system
+        entry: go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+        files: '^mongodb/.*\.go$'
+        pass_filenames: false
+        stages: [pre-push]
 
   # Terraform: formatting
   - repo: local
