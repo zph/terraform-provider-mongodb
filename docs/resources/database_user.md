@@ -53,7 +53,7 @@ resource "mongodb_db_user" "user_with_custom role" {
 * `role` - (optional) List of user’s roles and the databases / collections on which the roles apply. A role allows the user to perform particular actions on the specified database. A role on the admin database can include privileges that apply to the other databases as well. See [Role](#role) below for more details.
 
 * `name` - (Required) Username for authenticating to MongoDB.
-* `password` - (Required) User's initial password. A value is required to create the database user, however the argument but may be removed from your Terraform configuration after user creation without impacting the user, password or Terraform management. 
+* `password` - (Required) User's initial password. A value is required to create the database user, however the argument but may be removed from your Terraform configuration after user creation without impacting the user, password or Terraform management.
 
 ~> **IMPORTANT:** --- Passwords may show up in Terraform related logs and it will be stored in the Terraform state file as plain-text. Password can be changed after creation using your preferred method, e.g. via the MongoDB Shell, to ensure security.  If you do change management of the password to outside of Terraform be sure to remove the argument from the Terraform configuration so it is not inadvertently updated to the original password.
 
@@ -65,7 +65,7 @@ Block mapping a user's role to a database / collection. A role allows the user t
 
 * `role` - (Required) Name of the role to grant. See [Create a Database User](https://docs.mongodb.com/manual/reference/method/db.createUser/#create-administrative-user-with-roles) `roles`.
 
--> **NOTE:** you can also use [built-in-roles](https://docs.mongodb.com/manual/reference/built-in-roles/index.html) 
+-> **NOTE:** you can also use [built-in-roles](https://docs.mongodb.com/manual/reference/built-in-roles/index.html)
 * `db`   - (Required) Database on which the user has the specified role. A role on the `admin` database can include privileges that apply to the other databases.
 
 
@@ -76,7 +76,7 @@ Mongodb users can be imported using the hex encoded id, e.g. for a user named `u
 
 ```sh
 $ printf '%s' "test_db.user_test" | base64
-## this is the output of the command above it will encode db.username to HEX 
+## this is the output of the command above it will encode db.username to HEX
 dGVzdF9kYi51c2VyX3Rlc3Q=
 
 $ terraform import mongodb_db_user.example_user  dGVzdF9kYi51c2VyX3Rlc3Q=

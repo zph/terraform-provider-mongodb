@@ -23,9 +23,9 @@ func TestResourceDatabaseRoleParseId_Valid(t *testing.T) {
 // TEST-006: Invalid inputs return errors
 func TestResourceDatabaseRoleParseId_InvalidInputs(t *testing.T) {
 	cases := []struct {
-		name  string
-		id    string
-		raw   bool // if true, use id directly; if false, base64 encode it
+		name string
+		id   string
+		raw  bool // if true, use id directly; if false, base64 encode it
 	}{
 		{"invalid base64", "not-valid!@#", true},
 		{"no separator", "nodotshere", false},

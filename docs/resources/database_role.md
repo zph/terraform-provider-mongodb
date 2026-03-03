@@ -66,9 +66,9 @@ Each object in the privilege array represents an individual privilege action gra
 * `actions` - (Required) Array of the privilege action. For a complete list of actions available , see [Custom Role Actions](https://docs.mongodb.com/manual/reference/privilege-actions/)
 -> **Note**: The privilege actions available to the Custom Roles API resource represent a subset of the privilege actions available in the MongoDB Custom Roles UI.
 * `db`	Database on which the action is granted.
-* `collection` - (Optional) Collection on which the action is granted. 
+* `collection` - (Optional) Collection on which the action is granted.
 -> **Note**: If collection value is an empty string, the actions are granted on all collections within the database specified in the privilege.db field.
-             
+
 ### Inherited Roles
 Each object in the inheritedRoles array represents a key-value pair indicating the inherited role and the database on which the role is granted. It is an optional field.
 
@@ -87,7 +87,7 @@ Mongodb users can be imported using the hex encoded id, e.g. for a user named `u
 
 ```sh
 $ printf '%s' "test_db.role_test"  | base64
-## this is the output of the command above it will encode db.rolename to HEX 
+## this is the output of the command above it will encode db.rolename to HEX
 dGVzdF9kYi5yb2xlX3Rlc3Q=
 
 $ terraform import mongodb_db_role.example_role  dGVzdF9kYi5yb2xlX3Rlc3Q=

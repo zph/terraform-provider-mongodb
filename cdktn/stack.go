@@ -18,9 +18,9 @@ type TerraformStack struct {
 
 // ProviderBlock represents a single Terraform provider alias configuration.
 type ProviderBlock struct {
-	Alias    string
-	Config   map[string]interface{}
-	sortKey  string // deterministic ordering key
+	Alias   string
+	Config  map[string]interface{}
+	sortKey string // deterministic ordering key
 }
 
 // ResourceBlock represents a single Terraform resource instance.
