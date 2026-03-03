@@ -50,8 +50,9 @@ dev-overrides: ## Configure Terraform dev_overrides for local provider builds
 		echo "Added dev_overrides to $(TERRAFORMRC)"; \
 	fi
 
-build: ## Build the provider binary
-	cd $(PROVIDER_ROOT) && go build -ldflags "$(LDFLAGS)" -o terraform-provider-${NAME}
+build: ## Build the provider binary and install to plugins directory
+	mkdir -p ${TERRAFORM_PLUGINS_DIRECTORY}
+	cd $(PROVIDER_ROOT) && go build -ldflags "$(LDFLAGS)" -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
 
 install: ## Build and install provider to Terraform plugins directory
 	mkdir -p ${TERRAFORM_PLUGINS_DIRECTORY}

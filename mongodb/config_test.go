@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // TEST-009: addArgs with empty arguments prepends "/?"
@@ -154,6 +156,77 @@ func TestPrivilegeDtoClusterOmitsDbCollection(t *testing.T) {
 	}
 	if strings.Contains(jsonStr, `"collection"`) {
 		t.Errorf("expected 'collection' to be omitted, got: %s", jsonStr)
+	}
+}
+
+// TEST-064: buildPrivilegeDocs includes both db and collection when collection is empty string.
+// Regression test: MongoDB rejects privileges with only one of db/collection set.
+// The old code used JSON omitempty which dropped collection="" from the BSON.
+func TestBuildPrivilegeDocs_EmptyCollectionIncluded(t *testing.T) {
+	privs := []PrivilegeDto{
+		{Db: "orders", Collection: "", Actions: []string{"find", "insert"}},
+	}
+	docs, err := buildPrivilegeDocs("test_role", privs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 privilege doc, got %d", len(docs))
+	}
+	privDoc := docs[0].(bson.D)
+	resource := privDoc[0].Value.(bson.D)
+
+	var hasDb, hasCollection bool
+	for _, elem := range resource {
+		if elem.Key == "db" {
+			hasDb = true
+			if elem.Value != "orders" {
+				t.Errorf("expected db='orders', got %v", elem.Value)
+			}
+		}
+		if elem.Key == "collection" {
+			hasCollection = true
+			if elem.Value != "" {
+				t.Errorf("expected collection='', got %v", elem.Value)
+			}
+		}
+	}
+	if !hasDb {
+		t.Error("resource document missing 'db' key")
+	}
+	if !hasCollection {
+		t.Error("resource document missing 'collection' key — MongoDB requires both db and collection")
+	}
+}
+
+// TEST-065: buildPrivilegeDocs with cluster=true omits db and collection.
+func TestBuildPrivilegeDocs_ClusterOmitsDbCollection(t *testing.T) {
+	privs := []PrivilegeDto{
+		{Cluster: true, Actions: []string{"serverStatus"}},
+	}
+	docs, err := buildPrivilegeDocs("test_role", privs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resource := docs[0].(bson.D)[0].Value.(bson.D)
+	for _, elem := range resource {
+		if elem.Key == "db" || elem.Key == "collection" {
+			t.Errorf("cluster privilege should not have %q key", elem.Key)
+		}
+	}
+	if resource[0].Key != "cluster" || resource[0].Value != true {
+		t.Errorf("expected {cluster: true}, got %v", resource)
+	}
+}
+
+// TEST-066: buildPrivilegeDocs rejects db + cluster=true combination.
+func TestBuildPrivilegeDocs_RejectsDbWithCluster(t *testing.T) {
+	privs := []PrivilegeDto{
+		{Db: "orders", Cluster: true, Actions: []string{"find"}},
+	}
+	_, err := buildPrivilegeDocs("test_role", privs)
+	if err == nil {
+		t.Fatal("expected error for db + cluster=true, got nil")
 	}
 }
 

@@ -282,39 +282,51 @@ func getRole(client *mongo.Client, roleName string, database string) (SingleResu
 	return decodedResult, nil
 }
 
-func createRole(client *mongo.Client, role string, roles []Role, privilege []PrivilegeDto, database string) error {
-	var privileges []Privilege
-	var result *mongo.SingleResult
-	for _, element := range privilege {
-		var prv Privilege
+// buildPrivilegeDocs converts PrivilegeDto slices into explicit BSON documents
+// so that db+collection are both present when non-cluster. MongoDB requires
+// "resource must set both db and collection or neither"; omitempty would drop
+// collection="".
+func buildPrivilegeDocs(roleName string, privileges []PrivilegeDto) (bson.A, error) {
+	var docs bson.A
+	for _, element := range privileges {
 		if element.Db != "" && element.Cluster {
-			return fmt.Errorf("can't create a role that specifies both a db and a cluster=true: role %s", role)
+			return nil, fmt.Errorf("can't create a role that specifies both a db and a cluster=true: role %s", roleName)
 		}
+		var resource bson.D
+		if element.Cluster {
+			resource = bson.D{{Key: "cluster", Value: true}}
+		} else {
+			resource = bson.D{
+				{Key: "db", Value: element.Db},
+				{Key: "collection", Value: element.Collection},
+			}
+		}
+		docs = append(docs, bson.D{
+			{Key: "resource", Value: resource},
+			{Key: "actions", Value: element.Actions},
+		})
+	}
+	return docs, nil
+}
 
-		prv.Resource = Resource{
-			Db:         element.Db,
-			Collection: element.Collection,
-			Cluster:    element.Cluster,
-		}
-		prv.Actions = element.Actions
-		privileges = append(privileges, prv)
+func createRole(client *mongo.Client, role string, roles []Role, privilege []PrivilegeDto, database string) error {
+	privDocs, err := buildPrivilegeDocs(role, privilege)
+	if err != nil {
+		return err
 	}
 	var rolesValue any
-	var privelegesValue any
-
 	if len(roles) != 0 {
 		rolesValue = roles
 	} else {
 		rolesValue = []bson.M{}
 	}
-	if len(privileges) != 0 {
-		privelegesValue = privileges
-	} else {
-		privelegesValue = []bson.M{}
+	privValue := any(privDocs)
+	if len(privDocs) == 0 {
+		privValue = []bson.M{}
 	}
 
-	result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-		{Key: "privileges", Value: privelegesValue}, {Key: "roles", Value: rolesValue}})
+	result := client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
+		{Key: "privileges", Value: privValue}, {Key: "roles", Value: rolesValue}})
 
 	if result.Err() != nil {
 		return result.Err()
