@@ -2,7 +2,7 @@ terraform {
   required_providers {
     mongodb = {
       source  = "zph/mongodb"
-      version = "~> 0.3"
+      version = "9.9.9"
     }
   }
 }
