@@ -77,6 +77,18 @@ resource "mongodb_shard_config" "shard01" {
 * `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election and majority health). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
 
+### Member
+
+Each `member` block configures an individual replica set member. Members are assigned `_id` values in order (starting at 0).
+
+* `host` - (Required) `host:port` address of the replica set member.
+* `arbiter_only` - (Optional) Whether the member is an arbiter. Default: `false`.
+* `build_indexes` - (Optional) Whether the member builds indexes. Default: `true`.
+* `hidden` - (Optional) Whether the member is hidden from client connections. Default: `false`.
+* `priority` - (Optional) Election priority. `0` means the member can never become primary. Default: `1`.
+* `tags` - (Optional) Map of string key-value pairs for replica set tags.
+* `votes` - (Optional) Number of votes the member has in elections (`0` or `1`). Default: `1`.
+
 ## Replica Set Initialization
 
 When the target replica set has not yet been initialized (MongoDB returns error code 94 — `NotYetInitialized`), the resource automatically handles initialization:
@@ -134,13 +146,10 @@ If the provider is already connected directly to a replica set member, no discov
 
 ## Import
 
-MongoDB shard configs can be imported using the base64-encoded shard name:
+MongoDB shard configs can be imported using the shard name directly:
 
 ```sh
-$ printf '%s' "shard01" | base64
-c2hhcmQwMQ==
-
-$ terraform import mongodb_shard_config.shard01 c2hhcmQwMQ==
+$ terraform import mongodb_shard_config.shard01 shard01
 ```
 
 ## Known Limitations

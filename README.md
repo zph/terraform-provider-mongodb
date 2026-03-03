@@ -8,13 +8,48 @@ This repository is a Terraform MongoDB provider for [Terraform](https://www.terr
 
 ### Why no MongoDB Atlas support?
 
-This provider targets self-hosted MongoDB. We don't support MongoDB Atlas because we don't believe in fear-based extortion as a software engineering business model. If you need Atlas support, MongoDB has their own provider — best of luck with that.
+This provider targets self-hosted MongoDB. We don't support MongoDB Atlas because we don't believe in fear-based extortion as a software engineering business model. If you need Atlas support, MongoDB has their own provider — best of luck with that. If you're paying them hundreds of thousands and want relief, ping me.
 
 ### Why no Amazon DocumentDB support?
 
 DocumentDB shipped with a single-writer architecture for its first years of existence. We judge that decision harshly and don't support it here.
 
-### CDKTN Construct Library
+## Resources
+
+| Resource | Maturity | Description |
+|----------|----------|-------------|
+| [`mongodb_db_user`](docs/resources/database_user.md) | Stable | Manage MongoDB database users |
+| [`mongodb_db_role`](docs/resources/database_role.md) | Stable | Manage custom MongoDB roles with privileges and inheritance |
+| [`mongodb_original_user`](docs/resources/original_user.md) | Stable | Bootstrap the initial admin user on a no-auth instance |
+| [`mongodb_shard_config`](docs/resources/shard_config.md) | Experimental | Configure replica set settings, initialize replica sets, manage members |
+| [`mongodb_shard`](docs/resources/shard.md) | Experimental | Add/remove shards from a mongos router |
+
+Experimental resources require opt-in via environment variable:
+
+```bash
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
+```
+
+## Provider Configuration
+
+```hcl
+provider "mongodb" {
+  host               = "127.0.0.1"     # MONGO_HOST
+  port               = "27017"         # MONGO_PORT
+  username           = "admin"         # MONGO_USR
+  password           = var.password    # MONGO_PWD
+  auth_database      = "admin"
+  ssl                = false
+  certificate        = ""              # MONGODB_CERT
+  insecure_skip_verify = false
+  replica_set        = ""
+  direct             = false
+  retrywrites        = true
+  proxy              = ""              # ALL_PROXY / all_proxy (socks5)
+}
+```
+
+## CDKTN Construct Library
 
 The [`cdktn/`](cdktn/) directory contains a Go construct library for generating Terraform JSON
 configs for sharded MongoDB clusters. Instead of hand-writing provider aliases and resources for
@@ -22,65 +57,57 @@ every node, define your cluster topology in Go and synthesize deterministic Terr
 
 See [`cdktn/README.md`](cdktn/README.md) for usage examples and API documentation.
 
-### Requirements
+## Requirements
 
 - [Terraform](https://www.terraform.io/downloads.html) >= 1.7.5
 - [Go](https://golang.org/doc/install) >= 1.17
 
-### Installation
+## Installation
 
-1. Clone the repository
-1. Enter the repository directory
-1. Build the provider using the `make install` command:
-
-````bash
+```bash
 git clone https://github.com/zph/terraform-provider-mongodb
 cd terraform-provider-mongodb
 make install
-````
+```
 
-### To test locally
+## Local Development
 
-**1.1: create mongo image  with ssl**
+Use [MUP](https://github.com/zph/mup) to spin up local MongoDB clusters for development and testing:
 
+```bash
+# Start a local MongoDB cluster (playground mode)
+mup playground start
 
-````bash
-cd docker/docker-mongo-ssl
-docker build -t mongo-local .
-````
-**1.2: create ssl for localhost**
+# Start with a specific version
+mup playground start --version 8.0
 
+# Check cluster status
+mup playground status
 
-*follow the instruction in this link*
+# Connect to the cluster
+mup playground connect
 
-https://ritesh-yadav.github.io/tech/getting-valid-ssl-certificate-for-localhost-from-letsencrypt/
+# Stop the cluster
+mup playground stop
 
+# Destroy the cluster
+mup playground destroy
+```
 
-````bash
-nano /etc/hosts
-127.0.0.1   kaginar.herokuapp.com   ### add this line
-````
+MUP supports standalone, replica set, and sharded cluster topologies. See the [MUP README](https://github.com/zph/mup) for full documentation.
 
+### Running Tests
 
-**1.3: start the docker-compose**
-````bash
-cd docker
-docker-compose up -d
-````
-**1.4 : create admin user in mongo**
+```bash
+# Unit tests
+make test
 
-````bash
-$ docker exec -it mongo -c mongo
-> use admin
-> db.createUser({ user: "root" , pwd: "root", roles: ["userAdminAnyDatabase", "dbAdminAnyDatabase", "readWriteAnyDatabase"]})
-````
-**2: Build the provider**
+# Golden file tests (requires Docker)
+make test-golden
 
-follow the [Installation](#Installation)
+# Sharded integration tests (requires Docker)
+make test-sharded-integration
 
-**3: Use the provider**
-
-````bash
-cd mongodb
-make apply
-````
+# All available targets
+make help
+```

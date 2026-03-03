@@ -14,6 +14,18 @@
 | `mongodb_shard_config` | `mongodb/resource_shard_config.go` | experimental | Configure replica set settings and initialize uninitialized RS |
 | `mongodb_shard` | `mongodb/resource_shard.go` | experimental | Add/remove shards from a mongos router |
 
+### Resource Documentation
+
+Resource documentation is maintained in `docs/resources/`:
+
+| Resource | Doc File |
+|----------|----------|
+| `mongodb_db_user` | [`docs/resources/database_user.md`](resources/database_user.md) |
+| `mongodb_db_role` | [`docs/resources/database_role.md`](resources/database_role.md) |
+| `mongodb_original_user` | [`docs/resources/original_user.md`](resources/original_user.md) |
+| `mongodb_shard_config` | [`docs/resources/shard_config.md`](resources/shard_config.md) |
+| `mongodb_shard` | [`docs/resources/shard.md`](resources/shard.md) |
+
 ### Resource Capability Gating
 
 Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
