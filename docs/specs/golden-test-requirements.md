@@ -51,3 +51,11 @@ GOLDEN-016: WHEN normalizeReplSetBody processes output, it SHALL replace ObjectI
 GOLDEN-017: WHEN normalizeReplSetBody processes output, it SHALL replace host:port patterns with \<HOST:PORT\>.
 
 GOLDEN-018: WHEN normalizeReplSetBody processes output, it SHALL replace version and term numbers with \<VERSION\> and \<TERM\> placeholders.
+
+## Sharded Golden Tests
+
+GOLDEN-019: WHEN normalizeShardedBody processes output, it SHALL normalize shard host strings with \<SHARD_HOST\> and shard state values with \<SHARD_STATE\>, in addition to all replSetBody normalizations.
+
+GOLDEN-020: WHEN TestGolden_ShardConfig_MongosDiscovery runs, it SHALL capture listShards via mongos, then replSetGetConfig, replSetReconfig, replSetGetConfig on a shard, and compare against a golden file with sharded normalization.
+
+GOLDEN-021: WHEN TestGolden_ShardConfig_MultiShard runs, it SHALL capture listShards via mongos, then independent replSetGetConfig on both shard01 and shard02, and compare against a golden file with sharded normalization.

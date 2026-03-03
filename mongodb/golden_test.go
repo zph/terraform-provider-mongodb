@@ -516,6 +516,79 @@ func normalizeReplSetBody(output string) string {
 	return output
 }
 
+// GOLDEN-019: WHEN normalizeShardedBody processes output, it SHALL normalize
+// shard host strings (e.g. "shard01/host:port") with <SHARD_HOST> and shard
+// state values with <SHARD_STATE>, in addition to all replSetBody normalizations.
+func normalizeShardedBody(output string) string {
+	output = normalizeReplSetBody(output)
+
+	// Shard host strings like "shard01/shard01svr0:27018" or "shard02/shard02svr0:27018"
+	reShardHost := regexp.MustCompile(`"[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+:\d{4,5}"`)
+	output = reShardHost.ReplaceAllString(output, `"<SHARD_HOST>"`)
+
+	// Shard state field (integer, typically 1)
+	reShardState := regexp.MustCompile(`"state":\s*\d+`)
+	output = reShardState.ReplaceAllString(output, `"state": <SHARD_STATE>`)
+
+	return output
+}
+
+// newGoldenMongosClient creates a CommandRecorder-wired client for the mongos
+// router. Handshake noise (hello, saslStart, etc.) is already filtered by the
+// recorder, so no reset is needed here. Tests manage rec.Reset() explicitly.
+func newGoldenMongosClient(t *testing.T, rec *CommandRecorder) *mongo.Client {
+	t.Helper()
+
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%s/?retrywrites=false",
+		shardedAdminUser, shardedAdminPassword,
+		shardedCluster.mongosHost, shardedCluster.mongosPort)
+
+	opts := options.Client().ApplyURI(uri).SetMonitor(rec.Monitor())
+	client, err := mongo.Connect(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("connect to mongos with recorder: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("ping mongos with recorder: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = client.Disconnect(context.Background())
+	})
+	return client
+}
+
+// newGoldenShardedClient creates a CommandRecorder-wired direct client for a
+// shard. Handshake noise is already filtered by the recorder, so no reset is
+// needed here. Tests manage rec.Reset() explicitly.
+func newGoldenShardedClient(t *testing.T, rec *CommandRecorder, host, port, rsName string) *mongo.Client {
+	t.Helper()
+
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%s/?replicaSet=%s&directConnection=true&retrywrites=false",
+		shardedAdminUser, shardedAdminPassword,
+		host, port, rsName)
+
+	opts := options.Client().ApplyURI(uri).SetMonitor(rec.Monitor())
+	client, err := mongo.Connect(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("connect to shard %s with recorder: %v", rsName, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("ping shard %s with recorder: %v", rsName, err)
+	}
+
+	t.Cleanup(func() {
+		_ = client.Disconnect(context.Background())
+	})
+	return client
+}
+
 func TestGolden_ShardConfig_Basic(t *testing.T) {
 	client, rec := newGoldenTestClient(t)
 	ctx := context.Background()
@@ -556,12 +629,94 @@ func TestGolden_ShardConfig_Basic(t *testing.T) {
 	goldenCompare(t, "shard_config_basic.golden", output)
 }
 
+// GOLDEN-020: WHEN TestGolden_ShardConfig_MongosDiscovery runs, it SHALL capture
+// listShards via mongos, then replSetGetConfig, replSetReconfig, replSetGetConfig
+// on a shard, and compare against a golden file with sharded normalization.
 func TestGolden_ShardConfig_MongosDiscovery(t *testing.T) {
-	t.Skip("mongos-discovery requires a mongos + multi-shard topology unavailable in single-node test container")
+	ensureShardedCluster(t)
+
+	source := fmt.Sprintf("%s (%s)", t.Name(), goldenTestFile)
+	rec := NewCommandRecorder(source)
+	ctx := context.Background()
+
+	// Step 1: discover shards via mongos
+	mongosClient := newGoldenMongosClient(t, rec)
+
+	_, err := ListShards(ctx, mongosClient)
+	if err != nil {
+		t.Fatalf("ListShards: %v", err)
+	}
+
+	// Reset — golden file only captures shard RS operations
+	rec.Reset()
+
+	// Step 2: direct shard operations on shard01
+	shard01Client := newGoldenShardedClient(t, rec,
+		shardedCluster.shard01Host, shardedCluster.shard01Port, "shard01")
+
+	config, err := GetReplSetConfig(ctx, shard01Client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig: %v", err)
+	}
+
+	config.Version++
+	config.Settings.ChainingAllowed = true
+	config.Settings.HeartbeatIntervalMillis = 1000
+	config.Settings.HeartbeatTimeoutSecs = 10
+	config.Settings.ElectionTimeoutMillis = 10000
+
+	err = SetReplSetConfig(ctx, shard01Client, config)
+	if err != nil {
+		t.Fatalf("SetReplSetConfig: %v", err)
+	}
+
+	_, err = GetReplSetConfig(ctx, shard01Client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after update: %v", err)
+	}
+
+	output := normalizeShardedBody(rec.String())
+	goldenCompare(t, "shard_config_mongos_discovery.golden", output)
 }
 
+// GOLDEN-021: WHEN TestGolden_ShardConfig_MultiShard runs, it SHALL capture
+// listShards via mongos, then independent replSetGetConfig on both shard01 and
+// shard02, and compare against a golden file with sharded normalization.
 func TestGolden_ShardConfig_MultiShard(t *testing.T) {
-	t.Skip("multi-shard requires a mongos + multi-shard topology unavailable in single-node test container")
+	ensureShardedCluster(t)
+
+	source := fmt.Sprintf("%s (%s)", t.Name(), goldenTestFile)
+	rec := NewCommandRecorder(source)
+	ctx := context.Background()
+
+	// Step 1: discover shards via mongos
+	mongosClient := newGoldenMongosClient(t, rec)
+
+	_, err := ListShards(ctx, mongosClient)
+	if err != nil {
+		t.Fatalf("ListShards: %v", err)
+	}
+
+	// Step 2: read config from shard01
+	shard01Client := newGoldenShardedClient(t, rec,
+		shardedCluster.shard01Host, shardedCluster.shard01Port, "shard01")
+
+	_, err = GetReplSetConfig(ctx, shard01Client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig shard01: %v", err)
+	}
+
+	// Step 3: read config from shard02
+	shard02Client := newGoldenShardedClient(t, rec,
+		shardedCluster.shard02Host, shardedCluster.shard02Port, "shard02")
+
+	_, err = GetReplSetConfig(ctx, shard02Client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig shard02: %v", err)
+	}
+
+	output := normalizeShardedBody(rec.String())
+	goldenCompare(t, "shard_config_multi_shard.golden", output)
 }
 
 // --- Golden Tests: original_user ---

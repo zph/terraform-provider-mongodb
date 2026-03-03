@@ -34,7 +34,7 @@
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
 | Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
-| Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-018 |
+| Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-021 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
@@ -358,6 +358,8 @@ Each test captures commands for one example configuration's lifecycle and compar
 - `db_role_composite.golden` — 3 roles with inheritance
 - `db_role_inherited.golden` — base + derived role
 - `shard_config_basic.golden` — replSetReconfig + read (normalized)
+- `shard_config_mongos_discovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
+- `shard_config_multi_shard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
 - `original_user.golden` — bootstrap admin user
 - `pattern_monitoring_user.golden` — monitoring role + exporter user
 - `pattern_role_hierarchy.golden` — 3-tier role hierarchy with 3 users
@@ -376,9 +378,9 @@ make test-golden
 make test-golden-update
 ```
 
-### Skipped Tests
+### Sharded Golden Tests
 
-`TestGolden_ShardConfig_MongosDiscovery` and `TestGolden_ShardConfig_MultiShard` are skipped because they require a mongos + multi-shard topology unavailable in the single-node test container.
+`TestGolden_ShardConfig_MongosDiscovery` and `TestGolden_ShardConfig_MultiShard` require a mongos + multi-shard topology and run as part of `make test-sharded-integration`. They use `normalizeShardedBody` which extends `normalizeReplSetBody` with shard host string and state normalization.
 
 ---
 
