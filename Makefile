@@ -26,7 +26,9 @@ endif
 HOSTNAME=registry.terraform.io
 NAMESPACE=zph
 NAME=mongodb
-VERSION=9.9.9
+VERSION=$(shell cat $(PROVIDER_ROOT)/VERSION | tr -d '[:space:]')
+COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+LDFLAGS=-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 ## on linux base os
 TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
 TERRAFORMRC=$(HOME)/.terraformrc
@@ -49,16 +51,16 @@ dev-overrides: ## Configure Terraform dev_overrides for local provider builds
 	fi
 
 build: ## Build the provider binary
-	cd $(PROVIDER_ROOT) && go build -o terraform-provider-${NAME}
+	cd $(PROVIDER_ROOT) && go build -ldflags "$(LDFLAGS)" -o terraform-provider-${NAME}
 
 install: ## Build and install provider to Terraform plugins directory
 	mkdir -p ${TERRAFORM_PLUGINS_DIRECTORY}
-	cd $(PROVIDER_ROOT) && go build -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
+	cd $(PROVIDER_ROOT) && go build -ldflags "$(LDFLAGS)" -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
 
 re-install: ## Clean reinstall of the provider
 	rm -f $(PROVIDER_ROOT)/examples/.terraform.lock.hcl
 	rm -f ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
-	cd $(PROVIDER_ROOT) && go build -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
+	cd $(PROVIDER_ROOT) && go build -ldflags "$(LDFLAGS)" -o ${TERRAFORM_PLUGINS_DIRECTORY}/terraform-provider-${NAME}
 	cd $(PROVIDER_ROOT)/examples && rm -rf .terraform
 	cd $(PROVIDER_ROOT)/examples && make init
 
