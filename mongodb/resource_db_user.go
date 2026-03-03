@@ -2,9 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -64,14 +61,10 @@ func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, 
 	var stateId = data.State().ID
 	var database = data.Get("auth_database").(string)
 
-	id, errEncoding := base64.StdEncoding.DecodeString(stateId)
-	if errEncoding != nil {
-		return diag.Errorf("ID mismatch %s", errEncoding)
+	userName, _, err := parseResourceId(stateId)
+	if err != nil {
+		return diag.Errorf("ID mismatch %s", err)
 	}
-
-	// StateID is a concatenation of database and username. We only use the username here.
-	splitId := strings.Split(string(id), ".")
-	userName := splitId[1]
 
 	adminDB := client.Database(database)
 
@@ -89,12 +82,6 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	var stateId = data.State().ID
-	_, errEncoding := base64.StdEncoding.DecodeString(stateId)
-	if errEncoding != nil {
-		return diag.Errorf("ID mismatch %s", errEncoding)
-	}
-
 	var userName = data.Get("name").(string)
 	var database = data.Get("auth_database").(string)
 	var userPassword = data.Get("password").(string)
@@ -120,9 +107,7 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("Could not create the user : %s ", err2)
 	}
 
-	newId := database + "." + userName
-	encoded := base64.StdEncoding.EncodeToString([]byte(newId))
-	data.SetId(encoded)
+	data.SetId(formatResourceId(database, userName))
 	return resourceDatabaseUserRead(ctx, data, i)
 }
 
@@ -191,25 +176,11 @@ func resourceDatabaseUserCreate(ctx context.Context, data *schema.ResourceData, 
 	if err != nil {
 		return diag.Errorf("Could not create the user : %s ", err)
 	}
-	str := database + "." + userName
-	encoded := base64.StdEncoding.EncodeToString([]byte(str))
-	data.SetId(encoded)
+	data.SetId(formatResourceId(database, userName))
 	return resourceDatabaseUserRead(ctx, data, i)
 }
 
+// IDFORMAT-005
 func resourceDatabaseUserParseId(id string) (string, string, error) {
-	result, errEncoding := base64.StdEncoding.DecodeString(id)
-
-	if errEncoding != nil {
-		return "", "", fmt.Errorf("unexpected format of ID Error : %s", errEncoding)
-	}
-	parts := strings.SplitN(string(result), ".", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("unexpected format of ID (%s), expected attribute1.attribute2", id)
-	}
-
-	database := parts[0]
-	userName := parts[1]
-
-	return userName, database, nil
+	return parseResourceId(id)
 }

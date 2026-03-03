@@ -1,14 +1,10 @@
 package mongodb
 
-import (
-	"encoding/base64"
-	"testing"
-)
+import "testing"
 
-// TEST-005: Valid base64 ID returns (roleName, database, nil)
+// TEST-005: Valid plain text ID returns (roleName, database, nil)
 func TestResourceDatabaseRoleParseId_Valid(t *testing.T) {
-	id := base64.StdEncoding.EncodeToString([]byte("admin.myRole"))
-	roleName, database, err := resourceDatabaseRoleParseId(id)
+	roleName, database, err := resourceDatabaseRoleParseId("admin.myRole")
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -23,22 +19,16 @@ func TestResourceDatabaseRoleParseId_Valid(t *testing.T) {
 // TEST-006: Invalid inputs return errors
 func TestResourceDatabaseRoleParseId_InvalidInputs(t *testing.T) {
 	cases := []struct {
-		name string
-		id   string
-		raw  bool // if true, use id directly; if false, base64 encode it
+		name  string
+		input string
 	}{
-		{"invalid base64", "not-valid!@#", true},
-		{"no separator", "nodotshere", false},
-		{"empty database", ".roleName", false},
-		{"empty roleName", "database.", false},
+		{"no separator", "nodotshere"},
+		{"empty database", ".roleName"},
+		{"empty roleName", "database."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			id := tc.id
-			if !tc.raw {
-				id = base64.StdEncoding.EncodeToString([]byte(tc.id))
-			}
-			_, _, err := resourceDatabaseRoleParseId(id)
+			_, _, err := resourceDatabaseRoleParseId(tc.input)
 			if err == nil {
 				t.Fatalf("expected error for case %q, got nil", tc.name)
 			}

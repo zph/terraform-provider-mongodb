@@ -30,6 +30,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|---------|
 | `mongodb/provider.go` | Provider schema, resource registration, configuration |
 | `mongodb/resource_registry.go` | Resource maturity classification, allowlist gating, env var parsing |
+| `mongodb/parse_id.go` | Shared `parseResourceId` / `formatResourceId` helpers (IDFORMAT spec) |
 | `mongodb/config.go` | Client configuration, connection, TLS, proxy |
 | `mongodb/replica_set_types.go` | RS config types, `GetReplSetConfig`, `SetReplSetConfig`, `GetReplSetStatus` |
 | `mongodb/shard_discovery.go` | Connection type detection, `ListShards`, `ResolveShardClient` |
@@ -48,6 +49,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-021 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
+| ID Format | `docs/specs/id-format-requirements.md` | IDFORMAT-001 through IDFORMAT-005 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -62,6 +64,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/config_test.go` | Config tests | none |
 | `mongodb/golden_test.go` | Golden file tests | integration |
 | `mongodb/resource_registry_test.go` | GATE-T01..T15 (15 tests) | none |
+| `mongodb/parse_id_test.go` | IDFORMAT parse/format tests | none |
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 

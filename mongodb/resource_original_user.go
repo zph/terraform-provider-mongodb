@@ -2,8 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -214,8 +212,7 @@ func resourceOriginalUserCreate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("could not create the original user: %s", err)
 	}
 
-	id := database + "." + userName
-	data.SetId(base64.StdEncoding.EncodeToString([]byte(id)))
+	data.SetId(formatResourceId(database, userName))
 	return resourceOriginalUserRead(ctx, data, i)
 }
 
@@ -307,8 +304,7 @@ func resourceOriginalUserUpdate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("could not recreate user: %s", err)
 	}
 
-	newId := database + "." + username
-	data.SetId(base64.StdEncoding.EncodeToString([]byte(newId)))
+	data.SetId(formatResourceId(database, username))
 	return resourceOriginalUserRead(ctx, data, i)
 }
 
@@ -358,21 +354,13 @@ func resourceOriginalUserAdopt(ctx context.Context, data *schema.ResourceData) d
 		return diag.Errorf("user already exists but cannot be read: %s", getErr)
 	}
 
-	id := database + "." + userName
-	data.SetId(base64.StdEncoding.EncodeToString([]byte(id)))
+	data.SetId(formatResourceId(database, userName))
 	return resourceOriginalUserRead(ctx, data, nil)
 }
 
+// IDFORMAT-005
 func resourceOriginalUserParseId(id string) (string, string, error) {
-	result, err := base64.StdEncoding.DecodeString(id)
-	if err != nil {
-		return "", "", fmt.Errorf("unexpected format of ID: %s", err)
-	}
-	parts := strings.SplitN(string(result), ".", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("unexpected format of ID (%s), expected database.username", id)
-	}
-	return parts[1], parts[0], nil
+	return parseResourceId(id)
 }
 
 func isUserAlreadyExistsError(err error) bool {

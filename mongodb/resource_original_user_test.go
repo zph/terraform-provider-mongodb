@@ -1,7 +1,6 @@
 package mongodb
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -97,10 +96,9 @@ func TestResourceOriginalUser_SchemaValid(t *testing.T) {
 	}
 }
 
-// TEST-052: resourceOriginalUserParseId round-trip
+// TEST-052: resourceOriginalUserParseId round-trip with plain text ID
 func TestResourceOriginalUserParseId_Valid(t *testing.T) {
-	id := base64.StdEncoding.EncodeToString([]byte("admin.myadmin"))
-	username, database, err := resourceOriginalUserParseId(id)
+	username, database, err := resourceOriginalUserParseId("admin.myadmin")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,18 +110,9 @@ func TestResourceOriginalUserParseId_Valid(t *testing.T) {
 	}
 }
 
-// TEST-053: resourceOriginalUserParseId with invalid base64
-func TestResourceOriginalUserParseId_InvalidBase64(t *testing.T) {
-	_, _, err := resourceOriginalUserParseId("not-valid!@#")
-	if err == nil {
-		t.Fatal("expected error for invalid base64, got nil")
-	}
-}
-
 // TEST-054: resourceOriginalUserParseId with missing separator
 func TestResourceOriginalUserParseId_NoSeparator(t *testing.T) {
-	id := base64.StdEncoding.EncodeToString([]byte("nodotshere"))
-	_, _, err := resourceOriginalUserParseId(id)
+	_, _, err := resourceOriginalUserParseId("nodotshere")
 	if err == nil {
 		t.Fatal("expected error for missing separator, got nil")
 	}
@@ -136,12 +125,11 @@ func TestResourceOriginalUserParseId_EmptyParts(t *testing.T) {
 		input string
 	}{
 		{"empty database", ".username"},
-		{"empty username", "database."},
+		{"empty name", "database."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			id := base64.StdEncoding.EncodeToString([]byte(tc.input))
-			_, _, err := resourceOriginalUserParseId(id)
+			_, _, err := resourceOriginalUserParseId(tc.input)
 			if err == nil {
 				t.Fatalf("expected error for input %q, got nil", tc.input)
 			}

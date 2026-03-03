@@ -1,14 +1,10 @@
 package mongodb
 
-import (
-	"encoding/base64"
-	"testing"
-)
+import "testing"
 
-// TEST-001: Valid base64 ID returns (username, database, nil)
+// TEST-001: Valid plain text ID returns (username, database, nil)
 func TestResourceDatabaseUserParseId_Valid(t *testing.T) {
-	id := base64.StdEncoding.EncodeToString([]byte("admin.testuser"))
-	username, database, err := resourceDatabaseUserParseId(id)
+	username, database, err := resourceDatabaseUserParseId("admin.testuser")
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -20,24 +16,15 @@ func TestResourceDatabaseUserParseId_Valid(t *testing.T) {
 	}
 }
 
-// TEST-002: Invalid base64 returns error
-func TestResourceDatabaseUserParseId_InvalidBase64(t *testing.T) {
-	_, _, err := resourceDatabaseUserParseId("not-valid-base64!@#")
-	if err == nil {
-		t.Fatal("expected error for invalid base64, got nil")
-	}
-}
-
-// TEST-003: Valid base64 without separator returns error
+// TEST-002: ID without separator returns error
 func TestResourceDatabaseUserParseId_NoSeparator(t *testing.T) {
-	id := base64.StdEncoding.EncodeToString([]byte("nodotshere"))
-	_, _, err := resourceDatabaseUserParseId(id)
+	_, _, err := resourceDatabaseUserParseId("nodotshere")
 	if err == nil {
 		t.Fatal("expected error for missing separator, got nil")
 	}
 }
 
-// TEST-004: Empty database or username returns error
+// TEST-003: Empty database or username returns error
 func TestResourceDatabaseUserParseId_EmptyParts(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -48,8 +35,7 @@ func TestResourceDatabaseUserParseId_EmptyParts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			id := base64.StdEncoding.EncodeToString([]byte(tc.input))
-			_, _, err := resourceDatabaseUserParseId(id)
+			_, _, err := resourceDatabaseUserParseId(tc.input)
 			if err == nil {
 				t.Fatalf("expected error for input %q, got nil", tc.input)
 			}

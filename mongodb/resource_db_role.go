@@ -2,9 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -108,9 +105,7 @@ func resourceDatabaseRoleCreate(ctx context.Context, data *schema.ResourceData, 
 	if err != nil {
 		return diag.Errorf("Could not create the role : %s ", err)
 	}
-	str := database + "." + role
-	encoded := base64.StdEncoding.EncodeToString([]byte(str))
-	data.SetId(encoded)
+	data.SetId(formatResourceId(database, role))
 	return resourceDatabaseRoleRead(ctx, data, i)
 }
 
@@ -178,9 +173,7 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 	if err2 != nil {
 		return diag.Errorf("Could not create the role  :  %s ", err2)
 	}
-	str := database + "." + role
-	encoded := base64.StdEncoding.EncodeToString([]byte(str))
-	data.SetId(encoded)
+	data.SetId(formatResourceId(database, role))
 
 	return resourceDatabaseRoleRead(ctx, data, i)
 }
@@ -244,19 +237,7 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 	return diags
 }
 
+// IDFORMAT-005
 func resourceDatabaseRoleParseId(id string) (string, string, error) {
-	result, errEncoding := base64.StdEncoding.DecodeString(id)
-
-	if errEncoding != nil {
-		return "", "", fmt.Errorf("unexpected format of ID Error : %s", errEncoding)
-	}
-	parts := strings.SplitN(string(result), ".", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("unexpected format of ID (%s), expected database.roleName", id)
-	}
-
-	database := parts[0]
-	roleName := parts[1]
-
-	return roleName, database, nil
+	return parseResourceId(id)
 }
