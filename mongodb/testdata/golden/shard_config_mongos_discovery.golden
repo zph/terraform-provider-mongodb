@@ -1,0 +1,51 @@
+Source: TestGolden_ShardConfig_MongosDiscovery (mongodb/golden_test.go)
+Command: replSetGetConfig
+Database: admin
+Body:
+{
+  "replSetGetConfig": 1
+}
+
+Source: TestGolden_ShardConfig_MongosDiscovery (mongodb/golden_test.go)
+Command: replSetReconfig
+Database: admin
+Body:
+{
+  "replSetReconfig": {
+    "_id": "shard01",
+    "version": <VERSION>,
+    "members": [
+      {
+        "_id": 0,
+        "host": "<HOST:PORT>",
+        "arbiterOnly": false,
+        "buildIndexes": true,
+        "hidden": false,
+        "priority": 1,
+        "votes": 1
+      }
+    ],
+    "protocolVersion": 1,
+    "settings": {
+      "chainingAllowed": true,
+      "heartbeatIntervalMillis": 1000,
+      "heartbeatTimeoutSecs": 10,
+      "electionTimeoutMillis": 10000,
+      "catchUpTimeoutMillis": -1,
+      "getLastErrorDefaults": {
+        "w": 1,
+        "wtimeout": 0
+      },
+      "replicaSetId": "<OBJECT_ID>"
+    },
+    "writeConcernMajorityJournalDefault": true
+  }
+}
+
+Source: TestGolden_ShardConfig_MongosDiscovery (mongodb/golden_test.go)
+Command: replSetGetConfig
+Database: admin
+Body:
+{
+  "replSetGetConfig": 1
+}

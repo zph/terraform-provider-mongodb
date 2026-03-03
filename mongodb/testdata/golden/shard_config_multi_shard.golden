@@ -1,0 +1,23 @@
+Source: TestGolden_ShardConfig_MultiShard (mongodb/golden_test.go)
+Command: listShards
+Database: admin
+Body:
+{
+  "listShards": 1
+}
+
+Source: TestGolden_ShardConfig_MultiShard (mongodb/golden_test.go)
+Command: replSetGetConfig
+Database: admin
+Body:
+{
+  "replSetGetConfig": 1
+}
+
+Source: TestGolden_ShardConfig_MultiShard (mongodb/golden_test.go)
+Command: replSetGetConfig
+Database: admin
+Body:
+{
+  "replSetGetConfig": 1
+}
