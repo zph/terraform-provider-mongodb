@@ -8,13 +8,11 @@ terraform {
 }
 
 # Connect directly to the shard's primary for replSetReconfig.
+# use no-auth option by omitting username and password
 provider "mongodb" {
-  host          = "shard01-primary.example.com"
-  port          = "27018"
-  username      = "root"
-  password      = var.mongo_password
+  host          = "localhost"
+  port          = "30103"
   auth_database = "admin"
-  direct        = true
 }
 
 # All configurable shard settings explicitly set.
@@ -22,16 +20,16 @@ provider "mongodb" {
 # Known limitations:
 # - Delete is a no-op: destroying this resource removes it from state
 #   but does not reset the MongoDB replica set configuration.
-resource "mongodb_shard_config" "shard01" {
-  shard_name                = "shard01"
+resource "mongodb_shard_config" "shard1" {
+  shard_name                = "shard1"
   chaining_allowed          = true
-  heartbeat_interval_millis = 2000
+  heartbeat_interval_millis = 1000
   heartbeat_timeout_secs    = 10
   election_timeout_millis   = 10000
 
   # Per-member configuration: identified by host:port
   member {
-    host          = "shard01-primary.example.com:27018"
+    host          = "localhost:30103"
     priority      = 2
     votes         = 1
     hidden        = false
@@ -45,7 +43,7 @@ resource "mongodb_shard_config" "shard01" {
   }
 
   member {
-    host     = "shard01-secondary1.example.com:27018"
+    host     = "localhost:30104"
     priority = 1
     votes    = 1
     tags = {
@@ -56,18 +54,13 @@ resource "mongodb_shard_config" "shard01" {
   }
 
   member {
-    host     = "shard01-secondary2.example.com:27018"
-    priority = 1
+    host     = "localhost:30105"
+    priority = 2
     votes    = 1
     tags = {
-      dc   = "us-west"
+      dc   = "us-TEST"
       rack = "r3"
       zone = "secondary"
     }
   }
-}
-
-variable "mongo_password" {
-  type      = string
-  sensitive = true
 }

@@ -30,13 +30,13 @@ mongodb/
 
 ## Test Coverage
 
-### Unit Tests (69 tests)
+### Unit Tests (70 tests)
 
 All pure Go tests, no MongoDB required. Run with `make test-unit`.
 
 | File | Count | Covers |
 |---|---|---|
-| `config_test.go` | 19 | URI builder, proxy dialer, type strings, JSON round-trips, TLS, MongoClientNoAuth |
+| `config_test.go` | 20 | URI builder, proxy dialer, type strings, JSON round-trips, TLS, MongoClientNoAuth, no-auth via empty credentials |
 | `replica_set_types_test.go` | 10 | GetSelf, GetMembersByState, Primary, constants, BSON round-trips |
 | `helpers_test.go` | 4 | validateDiagFunc warning/error propagation |
 | `provider_test.go` | 3 | Schema validation, resource map |
@@ -45,7 +45,7 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `resource_shard_config_test.go` | 15 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
-Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056)
+Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056), SHARD-011
 
 ### Integration Tests (21 tests)
 
@@ -108,6 +108,12 @@ All MongoDB commands are logged via the Go driver's `event.CommandMonitor` attac
 
 Authentication commands (`saslStart`, `saslContinue`) have their command bodies automatically redacted by the MongoDB driver.
 
+## No-Auth Support
+
+Provider `username` and `password` are optional (default `""`). When `username` is empty, `MongoClient` skips `SetAuth` entirely, allowing all resources (including `mongodb_shard_config`) to work against clusters with no authentication enabled.
+
+EARS spec: SHARD-011 in `docs/specs/shard-member-requirements.md`.
+
 EARS specs: LOG-001 through LOG-004 in `config.go`.
 
 ## Examples
@@ -156,7 +162,7 @@ Every provider attribute and resource attribute appears in at least one example:
 - **Provider:** host, port, username, password, auth_database, ssl, certificate, insecure_skip_verify, replica_set, retrywrites, direct, proxy
 - **mongodb_db_user:** auth_database, name, password, role.role, role.db
 - **mongodb_db_role:** name, database, privilege.db, privilege.collection, privilege.cluster, privilege.actions, inherited_role.role, inherited_role.db
-- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes, member.secondary_delay_secs
+- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes
 - **mongodb_original_user:** host, port, username, password, auth_database, role.role, role.db, direct, ssl, certificate, insecure_skip_verify
 
 ### Cluster Configuration Audit Findings

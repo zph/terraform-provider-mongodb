@@ -285,6 +285,26 @@ func TestMongoClient_NoError(t *testing.T) {
 	}
 }
 
+// TEST-046: SHARD-011 — MongoClient with empty credentials skips auth (behaves like MongoClientNoAuth)
+func TestMongoClient_NoAuth_EmptyCredentials(t *testing.T) {
+	c := &ClientConfig{
+		Host:        "localhost",
+		Port:        "27017",
+		Username:    "",
+		Password:    "",
+		DB:          "admin",
+		RetryWrites: false,
+		Direct:      true,
+	}
+	client, err := c.MongoClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
 // TEST-045: MongoClientNoAuth with certificate uses TLS without auth
 func TestMongoClientNoAuth_WithCertificate(t *testing.T) {
 	pemData := generateTestPEM(t)

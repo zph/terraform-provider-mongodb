@@ -137,14 +137,13 @@ func TestMergeMembers_AllFields(t *testing.T) {
 	rs := threeNodeRS()
 	overrides := []MemberOverride{
 		{
-			Host:               "mongo1:27017",
-			Priority:           10,
-			Votes:              1,
-			Hidden:             true,
-			ArbiterOnly:        false,
-			BuildIndexes:       false,
-			SecondaryDelaySecs: 300,
-			Tags:               map[string]string{"dc": "east", "rack": "r1"},
+			Host:         "mongo1:27017",
+			Priority:     10,
+			Votes:        1,
+			Hidden:       true,
+			ArbiterOnly:  false,
+			BuildIndexes: false,
+			Tags:         map[string]string{"dc": "east", "rack": "r1"},
 		},
 	}
 	result, err := MergeMembers(rs, overrides)
@@ -166,9 +165,6 @@ func TestMergeMembers_AllFields(t *testing.T) {
 	}
 	if *m.BuildIndexes != false {
 		t.Errorf("buildIndexes: want false, got %v", *m.BuildIndexes)
-	}
-	if *m.SecondaryDelaySecs != 300 {
-		t.Errorf("secondaryDelaySecs: want 300, got %d", *m.SecondaryDelaySecs)
 	}
 	if m.Tags["dc"] != "east" || m.Tags["rack"] != "r1" {
 		t.Errorf("tags: want {dc:east, rack:r1}, got %v", m.Tags)
@@ -254,8 +250,8 @@ func TestRSConfigMembersToState_AllFields(t *testing.T) {
 		{
 			ID: 0, Host: "mongo1:27017", Priority: 5,
 			Votes: intPtr(1), Hidden: boolPtr(true), ArbiterOnly: boolPtr(false),
-			BuildIndexes: boolPtr(true), SecondaryDelaySecs: int64Ptr(60),
-			Tags: ReplsetTags{"dc": "east"},
+			BuildIndexes: boolPtr(true),
+			Tags:         ReplsetTags{"dc": "east"},
 		},
 	}
 	managed := map[string]bool{"mongo1:27017": true}
@@ -281,9 +277,6 @@ func TestRSConfigMembersToState_AllFields(t *testing.T) {
 	}
 	if m["build_indexes"] != true {
 		t.Errorf("build_indexes: want true, got %v", m["build_indexes"])
-	}
-	if m["secondary_delay_secs"] != int64(60) {
-		t.Errorf("secondary_delay_secs: want 60, got %v", m["secondary_delay_secs"])
 	}
 	tags := m["tags"].(map[string]interface{})
 	if tags["dc"] != "east" {
@@ -357,7 +350,7 @@ func TestShardConfigSchema_MemberBlock(t *testing.T) {
 
 	expectedFields := []string{
 		"host", "tags", "priority", "votes", "hidden",
-		"arbiter_only", "build_indexes", "secondary_delay_secs",
+		"arbiter_only", "build_indexes",
 	}
 	for _, f := range expectedFields {
 		if _, exists := elem.Schema[f]; !exists {

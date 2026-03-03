@@ -44,16 +44,15 @@ type ReplsetTags map[string]string
 
 // ConfigMember document from 'replSetGetConfig': https://docs.mongodb.com/manual/reference/command/replSetGetConfig/#dbcmd.replSetGetConfig
 type ConfigMember struct {
-	ID                 int         `bson:"_id" json:"_id"`
-	Host               string      `bson:"host" json:"host"`
-	ArbiterOnly        *bool       `bson:"arbiterOnly,omitempty" json:"arbiterOnly,omitempty"`
-	BuildIndexes       *bool       `bson:"buildIndexes,omitempty" json:"buildIndexes,omitempty"`
-	Hidden             *bool       `bson:"hidden,omitempty" json:"hidden,omitempty"`
-	Priority           int         `bson:"priority,omitempty" json:"priority,omitempty"`
-	Tags               ReplsetTags `bson:"tags,omitempty" json:"tags,omitempty"`
-	SlaveDelay         *int64      `bson:"slaveDelay,omitempty" json:"slaveDelay,omitempty"`
-	SecondaryDelaySecs *int64      `bson:"secondaryDelaySecs,omitempty" json:"secondaryDelaySecs,omitempty"`
-	Votes              *int        `bson:"votes,omitempty" json:"votes,omitempty"`
+	ID           int         `bson:"_id" json:"_id"`
+	Host         string      `bson:"host" json:"host"`
+	ArbiterOnly  *bool       `bson:"arbiterOnly,omitempty" json:"arbiterOnly,omitempty"`
+	BuildIndexes *bool       `bson:"buildIndexes,omitempty" json:"buildIndexes,omitempty"`
+	Hidden       *bool       `bson:"hidden,omitempty" json:"hidden,omitempty"`
+	Priority     int         `bson:"priority,omitempty" json:"priority,omitempty"`
+	Tags         ReplsetTags `bson:"tags,omitempty" json:"tags,omitempty"`
+	SlaveDelay   *int64      `bson:"slaveDelay,omitempty" json:"slaveDelay,omitempty"`
+	Votes        *int        `bson:"votes,omitempty" json:"votes,omitempty"`
 }
 
 type ConfigMembers []ConfigMember

@@ -176,15 +176,18 @@ func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientO
 	return opts, nil
 }
 
-// MongoClient creates a mongo.Client WITH authentication credentials.
+// SHARD-011: MongoClient creates a mongo.Client. When Username is non-empty it
+// sets authentication credentials; otherwise it behaves like MongoClientNoAuth.
 func (c *ClientConfig) MongoClient(ctx context.Context) (*mongo.Client, error) {
 	opts, err := c.mongoClientOptions(ctx)
 	if err != nil {
 		return nil, err
 	}
-	opts.SetAuth(options.Credential{
-		AuthSource: c.DB, Username: c.Username, Password: c.Password,
-	})
+	if c.Username != "" {
+		opts.SetAuth(options.Credential{
+			AuthSource: c.DB, Username: c.Username, Password: c.Password,
+		})
+	}
 	return mongo.NewClient(opts)
 }
 

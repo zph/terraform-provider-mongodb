@@ -9,8 +9,8 @@ replica set members via the `mongodb_shard_config` Terraform resource.
 define an Optional `member` block of TypeList containing sub-fields: `host`
 (Required, TypeString), `tags` (Optional, TypeMap of TypeString), `priority`
 (Optional, TypeInt), `votes` (Optional, TypeInt), `hidden` (Optional, TypeBool),
-`arbiter_only` (Optional, TypeBool), `build_indexes` (Optional, TypeBool,
-Default true), and `secondary_delay_secs` (Optional, TypeInt).
+`arbiter_only` (Optional, TypeBool), and `build_indexes` (Optional, TypeBool,
+Default true).
 
 ## Backward Compatibility
 
@@ -44,7 +44,7 @@ completely unchanged in the `RSConfig.Members` array.
 **SHARD-007** (Event Driven): WHEN the Read method fetches the `RSConfig`, it
 SHALL populate the Terraform state with a `member` list derived from
 `RSConfig.Members`, setting all fields (host, tags, priority, votes, hidden,
-arbiter_only, build_indexes, secondary_delay_secs) for each managed member.
+arbiter_only, build_indexes) for each managed member.
 
 **SHARD-008** (Event Driven): WHEN reading member state back from MongoDB, the
 Read method SHALL only populate members in the Terraform state that are
@@ -61,3 +61,9 @@ type defined in `replica_set_types.go`.
 **SHARD-010** (Event Driven): WHEN reading members back into Terraform state,
 the Read method SHALL return members in the same order as they appear in the
 HCL `member` blocks to avoid spurious plan diffs.
+
+## No-Auth Support
+
+**SHARD-011** (Event Driven): WHEN the provider `username` is empty,
+`MongoClient` SHALL skip setting authentication credentials, behaving
+identically to `MongoClientNoAuth`.

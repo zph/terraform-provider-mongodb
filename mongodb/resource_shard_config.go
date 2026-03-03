@@ -34,20 +34,17 @@ type ShardModel struct {
 // MemberOverride represents Terraform-declared member configuration.
 // SHARD-003: Members are identified by host (case-sensitive exact match).
 type MemberOverride struct {
-	Host               string
-	Priority           int
-	Votes              int
-	Hidden             bool
-	ArbiterOnly        bool
-	BuildIndexes       bool
-	SecondaryDelaySecs int64
-	Tags               map[string]string
+	Host         string
+	Priority     int
+	Votes        int
+	Hidden       bool
+	ArbiterOnly  bool
+	BuildIndexes bool
+	Tags         map[string]string
 }
 
-func intPtr(v int) *int       { return &v }
-func boolPtr(v bool) *bool    { return &v }
-func int64Ptr(v int64) *int64 { return &v }
-
+func intPtr(v int) *int    { return &v }
+func boolPtr(v bool) *bool { return &v }
 func derefBool(p *bool) bool {
 	if p == nil {
 		return false
@@ -56,13 +53,6 @@ func derefBool(p *bool) bool {
 }
 
 func derefInt(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-func derefInt64(p *int64) int64 {
 	if p == nil {
 		return 0
 	}
@@ -96,7 +86,6 @@ func MergeMembers(rsMembers ConfigMembers, overrides []MemberOverride) (ConfigMe
 		rsMembers[idx].Hidden = boolPtr(o.Hidden)
 		rsMembers[idx].ArbiterOnly = boolPtr(o.ArbiterOnly)
 		rsMembers[idx].BuildIndexes = boolPtr(o.BuildIndexes)
-		rsMembers[idx].SecondaryDelaySecs = int64Ptr(o.SecondaryDelaySecs)
 		if o.Tags != nil {
 			rsMembers[idx].Tags = ReplsetTags(o.Tags)
 		} else {
@@ -132,13 +121,12 @@ func RSConfigMembersToState(members ConfigMembers, managedHosts map[string]bool)
 		}
 
 		memberMap := map[string]interface{}{
-			"host":                 m.Host,
-			"priority":             m.Priority,
-			"arbiter_only":         derefBool(m.ArbiterOnly),
-			"build_indexes":        derefBool(m.BuildIndexes),
-			"hidden":               derefBool(m.Hidden),
-			"votes":                derefInt(m.Votes),
-			"secondary_delay_secs": derefInt64(m.SecondaryDelaySecs),
+			"host":          m.Host,
+			"priority":      m.Priority,
+			"arbiter_only":  derefBool(m.ArbiterOnly),
+			"build_indexes": derefBool(m.BuildIndexes),
+			"hidden":        derefBool(m.Hidden),
+			"votes":         derefInt(m.Votes),
 		}
 
 		if m.Tags != nil {
@@ -171,13 +159,12 @@ func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) 
 	for _, raw := range tfMembers {
 		m := raw.(map[string]interface{})
 		override := MemberOverride{
-			Host:               m["host"].(string),
-			Priority:           m["priority"].(int),
-			Votes:              m["votes"].(int),
-			Hidden:             m["hidden"].(bool),
-			ArbiterOnly:        m["arbiter_only"].(bool),
-			BuildIndexes:       m["build_indexes"].(bool),
-			SecondaryDelaySecs: int64(m["secondary_delay_secs"].(int)),
+			Host:         m["host"].(string),
+			Priority:     m["priority"].(int),
+			Votes:        m["votes"].(int),
+			Hidden:       m["hidden"].(bool),
+			ArbiterOnly:  m["arbiter_only"].(bool),
+			BuildIndexes: m["build_indexes"].(bool),
 		}
 		if tags, ok := m["tags"].(map[string]interface{}); ok && len(tags) > 0 {
 			override.Tags = make(map[string]string, len(tags))
@@ -450,11 +437,6 @@ func resourceShardConfig() *schema.Resource {
 							},
 							Description: "Replica set tags for this member (zone, dc, rack, etc.)",
 						},
-						"secondary_delay_secs": {
-							Type:        schema.TypeInt,
-							Optional:    true,
-							Description: "Seconds this member lags behind the primary",
-						},
 						"votes": {
 							Type:        schema.TypeInt,
 							Optional:    true,
@@ -486,7 +468,6 @@ func resourceShardConfig() *schema.Resource {
 	      hidden: <boolean>,
 	      priority: <number>,
 	      tags: <document>,
-	      secondaryDelaySecs: <int>,
 	      votes: <number>
 	    },
 	    ...

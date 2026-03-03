@@ -34,14 +34,14 @@ func Provider() *schema.Provider {
 
 			"username": {
 				Type:        schema.TypeString,
-				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("MONGO_USR", nil),
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("MONGO_USR", ""),
 				Description: "The mongodb user",
 			},
 			"password": {
 				Type:        schema.TypeString,
-				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("MONGO_PWD", nil),
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("MONGO_PWD", ""),
 				Description: "The mongodb password",
 			},
 			"auth_database": {
