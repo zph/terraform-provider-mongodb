@@ -73,8 +73,8 @@ func resourceOriginalUser() *schema.Resource {
 			"replica_set": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Default:     "",
-				Description: "Replica set name. When set with direct=false, the driver discovers the primary automatically.",
+				Computed:    true,
+				Description: "Replica set name. Auto-discovered from the server if not set. When present, the driver uses discovery mode to route writes to the primary.",
 			},
 			"ssl": {
 				Type:     schema.TypeBool,
@@ -127,6 +127,53 @@ func buildOriginalUserAuthConfig(data *schema.ResourceData) *MongoDatabaseConfig
 	return cfg
 }
 
+// probeReplicaSet connects direct (no auth) to the specified host:port, runs
+// isMaster, and returns the discovered replica set name (empty if standalone).
+// The probe client is disconnected before returning.
+func probeReplicaSet(ctx context.Context, data *schema.ResourceData) string {
+	probeCfg := &ClientConfig{
+		Host:               data.Get("host").(string),
+		Port:               data.Get("port").(string),
+		DB:                 data.Get("auth_database").(string),
+		Direct:             true,
+		Ssl:                data.Get("ssl").(bool),
+		InsecureSkipVerify: data.Get("insecure_skip_verify").(bool),
+	}
+	if v, ok := data.GetOk("certificate"); ok {
+		probeCfg.Certificate = v.(string)
+	}
+	probeConf := &MongoDatabaseConfiguration{Config: probeCfg, MaxConnLifetime: 10}
+
+	probeClient, err := MongoClientInitNoAuth(ctx, probeConf)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = probeClient.Disconnect(ctx) }()
+
+	var resp IsMasterResp
+	result := probeClient.Database("admin").RunCommand(
+		context.Background(), bson.D{{Key: "isMaster", Value: 1}},
+	)
+	if err := result.Decode(&resp); err == nil && resp.SetName != "" {
+		return resp.SetName
+	}
+	return ""
+}
+
+// ensureReplicaSetDiscovered ensures the config has the replica set name,
+// probing the server if needed. Updates both the config and schema data.
+func ensureReplicaSetDiscovered(ctx context.Context, conf *MongoDatabaseConfiguration, data *schema.ResourceData) {
+	if conf.Config.ReplicaSet != "" {
+		return
+	}
+	rsName := probeReplicaSet(ctx, data)
+	if rsName != "" {
+		conf.Config.ReplicaSet = rsName
+		conf.Config.Direct = false
+		_ = data.Set("replica_set", rsName)
+	}
+}
+
 // ORIG-002: WHEN creating the original user, the resource SHALL connect
 // without authentication and create the specified user with the given roles.
 // ORIG-007: WHEN replica_set is not specified, the resource SHALL auto-discover
@@ -134,34 +181,9 @@ func buildOriginalUserAuthConfig(data *schema.ResourceData) *MongoDatabaseConfig
 // the createUser write to the primary.
 func resourceOriginalUserCreate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	conf := buildOriginalUserConfig(data)
-	explicitRS := data.Get("replica_set").(string)
+	ensureReplicaSetDiscovered(ctx, conf, data)
 
-	// Phase 1: connect direct to discover replica set name if needed
-	if explicitRS == "" {
-		probeConf := *conf
-		probeCfg := *conf.Config
-		probeCfg.Direct = true
-		probeCfg.ReplicaSet = ""
-		probeConf.Config = &probeCfg
-
-		probeClient, probeErr := MongoClientInitNoAuth(&probeConf)
-		if probeErr != nil {
-			return diag.Errorf("error connecting to MongoDB without auth: %s", probeErr)
-		}
-
-		var resp IsMasterResp
-		result := probeClient.Database("admin").RunCommand(
-			context.Background(), bson.D{{Key: "isMaster", Value: 1}},
-		)
-		if err := result.Decode(&resp); err == nil && resp.SetName != "" {
-			conf.Config.ReplicaSet = resp.SetName
-			conf.Config.Direct = false
-		}
-		_ = probeClient.Disconnect(ctx)
-	}
-
-	// Phase 2: connect with discovered/configured replica set (or direct)
-	client, err := MongoClientInitNoAuth(conf)
+	client, err := MongoClientInitNoAuth(ctx, conf)
 	if err != nil {
 		return diag.Errorf("error connecting to MongoDB without auth: %s", err)
 	}
@@ -201,12 +223,14 @@ func resourceOriginalUserCreate(ctx context.Context, data *schema.ResourceData, 
 // authentication and verify the user exists.
 func resourceOriginalUserRead(ctx context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
 	conf := buildOriginalUserAuthConfig(data)
+	ensureReplicaSetDiscovered(ctx, conf, data)
 
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(ctx, conf)
 	if err != nil {
 		// If auth fails, try no-auth (server may have been reset)
 		noAuthConf := buildOriginalUserConfig(data)
-		client, err = MongoClientInitNoAuth(noAuthConf)
+		ensureReplicaSetDiscovered(ctx, noAuthConf, data)
+		client, err = MongoClientInitNoAuth(ctx, noAuthConf)
 		if err != nil {
 			return diag.Errorf("error connecting to MongoDB: %s", err)
 		}
@@ -249,8 +273,9 @@ func resourceOriginalUserRead(ctx context.Context, data *schema.ResourceData, _ 
 // authentication and recreate the user with new credentials/roles.
 func resourceOriginalUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	conf := buildOriginalUserAuthConfig(data)
+	ensureReplicaSetDiscovered(ctx, conf, data)
 
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(ctx, conf)
 	if err != nil {
 		return diag.Errorf("error connecting to MongoDB: %s", err)
 	}
@@ -291,8 +316,9 @@ func resourceOriginalUserUpdate(ctx context.Context, data *schema.ResourceData, 
 // authentication and drop the user.
 func resourceOriginalUserDelete(ctx context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
 	conf := buildOriginalUserAuthConfig(data)
+	ensureReplicaSetDiscovered(ctx, conf, data)
 
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(ctx, conf)
 	if err != nil {
 		return diag.Errorf("error connecting to MongoDB: %s", err)
 	}
@@ -316,8 +342,9 @@ func resourceOriginalUserDelete(ctx context.Context, data *schema.ResourceData, 
 // adopts it into Terraform state.
 func resourceOriginalUserAdopt(ctx context.Context, data *schema.ResourceData) diag.Diagnostics {
 	conf := buildOriginalUserAuthConfig(data)
+	ensureReplicaSetDiscovered(ctx, conf, data)
 
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(ctx, conf)
 	if err != nil {
 		return diag.Errorf("user already exists but cannot authenticate with provided credentials: %s", err)
 	}

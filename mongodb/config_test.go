@@ -1,6 +1,7 @@
 package mongodb
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -220,7 +221,7 @@ func TestMongoClientOptions_FullParams(t *testing.T) {
 		RetryWrites: true,
 		Direct:      false,
 	}
-	opts, err := c.mongoClientOptions()
+	opts, err := c.mongoClientOptions(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,7 +239,7 @@ func TestMongoClientOptions_DirectMode(t *testing.T) {
 		Direct:      true,
 		RetryWrites: false,
 	}
-	opts, err := c.mongoClientOptions()
+	opts, err := c.mongoClientOptions(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -255,7 +256,7 @@ func TestMongoClientNoAuth_NoError(t *testing.T) {
 		RetryWrites: false,
 		Direct:      true,
 	}
-	client, err := c.MongoClientNoAuth()
+	client, err := c.MongoClientNoAuth(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestMongoClient_NoError(t *testing.T) {
 		RetryWrites: false,
 		Direct:      true,
 	}
-	client, err := c.MongoClient()
+	client, err := c.MongoClient(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -294,7 +295,7 @@ func TestMongoClientNoAuth_WithCertificate(t *testing.T) {
 		Direct:      true,
 		Certificate: string(pemData),
 	}
-	client, err := c.MongoClientNoAuth()
+	client, err := c.MongoClientNoAuth(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

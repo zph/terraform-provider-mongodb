@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/proxy"
@@ -94,9 +96,49 @@ func addArgs(arguments string, newArg string) string {
 
 }
 
+// LOG-001: WHEN TF_LOG is set to DEBUG or TRACE, the provider SHALL log every
+// MongoDB command name, target database, and request ID.
+// LOG-002: WHEN a MongoDB command succeeds, the provider SHALL log the command
+// name and duration.
+// LOG-003: WHEN a MongoDB command fails, the provider SHALL log the command
+// name, duration, and failure message at WARN level.
+// LOG-004: WHEN authentication commands are sent, the provider SHALL NOT log
+// credential values (driver default behavior — authenticate events have
+// redacted command bodies).
+func commandMonitor(ctx context.Context) *event.CommandMonitor {
+	return &event.CommandMonitor{
+		Started: func(_ context.Context, e *event.CommandStartedEvent) {
+			tflog.Debug(ctx, "mongo command started",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"db":         e.DatabaseName,
+					"request_id": e.RequestID,
+					"body":       e.Command.String(),
+				})
+		},
+		Succeeded: func(_ context.Context, e *event.CommandSucceededEvent) {
+			tflog.Debug(ctx, "mongo command succeeded",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"duration":   e.Duration.String(),
+					"request_id": e.RequestID,
+				})
+		},
+		Failed: func(_ context.Context, e *event.CommandFailedEvent) {
+			tflog.Warn(ctx, "mongo command failed",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"duration":   e.Duration.String(),
+					"failure":    e.Failure,
+					"request_id": e.RequestID,
+				})
+		},
+	}
+}
+
 // mongoClientOptions builds the shared *options.ClientOptions (URI, TLS, proxy)
 // without setting authentication credentials.
-func (c *ClientConfig) mongoClientOptions() (*options.ClientOptions, error) {
+func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientOptions, error) {
 	var arguments = ""
 
 	arguments = addArgs(arguments, "retrywrites="+strconv.FormatBool(c.RetryWrites))
@@ -120,7 +162,7 @@ func (c *ClientConfig) mongoClientOptions() (*options.ClientOptions, error) {
 		return nil, dialerErr
 	}
 
-	opts := options.Client().ApplyURI(uri).SetDialer(dialer)
+	opts := options.Client().ApplyURI(uri).SetDialer(dialer).SetMonitor(commandMonitor(ctx))
 
 	if c.Certificate != "" {
 		verify := c.InsecureSkipVerify
@@ -135,8 +177,8 @@ func (c *ClientConfig) mongoClientOptions() (*options.ClientOptions, error) {
 }
 
 // MongoClient creates a mongo.Client WITH authentication credentials.
-func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
-	opts, err := c.mongoClientOptions()
+func (c *ClientConfig) MongoClient(ctx context.Context) (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +191,8 @@ func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
 // MongoClientNoAuth creates a mongo.Client WITHOUT authentication credentials.
 // Used by the original_user resource to connect to a fresh MongoDB instance
 // that has no users yet.
-func (c *ClientConfig) MongoClientNoAuth() (*mongo.Client, error) {
-	opts, err := c.mongoClientOptions()
+func (c *ClientConfig) MongoClientNoAuth(ctx context.Context) (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -277,26 +319,26 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	return nil
 }
 
-func MongoClientInit(conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
-	client, err := conf.Config.MongoClient()
+func MongoClientInit(ctx context.Context, conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+	client, err := conf.Config.MongoClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return connectAndPing(client, conf.MaxConnLifetime)
+	return connectAndPing(ctx, client, conf.MaxConnLifetime)
 }
 
 // MongoClientInitNoAuth creates, connects, and pings a MongoDB client without
 // authentication. Used for bootstrapping the original admin user.
-func MongoClientInitNoAuth(conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
-	client, err := conf.Config.MongoClientNoAuth()
+func MongoClientInitNoAuth(ctx context.Context, conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+	client, err := conf.Config.MongoClientNoAuth(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return connectAndPing(client, conf.MaxConnLifetime)
+	return connectAndPing(ctx, client, conf.MaxConnLifetime)
 }
 
-func connectAndPing(client *mongo.Client, maxConnLifetime time.Duration) (*mongo.Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), maxConnLifetime*time.Second)
+func connectAndPing(ctx context.Context, client *mongo.Client, maxConnLifetime time.Duration) (*mongo.Client, error) {
+	ctx, cancel := context.WithTimeout(ctx, maxConnLifetime*time.Second)
 	defer cancel()
 	if err := client.Connect(ctx); err != nil {
 		return nil, err

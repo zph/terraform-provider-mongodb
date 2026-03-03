@@ -149,7 +149,7 @@ func TestResourceOriginalUserParseId_EmptyParts(t *testing.T) {
 	}
 }
 
-// TEST-057: replica_set field is optional with empty default
+// TEST-057: replica_set field is optional and computed (auto-discovered)
 func TestResourceOriginalUser_ReplicaSetField(t *testing.T) {
 	res := resourceOriginalUser()
 	s, ok := res.Schema["replica_set"]
@@ -159,8 +159,8 @@ func TestResourceOriginalUser_ReplicaSetField(t *testing.T) {
 	if s.Required {
 		t.Error("replica_set should be Optional")
 	}
-	if s.Default != "" {
-		t.Errorf("expected default empty string, got %v", s.Default)
+	if !s.Computed {
+		t.Error("replica_set should be Computed (auto-discovered from server)")
 	}
 }
 

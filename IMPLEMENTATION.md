@@ -90,6 +90,21 @@ Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016
 | `prek-install` | Install prek as git pre-commit hook |
 | `run` | Alias for install |
 
+## Verbose Command Logging
+
+All MongoDB commands are logged via the Go driver's `event.CommandMonitor` attached in `config.go:commandMonitor()`. Logs use `tflog` and are controlled by Terraform's standard `TF_LOG` environment variable.
+
+**Enable:** `TF_LOG=DEBUG terraform apply`
+
+**What's logged:**
+- **Started** (DEBUG): command name, database, request ID, full BSON command body
+- **Succeeded** (DEBUG): command name, duration, request ID
+- **Failed** (WARN): command name, duration, failure message, request ID
+
+Authentication commands (`saslStart`, `saslContinue`) have their command bodies automatically redacted by the MongoDB driver.
+
+EARS specs: LOG-001 through LOG-004 in `config.go`.
+
 ## Examples
 
 Exhaustive standalone examples organized by capability. See [examples/README.md](examples/README.md) for full index.

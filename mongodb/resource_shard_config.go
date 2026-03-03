@@ -38,7 +38,7 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	m.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
 	m.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
 	m.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
-	client, errD := r.getClient(i)
+	client, errD := r.getClient(ctx, i)
 	if errD != nil {
 		return errD
 	}
@@ -94,7 +94,7 @@ func (r *ResourceShardConfig) getReplSetConfig(ctx context.Context, client *mong
 }
 
 func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, errD := r.getClient(i)
+	client, errD := r.getClient(ctx, i)
 	if errD != nil {
 		return errD
 	}
@@ -124,7 +124,7 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 }
 
 func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, err := r.getClient(i)
+	client, err := r.getClient(ctx, i)
 	if err != nil {
 		return err
 	}
@@ -147,9 +147,9 @@ func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceD
 	return nil
 }
 
-func (r *ResourceShardConfig) getClient(i interface{}) (*mongo.Client, diag.Diagnostics) {
+func (r *ResourceShardConfig) getClient(ctx context.Context, i interface{}) (*mongo.Client, diag.Diagnostics) {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return nil, diag.Errorf("Error connecting to database : %s ", connectionError)
 	}

@@ -82,7 +82,7 @@ func resourceDatabaseRole() *schema.Resource {
 
 func resourceDatabaseRoleCreate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -116,7 +116,7 @@ func resourceDatabaseRoleCreate(ctx context.Context, data *schema.ResourceData, 
 
 func resourceDatabaseRoleDelete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -139,7 +139,7 @@ func resourceDatabaseRoleDelete(ctx context.Context, data *schema.ResourceData, 
 
 func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -188,7 +188,7 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}

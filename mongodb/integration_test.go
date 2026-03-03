@@ -130,7 +130,7 @@ func newTestConfig() *MongoDatabaseConfiguration {
 func newTestClient(t *testing.T) *mongo.Client {
 	t.Helper()
 	conf := newTestConfig()
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(context.Background(), conf)
 	if err != nil {
 		t.Fatalf("MongoClientInit failed: %v", err)
 	}
@@ -143,7 +143,7 @@ func newTestClient(t *testing.T) *mongo.Client {
 // INTEG-001: MongoClientInit connects to live MongoDB replica set
 func TestIntegration_MongoClientInit_Success(t *testing.T) {
 	conf := newTestConfig()
-	client, err := MongoClientInit(conf)
+	client, err := MongoClientInit(context.Background(), conf)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestIntegration_MongoClientInit_BadCredentials(t *testing.T) {
 		},
 		MaxConnLifetime: 5,
 	}
-	_, err := MongoClientInit(conf)
+	_, err := MongoClientInit(context.Background(), conf)
 	if err == nil {
 		t.Fatal("expected error for bad credentials, got nil")
 	}

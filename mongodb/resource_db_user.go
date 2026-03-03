@@ -57,7 +57,7 @@ func resourceDatabaseUser() *schema.Resource {
 
 func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -85,7 +85,7 @@ func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, 
 
 func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -128,7 +128,7 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 
 func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
@@ -170,7 +170,7 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 
 func resourceDatabaseUserCreate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
-	client, connectionError := MongoClientInit(config)
+	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
