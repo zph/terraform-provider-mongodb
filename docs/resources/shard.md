@@ -1,5 +1,7 @@
 # mongodb_shard
 
+~> **EXPERIMENTAL:** This resource requires opt-in via `TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard`. The API may change in future releases.
+
 `mongodb_shard` manages adding and removing shards from a MongoDB sharded cluster. This resource runs [`addShard`](https://www.mongodb.com/docs/manual/reference/command/addShard/) on create and [`removeShard`](https://www.mongodb.com/docs/manual/reference/command/removeShard/) on delete against a mongos router.
 
 ~> **IMPORTANT:** The provider must be connected to a **mongos** router for this resource to work. It will not function against a direct replica set connection.
