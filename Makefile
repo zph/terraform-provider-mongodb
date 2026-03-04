@@ -93,13 +93,13 @@ test-shard-plan: re-install ## Build provider and run terraform plan for shard_c
 run: install ## Alias for install
 
 test-sharded-integration: ## Run sharded cluster integration tests (requires Docker, slower)
-	cd $(PROVIDER_ROOT) && go test -tags integration -run TestShardedIntegration -v -timeout 600s ./mongodb/
+	cd $(PROVIDER_ROOT) && go test -tags integration -run 'TestShardedIntegration|TestGolden_Shard' -v -timeout 600s ./mongodb/
 
 test-golden: ## Run golden file tests against MongoDB container
-	cd $(PROVIDER_ROOT) && go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+	cd $(PROVIDER_ROOT) && go test -tags integration -run TestGolden -v -timeout 600s ./mongodb/
 
 test-golden-update: ## Regenerate golden files
-	cd $(PROVIDER_ROOT) && UPDATE_GOLDEN=1 go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+	cd $(PROVIDER_ROOT) && UPDATE_GOLDEN=1 go test -tags integration -run TestGolden -v -timeout 600s ./mongodb/
 
 cdktn-build: ## Build the CDKTN construct library
 	cd $(PROVIDER_ROOT)/cdktn && go build ./...

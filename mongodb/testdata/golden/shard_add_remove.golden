@@ -1,0 +1,39 @@
+Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
+Command: addShard
+Database: admin
+Body:
+{
+  "addShard": "<SHARD_HOST>"
+}
+
+Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
+Command: listShards
+Database: admin
+Body:
+{
+  "listShards": 1
+}
+
+Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
+Command: removeShard
+Database: admin
+Body:
+{
+  "removeShard": "shard03"
+}
+
+Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
+Command: removeShard
+Database: admin
+Body:
+{
+  "removeShard": "shard03"
+}
+
+Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
+Command: listShards
+Database: admin
+Body:
+{
+  "listShards": 1
+}
