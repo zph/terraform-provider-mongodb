@@ -1,6 +1,6 @@
 # mongodb_shard
 
-`mongodb_shard` manages adding and removing shards from a MongoDB sharded cluster. This resource runs `addShard` on create and `removeShard` on delete against a mongos router.
+`mongodb_shard` manages adding and removing shards from a MongoDB sharded cluster. This resource runs [`addShard`](https://www.mongodb.com/docs/manual/reference/command/addShard/) on create and [`removeShard`](https://www.mongodb.com/docs/manual/reference/command/removeShard/) on delete against a mongos router.
 
 ~> **IMPORTANT:** The provider must be connected to a **mongos** router for this resource to work. It will not function against a direct replica set connection.
 
@@ -11,6 +11,13 @@
 ### Basic shard registration
 
 ```hcl
+provider "mongodb" {
+  host     = "mongos.example.com"
+  port     = "27017"
+  username = "admin"
+  password = var.mongo_password
+}
+
 resource "mongodb_shard" "shard01" {
   shard_name = "shard01"
   hosts      = ["mongo1:27017", "mongo2:27017", "mongo3:27017"]
@@ -55,28 +62,39 @@ resource "mongodb_shard" "shard03" {
 
 ## Attribute Reference
 
-* `state` - (Computed) The state of the shard as reported by `listShards`.
+* `state` - (Computed) The state of the shard as reported by [`listShards`](https://www.mongodb.com/docs/manual/reference/command/listShards/). This is an integer matching the shard's `state` field in the `listShards` response (typically `1` for active).
 
 ## How It Works
 
-### Create
+### Create (`addShard`)
 
-1. Builds a connection string: `shard_name/host1:port,host2:port,host3:port`
-2. Runs `addShard` against the mongos router
-3. Reads back the shard state via `listShards`
+1. Builds a connection string from `shard_name` and `hosts`: `shard01/host1:port,host2:port,host3:port`
+2. Runs [`addShard`](https://www.mongodb.com/docs/manual/reference/command/addShard/) against the mongos router with the connection string
+3. Sets the resource ID to the `shard_name`
+4. Reads back the shard state via `listShards`
 
-### Read
+The `addShard` command registers the replica set with the sharded cluster. The shard's replica set must already be initialized before calling `addShard`.
 
-1. Runs `listShards` against the mongos router
-2. Finds the shard by `_id` matching `shard_name`
-3. Updates the `state` attribute
-4. If the shard is not found, removes the resource from state
+### Read (`listShards`)
 
-### Delete
+1. Runs [`listShards`](https://www.mongodb.com/docs/manual/reference/command/listShards/) against the mongos router
+2. Searches the response for a shard whose `_id` matches `shard_name`
+3. Updates the `state` attribute from the shard's `state` field
+4. If the shard is not found, removes the resource from Terraform state (the shard was removed outside of Terraform)
 
-1. Runs `removeShard` against the mongos router
-2. Polls every 5 seconds until the state is `"completed"` or the timeout is reached
-3. Returns an error if the timeout is exceeded
+### Update
+
+Not supported. Both `shard_name` and `hosts` are ForceNew, so any change triggers a destroy + create cycle.
+
+### Delete (`removeShard`)
+
+1. Runs [`removeShard`](https://www.mongodb.com/docs/manual/reference/command/removeShard/) against the mongos router
+2. MongoDB begins draining data from the shard (moving chunks to other shards)
+3. Polls `removeShard` every 5 seconds, checking the `state` field in the response
+4. When `state` is `"completed"`, the shard has been fully removed
+5. Returns an error if `remove_timeout_secs` is exceeded before completion
+
+The `removeShard` operation is asynchronous in MongoDB. The first call initiates draining, and subsequent calls return progress. The resource polls until MongoDB reports the removal is complete.
 
 ## Import
 
@@ -86,7 +104,11 @@ MongoDB shards can be imported using the shard name:
 $ terraform import mongodb_shard.shard01 shard01
 ```
 
+Import runs `listShards` to read back the shard state. The shard must already exist in the cluster.
+
 ## Known Limitations
 
 * **No update support:** Both `shard_name` and `hosts` are ForceNew. Any change destroys and re-creates the shard registration.
 * **Draining can be slow:** The `removeShard` operation drains data from the shard, which can take a long time for large datasets. Adjust `remove_timeout_secs` accordingly.
+* **Replica set must be pre-initialized:** The shard's replica set must already be initialized before using this resource. Use [`mongodb_shard_config`](shard_config.md) with `member` blocks to initialize replica sets, or initialize them manually before running `terraform apply`.
+* **Single mongos connection:** The provider connects to a single mongos instance. If that mongos is unavailable, all shard operations will fail.

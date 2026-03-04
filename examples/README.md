@@ -31,6 +31,12 @@
 | [resources/db_role/inherited](resources/db_role/inherited) | Role inheriting from another custom role |
 | [resources/db_role/composite](resources/db_role/composite) | Privileges + inherited roles + depends_on chain |
 
+### mongodb_original_user
+
+| Example | Description |
+|---|---|
+| [resources/original_user](resources/original_user) | Bootstrap admin users on mongos and shard primaries |
+
 ### mongodb_shard_config
 
 | Example | Description |
@@ -44,7 +50,9 @@
 
 | Example | Description |
 |---|---|
-| (no examples yet) | Register/remove shards via `addShard`/`removeShard` on a mongos router |
+| [resources/shard/basic](resources/shard/basic) | Register a single shard with a mongos router |
+| [resources/shard/custom-timeout](resources/shard/custom-timeout) | Extended drain timeout for large shard removal |
+| [resources/shard/multi-shard](resources/shard/multi-shard) | Register multiple shards with varying timeouts |
 
 ## Patterns
 

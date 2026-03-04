@@ -30,6 +30,8 @@ Experimental resources require opt-in via environment variable:
 export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
 ```
 
+See [`examples/`](examples/README.md) for runnable configurations for each resource.
+
 ## Provider Configuration
 
 ```hcl
