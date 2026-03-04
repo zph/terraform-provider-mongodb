@@ -528,7 +528,7 @@ func TestIntegration_MergeMembers_PriorityUpdate(t *testing.T) {
 	}
 
 	host := config.Members[0].Host
-	newPriority := 3
+	newPriority := float64(3)
 	if config.Members[0].Priority == newPriority {
 		newPriority = 4
 	}
