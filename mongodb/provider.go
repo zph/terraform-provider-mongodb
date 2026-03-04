@@ -28,6 +28,7 @@ func Provider() *schema.Provider {
 			"certificate": {
 				Type:        schema.TypeString,
 				Optional:    true,
+				Sensitive:   true,
 				DefaultFunc: schema.EnvDefaultFunc("MONGODB_CERT", ""),
 				Description: "PEM-encoded content of Mongodb host CA certificate",
 			},
@@ -41,6 +42,7 @@ func Provider() *schema.Provider {
 			"password": {
 				Type:        schema.TypeString,
 				Optional:    true,
+				Sensitive:   true,
 				DefaultFunc: schema.EnvDefaultFunc("MONGO_PWD", ""),
 				Description: "The mongodb password",
 			},

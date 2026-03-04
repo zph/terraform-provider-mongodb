@@ -2,7 +2,7 @@
 
 `mongodb_db_user` manages MongoDB database users. Each user has a set of roles that provide access to databases and collections.
 
-~> **IMPORTANT:** All arguments including the password will be stored in the raw state as plain-text. [Read more about sensitive data in state.](https://www.terraform.io/docs/state/sensitive-data.html)
+~> **IMPORTANT:** The password is marked as sensitive and will not appear in plan/apply output, but it is stored in Terraform state as plain-text. [Read more about sensitive data in state.](https://www.terraform.io/docs/state/sensitive-data.html)
 
 ## Example Usage
 
@@ -71,9 +71,7 @@ resource "mongodb_db_user" "multi_role_user" {
 
 * `auth_database` - (Required) Database against which MongoDB authenticates the user.
 * `name` - (Required) Username for authenticating to MongoDB.
-* `password` - (Required) User's password.
-
-~> **IMPORTANT:** Passwords may appear in Terraform logs and will be stored in Terraform state as plain-text. Passwords can be changed after creation using your preferred method (e.g., the MongoDB Shell). If you manage the password outside of Terraform, remove the argument from your configuration so it is not inadvertently reset.
+* `password` - (Required, Sensitive) User's password. Masked in plan/apply output but stored in state as plain-text.
 
 ### Role
 
