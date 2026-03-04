@@ -1,0 +1,40 @@
+Source: TestGolden_DbRole_ClusterPrivilege (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_failover_operator",
+  "privileges": [
+    {
+      "resource": {
+        "cluster": true
+      },
+      "actions": [
+        "replSetGetConfig",
+        "replSetGetStatus",
+        "replSetStateChange"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_ClusterPrivilege (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_failover_operator",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_ClusterPrivilege (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_failover_operator"
+}

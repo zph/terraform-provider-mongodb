@@ -1,0 +1,96 @@
+# See https://prek.j178.dev for more information
+# Managed by prek (pre-commit compatible)
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  # Built-in hooks (Rust-native, fast, zero-setup)
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^(cdktn|mongodb)/testdata/'
+      - id: end-of-file-fixer
+        exclude: '^(cdktn|mongodb)/testdata/'
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: no-commit-to-branch
+        args: ['--branch=main']
+
+  # Go: formatting, vetting, linting, testing
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        language: system
+        entry: gofmt -l -w
+        files: '\.go$'
+        pass_filenames: true
+
+      - id: go-vet
+        name: go vet
+        language: system
+        entry: go vet ./...
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint
+        language: system
+        entry: golangci-lint run
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy
+        language: system
+        entry: go mod tidy
+        files: '(\.go$|go\.mod$|go\.sum$)'
+        pass_filenames: false
+
+      - id: go-test
+        name: go test
+        language: system
+        entry: go test ./...
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: cdktn-test
+        name: cdktn test
+        language: system
+        entry: bash -c 'cd cdktn && go test ./...'
+        files: '^cdktn/.*\.go$'
+        pass_filenames: false
+
+      # Integration tests (require Docker via testcontainers)
+      - id: integration-test
+        name: integration test
+        language: system
+        entry: go test -tags integration -v -timeout 300s ./mongodb/
+        files: '^mongodb/.*\.go$'
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: golden-test
+        name: golden test
+        language: system
+        entry: go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+        files: '^mongodb/.*\.go$'
+        pass_filenames: false
+        stages: [pre-push]
+
+  # Terraform: formatting
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        language: system
+        entry: terraform fmt -recursive
+        files: '\.tf$'
+        pass_filenames: false

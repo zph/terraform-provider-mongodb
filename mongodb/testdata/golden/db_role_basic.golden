@@ -1,0 +1,85 @@
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_analyst_role",
+  "privileges": [
+    {
+      "resource": {
+        "db": "analytics",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "collStats",
+        "dbStats",
+        "listCollections"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_analyst_role",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_analyst_role"
+}
+
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_analyst_role",
+  "privileges": [
+    {
+      "resource": {
+        "db": "analytics",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "collStats",
+        "dbStats",
+        "listCollections"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_analyst_role",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbRole_Basic (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_analyst_role"
+}

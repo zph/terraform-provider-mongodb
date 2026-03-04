@@ -6,13 +6,16 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"golang.org/x/net/proxy"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/event"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/net/proxy"
 )
 
 type ClientConfig struct {
@@ -44,8 +47,9 @@ func (role Role) String() string {
 }
 
 type PrivilegeDto struct {
-	Db         string   `json:"db"`
-	Collection string   `json:"collection"`
+	Db         string   `json:"db,omitempty"`
+	Collection string   `json:"collection,omitempty"`
+	Cluster    bool     `json:"cluster,omitempty"`
 	Actions    []string `json:"actions"`
 }
 
@@ -76,6 +80,7 @@ type SingleResultGetRole struct {
 			Resource struct {
 				Db         string `json:"db"`
 				Collection string `json:"collection"`
+				Cluster    bool   `json:"cluster"`
 			} `json:"resource"`
 			Actions []string `json:"actions"`
 		} `json:"privileges"`
@@ -91,9 +96,49 @@ func addArgs(arguments string, newArg string) string {
 
 }
 
-func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
+// LOG-001: WHEN TF_LOG is set to DEBUG or TRACE, the provider SHALL log every
+// MongoDB command name, target database, and request ID.
+// LOG-002: WHEN a MongoDB command succeeds, the provider SHALL log the command
+// name and duration.
+// LOG-003: WHEN a MongoDB command fails, the provider SHALL log the command
+// name, duration, and failure message at WARN level.
+// LOG-004: WHEN authentication commands are sent, the provider SHALL NOT log
+// credential values (driver default behavior — authenticate events have
+// redacted command bodies).
+func commandMonitor(ctx context.Context) *event.CommandMonitor {
+	return &event.CommandMonitor{
+		Started: func(_ context.Context, e *event.CommandStartedEvent) {
+			tflog.Debug(ctx, "mongo command started",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"db":         e.DatabaseName,
+					"request_id": e.RequestID,
+					"body":       e.Command.String(),
+				})
+		},
+		Succeeded: func(_ context.Context, e *event.CommandSucceededEvent) {
+			tflog.Debug(ctx, "mongo command succeeded",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"duration":   e.Duration.String(),
+					"request_id": e.RequestID,
+				})
+		},
+		Failed: func(_ context.Context, e *event.CommandFailedEvent) {
+			tflog.Warn(ctx, "mongo command failed",
+				map[string]interface{}{
+					"command":    e.CommandName,
+					"duration":   e.Duration.String(),
+					"failure":    e.Failure,
+					"request_id": e.RequestID,
+				})
+		},
+	}
+}
 
-	var verify = false
+// mongoClientOptions builds the shared *options.ClientOptions (URI, TLS, proxy)
+// without setting authentication credentials.
+func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientOptions, error) {
 	var arguments = ""
 
 	arguments = addArgs(arguments, "retrywrites="+strconv.FormatBool(c.RetryWrites))
@@ -102,48 +147,59 @@ func (c *ClientConfig) MongoClient() (*mongo.Client, error) {
 		arguments = addArgs(arguments, "ssl=true")
 	}
 
-	if c.ReplicaSet != "" && c.Direct == false {
+	if c.ReplicaSet != "" && !c.Direct {
 		arguments = addArgs(arguments, "replicaSet="+c.ReplicaSet)
 	}
 
 	if c.Direct {
-		arguments = addArgs(arguments, "connect="+"direct")
+		arguments = addArgs(arguments, "connect=direct")
 	}
 
-	var uri = "mongodb://" + c.Host + ":" + c.Port + arguments
+	uri := "mongodb://" + c.Host + ":" + c.Port + arguments
 
 	dialer, dialerErr := proxyDialer(c)
-
 	if dialerErr != nil {
 		return nil, dialerErr
 	}
-	/*
-		@Since: v0.0.9
-		verify certificate
-	*/
-	if c.InsecureSkipVerify {
-		verify = true
-	}
-	/*
-		@Since: v0.0.7
-		add certificate support for documentDB
-	*/
+
+	opts := options.Client().ApplyURI(uri).SetDialer(dialer).SetMonitor(commandMonitor(ctx))
+
 	if c.Certificate != "" {
+		verify := c.InsecureSkipVerify
 		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), verify)
 		if err != nil {
 			return nil, err
 		}
-		mongoClient, err := mongo.NewClient(options.Client().ApplyURI(uri).SetAuth(options.Credential{
-			AuthSource: c.DB, Username: c.Username, Password: c.Password,
-		}).SetTLSConfig(tlsConfig).SetDialer(dialer))
-
-		return mongoClient, err
+		opts.SetTLSConfig(tlsConfig)
 	}
 
-	client, err := mongo.NewClient(options.Client().ApplyURI(uri).SetAuth(options.Credential{
-		AuthSource: c.DB, Username: c.Username, Password: c.Password,
-	}).SetDialer(dialer))
-	return client, err
+	return opts, nil
+}
+
+// SHARD-011: MongoClient creates a mongo.Client. When Username is non-empty it
+// sets authentication credentials; otherwise it behaves like MongoClientNoAuth.
+func (c *ClientConfig) MongoClient(ctx context.Context) (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.Username != "" {
+		opts.SetAuth(options.Credential{
+			AuthSource: c.DB, Username: c.Username, Password: c.Password,
+		})
+	}
+	return mongo.NewClient(opts)
+}
+
+// MongoClientNoAuth creates a mongo.Client WITHOUT authentication credentials.
+// Used by the original_user resource to connect to a fresh MongoDB instance
+// that has no users yet.
+func (c *ClientConfig) MongoClientNoAuth(ctx context.Context) (*mongo.Client, error) {
+	opts, err := c.mongoClientOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mongo.NewClient(opts)
 }
 
 func getTLSConfigWithAllServerCertificates(ca []byte, verify bool) (*tls.Config, error) {
@@ -169,8 +225,9 @@ func (privilege Privilege) String() string {
 }
 
 type Resource struct {
-	Db         string `json:"db"`
-	Collection string `json:"collection"`
+	Db         string `json:"db,omitempty" bson:"db,omitempty"`
+	Collection string `json:"collection,omitempty" bson:"collection,omitempty"`
+	Cluster    bool   `json:"cluster,omitempty" bson:"cluster,omitempty"`
 }
 
 func (resource Resource) String() string {
@@ -225,31 +282,51 @@ func getRole(client *mongo.Client, roleName string, database string) (SingleResu
 	return decodedResult, nil
 }
 
-func createRole(client *mongo.Client, role string, roles []Role, privilege []PrivilegeDto, database string) error {
-	var privileges []Privilege
-	var result *mongo.SingleResult
-	for _, element := range privilege {
-		var prv Privilege
-		prv.Resource = Resource{
-			Db:         element.Db,
-			Collection: element.Collection,
+// buildPrivilegeDocs converts PrivilegeDto slices into explicit BSON documents
+// so that db+collection are both present when non-cluster. MongoDB requires
+// "resource must set both db and collection or neither"; omitempty would drop
+// collection="".
+func buildPrivilegeDocs(roleName string, privileges []PrivilegeDto) (bson.A, error) {
+	var docs bson.A
+	for _, element := range privileges {
+		if element.Db != "" && element.Cluster {
+			return nil, fmt.Errorf("can't create a role that specifies both a db and a cluster=true: role %s", roleName)
 		}
-		prv.Actions = element.Actions
-		privileges = append(privileges, prv)
+		var resource bson.D
+		if element.Cluster {
+			resource = bson.D{{Key: "cluster", Value: true}}
+		} else {
+			resource = bson.D{
+				{Key: "db", Value: element.Db},
+				{Key: "collection", Value: element.Collection},
+			}
+		}
+		docs = append(docs, bson.D{
+			{Key: "resource", Value: resource},
+			{Key: "actions", Value: element.Actions},
+		})
 	}
-	if len(roles) != 0 && len(privileges) != 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: privileges}, {Key: "roles", Value: roles}})
-	} else if len(roles) == 0 && len(privileges) != 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: privileges}, {Key: "roles", Value: []bson.M{}}})
-	} else if len(roles) != 0 && len(privileges) == 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: []bson.M{}}, {Key: "roles", Value: roles}})
+	return docs, nil
+}
+
+func createRole(client *mongo.Client, role string, roles []Role, privilege []PrivilegeDto, database string) error {
+	privDocs, err := buildPrivilegeDocs(role, privilege)
+	if err != nil {
+		return err
+	}
+	var rolesValue any
+	if len(roles) != 0 {
+		rolesValue = roles
 	} else {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
-			{Key: "privileges", Value: []bson.M{}}, {Key: "roles", Value: []bson.M{}}})
+		rolesValue = []bson.M{}
 	}
+	privValue := any(privDocs)
+	if len(privDocs) == 0 {
+		privValue = []bson.M{}
+	}
+
+	result := client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
+		{Key: "privileges", Value: privValue}, {Key: "roles", Value: rolesValue}})
 
 	if result.Err() != nil {
 		return result.Err()
@@ -257,20 +334,31 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	return nil
 }
 
-func MongoClientInit(conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+func MongoClientInit(ctx context.Context, conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+	client, err := conf.Config.MongoClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return connectAndPing(ctx, client, conf.MaxConnLifetime)
+}
 
-	client, err := conf.Config.MongoClient()
+// MongoClientInitNoAuth creates, connects, and pings a MongoDB client without
+// authentication. Used for bootstrapping the original admin user.
+func MongoClientInitNoAuth(ctx context.Context, conf *MongoDatabaseConfiguration) (*mongo.Client, error) {
+	client, err := conf.Config.MongoClientNoAuth(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), conf.MaxConnLifetime*time.Second)
+	return connectAndPing(ctx, client, conf.MaxConnLifetime)
+}
+
+func connectAndPing(ctx context.Context, client *mongo.Client, maxConnLifetime time.Duration) (*mongo.Client, error) {
+	ctx, cancel := context.WithTimeout(ctx, maxConnLifetime*time.Second)
 	defer cancel()
-	err = client.Connect(ctx)
-	if err != nil {
+	if err := client.Connect(ctx); err != nil {
 		return nil, err
 	}
-	err = client.Ping(ctx, nil)
-	if err != nil {
+	if err := client.Ping(ctx, nil); err != nil {
 		return nil, err
 	}
 	return client, nil

@@ -2,11 +2,12 @@ package mongodb
 
 import (
 	"context"
+	"regexp"
+	"time"
+
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"regexp"
-	"time"
 )
 
 func Provider() *schema.Provider {
@@ -33,14 +34,14 @@ func Provider() *schema.Provider {
 
 			"username": {
 				Type:        schema.TypeString,
-				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("MONGO_USR", nil),
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("MONGO_USR", ""),
 				Description: "The mongodb user",
 			},
 			"password": {
 				Type:        schema.TypeString,
-				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("MONGO_PWD", nil),
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("MONGO_PWD", ""),
 				Description: "The mongodb password",
 			},
 			"auth_database": {
@@ -89,10 +90,7 @@ func Provider() *schema.Provider {
 				ValidateDiagFunc: validateDiagFunc(validation.StringMatch(regexp.MustCompile("^socks5h?://.*:\\d+$"), "The proxy URL is not a valid socks url.")),
 			},
 		},
-		ResourcesMap: map[string]*schema.Resource{
-			"mongodb_db_user": resourceDatabaseUser(),
-			"mongodb_db_role": resourceDatabaseRole(),
-		},
+		ResourcesMap:         BuildResourceMap(AllResources(), parseEnableList()),
 		DataSourcesMap:       map[string]*schema.Resource{},
 		ConfigureContextFunc: providerConfigure,
 	}

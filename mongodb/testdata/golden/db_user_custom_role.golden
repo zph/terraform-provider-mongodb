@@ -1,0 +1,80 @@
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: createRole
+Database: admin
+Body:
+{
+  "createRole": "golden_app_readwrite_role",
+  "privileges": [
+    {
+      "resource": {
+        "db": "golden_app_db",
+        "collection": ""
+      },
+      "actions": [
+        "find",
+        "insert",
+        "update",
+        "remove"
+      ]
+    }
+  ],
+  "roles": []
+}
+
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: rolesInfo
+Database: admin
+Body:
+{
+  "rolesInfo": {
+    "role": "golden_app_readwrite_role",
+    "db": "admin"
+  },
+  "showPrivileges": true
+}
+
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: createUser
+Database: admin
+Body:
+{
+  "createUser": "golden_app_user",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "golden_app_readwrite_role",
+      "db": "admin"
+    },
+    {
+      "role": "read",
+      "db": "config"
+    }
+  ]
+}
+
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: usersInfo
+Database: admin
+Body:
+{
+  "usersInfo": {
+    "user": "golden_app_user",
+    "db": "admin"
+  }
+}
+
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: dropUser
+Database: admin
+Body:
+{
+  "dropUser": "golden_app_user"
+}
+
+Source: TestGolden_DbUser_CustomRole (mongodb/golden_test.go)
+Command: dropRole
+Database: admin
+Body:
+{
+  "dropRole": "golden_app_readwrite_role"
+}

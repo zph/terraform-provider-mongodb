@@ -1,0 +1,67 @@
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: createUser
+Database: golden_app_db
+Body:
+{
+  "createUser": "golden_app_reader",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "read",
+      "db": "golden_app_db"
+    }
+  ]
+}
+
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: usersInfo
+Database: golden_app_db
+Body:
+{
+  "usersInfo": {
+    "user": "golden_app_reader",
+    "db": "golden_app_db"
+  }
+}
+
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: dropUser
+Database: golden_app_db
+Body:
+{
+  "dropUser": "golden_app_reader"
+}
+
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: createUser
+Database: golden_app_db
+Body:
+{
+  "createUser": "golden_app_reader",
+  "pwd": "[REDACTED]",
+  "roles": [
+    {
+      "role": "read",
+      "db": "golden_app_db"
+    }
+  ]
+}
+
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: usersInfo
+Database: golden_app_db
+Body:
+{
+  "usersInfo": {
+    "user": "golden_app_reader",
+    "db": "golden_app_db"
+  }
+}
+
+Source: TestGolden_DbUser_Basic (mongodb/golden_test.go)
+Command: dropUser
+Database: golden_app_db
+Body:
+{
+  "dropUser": "golden_app_reader"
+}

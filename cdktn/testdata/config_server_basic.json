@@ -1,0 +1,106 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "configsvr_csrs_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg1",
+        "password": "pass",
+        "port": "27019",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_csrs_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg2",
+        "password": "pass",
+        "port": "27020",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_csrs_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg3",
+        "password": "pass",
+        "port": "27021",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_db_role": {
+      "configsvr_csrs_0_role_ConfigRole": {
+        "database": "admin",
+        "name": "ConfigRole",
+        "provider": "mongodb.configsvr_csrs_0"
+      },
+      "configsvr_csrs_1_role_ConfigRole": {
+        "database": "admin",
+        "name": "ConfigRole",
+        "provider": "mongodb.configsvr_csrs_1"
+      },
+      "configsvr_csrs_2_role_ConfigRole": {
+        "database": "admin",
+        "name": "ConfigRole",
+        "provider": "mongodb.configsvr_csrs_2"
+      }
+    },
+    "mongodb_db_user": {
+      "configsvr_csrs_0_user_monitor": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.configsvr_csrs_0_role_ConfigRole"
+        ],
+        "name": "monitor",
+        "password": "mon",
+        "provider": "mongodb.configsvr_csrs_0"
+      },
+      "configsvr_csrs_1_user_monitor": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.configsvr_csrs_1_role_ConfigRole"
+        ],
+        "name": "monitor",
+        "password": "mon",
+        "provider": "mongodb.configsvr_csrs_1"
+      },
+      "configsvr_csrs_2_user_monitor": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.configsvr_csrs_2_role_ConfigRole"
+        ],
+        "name": "monitor",
+        "password": "mon",
+        "provider": "mongodb.configsvr_csrs_2"
+      }
+    },
+    "mongodb_shard_config": {
+      "csrs_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.configsvr_csrs_0",
+        "shard_name": "csrs"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

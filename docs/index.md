@@ -22,7 +22,7 @@ provider "mongodb" {
   retrywrites = false # default true
   direct = true // default false
   proxy = "socks5://myproxy:8080" // Optional
-  
+
 }
 ```
 
@@ -32,11 +32,11 @@ provider "mongodb" {
 # Configure the MongoDB Provider
 provider "mongodb" {
 
-  insecure_skip_verify = true  # default false (set to true to ignore hostname verification) 
+  insecure_skip_verify = true  # default false (set to true to ignore hostname verification)
   # -> specify certificate path
   certificate = file(pathexpand("path/to/certificate/ca.pem"))
 
-  
+
 }
 ```
 
@@ -106,4 +106,3 @@ arguments](https://www.terraform.io/docs/configuration/providers.html) (e.g.
 * `retrywrites   ` - (Optional) `default = true `Retryable writes allow MongoDB drivers to automatically retry certain write operations a single time if they encounter network errors, or if they cannot find a healthy primary in the replica sets or sharded cluster.
 * `direct   ` - (Optional) `default = false ` determine if a direct connection is needed..
 * `proxy   ` - (Optional) `default = "" ` determine if connecting via a SOCKS5 proxy is needed, it can also be sourced from the `ALL_PROXY` or `all_proxy` environment variable.
-

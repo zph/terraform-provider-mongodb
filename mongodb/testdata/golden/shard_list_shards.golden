@@ -1,0 +1,7 @@
+Source: TestGolden_Shard_ListShards (mongodb/golden_test.go)
+Command: listShards
+Database: admin
+Body:
+{
+  "listShards": 1
+}
