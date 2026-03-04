@@ -7,7 +7,7 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden tag
 
 OS_ARCH=linux_amd64
 #
@@ -109,3 +109,10 @@ cdktn-test: ## Run CDKTN construct library tests
 
 cdktn-test-golden: ## Update CDKTN golden files
 	cd $(PROVIDER_ROOT)/cdktn && UPDATE_GOLDEN=1 go test ./...
+
+tag: ## Create a git tag from the VERSION file (v-prefixed)
+	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then \
+		echo "Tag v$(VERSION) already exists"; exit 1; \
+	fi
+	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	@echo "Tagged v$(VERSION). Run 'git push origin v$(VERSION)' to push."
