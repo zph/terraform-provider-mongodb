@@ -1115,8 +1115,7 @@ func TestGolden_Shard_AddRemove(t *testing.T) {
 		}
 	}
 
-	output := normalizeShardedBody(rec.String())
-	goldenCompare(t, "shard_add_remove.golden", output)
+	goldenCompare(t, "shard_add_remove.golden", rec.String())
 }
 
 // GOLDEN-023: WHEN TestGolden_Shard_ListShards runs against the existing
@@ -1142,6 +1141,5 @@ func TestGolden_Shard_ListShards(t *testing.T) {
 		t.Fatalf("expected at least 2 shards, got %d", len(shards.Shards))
 	}
 
-	output := normalizeShardedBody(rec.String())
-	goldenCompare(t, "shard_list_shards.golden", output)
+	goldenCompare(t, "shard_list_shards.golden", rec.String())
 }

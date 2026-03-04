@@ -3,7 +3,7 @@ Command: addShard
 Database: admin
 Body:
 {
-  "addShard": "<SHARD_HOST>"
+  "addShard": "shard03/shard03svr0:27018"
 }
 
 Source: TestGolden_Shard_AddRemove (mongodb/golden_test.go)
