@@ -17,12 +17,9 @@ provider "mongodb" {
 
 # Importing an existing MongoDB user into Terraform state.
 #
-# The import ID is base64-encoded "{auth_database}.{username}":
+# The import ID is "{auth_database}.{username}" (plain text):
 #
-#   $ printf '%s' "admin.existing_user" | base64
-#   YWRtaW4uZXhpc3RpbmdfdXNlcg==
-#
-#   $ terraform import mongodb_db_user.existing YWRtaW4uZXhpc3RpbmdfdXNlcg==
+#   $ terraform import mongodb_db_user.existing admin.existing_user
 #
 # After import, run `terraform plan` to verify state matches config.
 # Note: password cannot be read back from MongoDB, so set it to
