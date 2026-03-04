@@ -58,7 +58,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
 | Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
-| Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-021 |
+| Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-023 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
 | ID Format | `docs/specs/id-format-requirements.md` | IDFORMAT-001 through IDFORMAT-005 |
@@ -388,6 +388,8 @@ Each test captures commands for one example configuration's lifecycle and compar
 - `shard_config_basic.golden` — replSetReconfig + read (normalized)
 - `shard_config_mongos_discovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
 - `shard_config_multi_shard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
+- `shard_add_remove.golden` — addShard + listShards + removeShard lifecycle (sharded normalization)
+- `shard_list_shards.golden` — listShards against existing cluster (sharded normalization)
 - `original_user.golden` — bootstrap admin user
 - `pattern_monitoring_user.golden` — monitoring role + exporter user
 - `pattern_role_hierarchy.golden` — 3-tier role hierarchy with 3 users

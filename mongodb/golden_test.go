@@ -5,10 +5,15 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"testing"
 	"time"
 
+	"github.com/docker/go-connections/nat"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -950,4 +955,193 @@ func TestGolden_Pattern_RoleHierarchy(t *testing.T) {
 	}
 
 	goldenCompare(t, "pattern_role_hierarchy.golden", rec.String())
+}
+
+// --- Golden Tests: shard ---
+
+// startShard03Container starts a third shard container for add/remove lifecycle testing.
+// It returns the container, mapped host, mapped port, and a cleanup function.
+func startShard03Container(t *testing.T) (host, port string) {
+	t.Helper()
+	ctx := context.Background()
+
+	image := testMongoImage
+	if env := os.Getenv("MONGO_TEST_IMAGE"); env != "" {
+		image = env
+	}
+
+	natPort := nat.Port("27018/tcp")
+	c, err := testcontainers.Run(ctx, image,
+		network.WithNetwork([]string{"shard03svr0"}, shardedCluster.network),
+		testcontainers.WithCmd(
+			"mongod", "--shardsvr", "--replSet", "shard03", "--port", "27018", "--bind_ip_all",
+		),
+		testcontainers.WithExposedPorts(string(natPort)),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort(natPort).WithStartupTimeout(120*time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("start shard03 container: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Terminate(ctx) })
+
+	// Init replica set
+	if err := initRS(ctx, c, "shard03", "shard03svr0", "27018"); err != nil {
+		t.Fatalf("init shard03 RS: %v", err)
+	}
+	if err := waitForPrimaryExec(ctx, c, "27018"); err != nil {
+		t.Fatalf("wait shard03 primary: %v", err)
+	}
+
+	h, err := c.Host(ctx)
+	if err != nil {
+		t.Fatalf("shard03 host: %v", err)
+	}
+	mapped, err := c.MappedPort(ctx, "27018")
+	if err != nil {
+		t.Fatalf("shard03 port: %v", err)
+	}
+
+	return h, mapped.Port()
+}
+
+// removeShard03Safe runs removeShard in a loop until completed or timeout, ignoring errors.
+func removeShard03Safe(client *mongo.Client) {
+	ctx := context.Background()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "removeShard", Value: "shard03"}})
+		if res.Err() != nil {
+			return
+		}
+		var resp ShardRemoveResp
+		if err := res.Decode(&resp); err != nil {
+			return
+		}
+		if resp.State == ShardRemoveCompleted {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// GOLDEN-022: WHEN TestGolden_Shard_AddRemove runs, it SHALL capture the full
+// addShard + listShards + removeShard lifecycle and compare against a golden file.
+func TestGolden_Shard_AddRemove(t *testing.T) {
+	ensureShardedCluster(t)
+
+	// Start shard03 container on the shared network
+	_, _ = startShard03Container(t)
+
+	source := fmt.Sprintf("%s (%s)", t.Name(), goldenTestFile)
+	rec := NewCommandRecorder(source)
+	ctx := context.Background()
+
+	mongosClient := newGoldenMongosClient(t, rec)
+	t.Cleanup(func() { removeShard03Safe(mongosClient) })
+
+	// Reset recorder — only capture addShard onward
+	rec.Reset()
+
+	// Create: addShard
+	connStr := BuildShardConnectionString("shard03", []string{"shard03svr0:27018"})
+	res := mongosClient.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "addShard", Value: connStr},
+	})
+	if res.Err() != nil {
+		t.Fatalf("addShard: %v", res.Err())
+	}
+	var addResp OKResponse
+	if err := res.Decode(&addResp); err != nil {
+		t.Fatalf("addShard decode: %v", err)
+	}
+	if addResp.OK != 1 {
+		t.Fatalf("addShard failed: %s", addResp.Errmsg)
+	}
+
+	// Read: listShards
+	shards, err := ListShards(ctx, mongosClient)
+	if err != nil {
+		t.Fatalf("ListShards: %v", err)
+	}
+
+	found := false
+	for _, s := range shards.Shards {
+		if s.ID == "shard03" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("shard03 not found in listShards after addShard")
+	}
+
+	// Delete: removeShard (poll until completed)
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("removeShard did not complete within 60s")
+		}
+
+		res := mongosClient.Database("admin").RunCommand(ctx, bson.D{
+			{Key: "removeShard", Value: "shard03"},
+		})
+		if res.Err() != nil {
+			t.Fatalf("removeShard: %v", res.Err())
+		}
+
+		var rmResp ShardRemoveResp
+		if err := res.Decode(&rmResp); err != nil {
+			t.Fatalf("removeShard decode: %v", err)
+		}
+		if rmResp.OK != 1 {
+			t.Fatalf("removeShard failed: %s", rmResp.Msg)
+		}
+
+		if rmResp.State == ShardRemoveCompleted {
+			break
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	// Verify removal: listShards should no longer contain shard03
+	shards, err = ListShards(ctx, mongosClient)
+	if err != nil {
+		t.Fatalf("ListShards after remove: %v", err)
+	}
+	for _, s := range shards.Shards {
+		if s.ID == "shard03" {
+			t.Error("shard03 still found in listShards after removal")
+		}
+	}
+
+	output := normalizeShardedBody(rec.String())
+	goldenCompare(t, "shard_add_remove.golden", output)
+}
+
+// GOLDEN-023: WHEN TestGolden_Shard_ListShards runs against the existing
+// sharded cluster, it SHALL capture the listShards command output and compare
+// against a golden file with sharded normalization.
+func TestGolden_Shard_ListShards(t *testing.T) {
+	ensureShardedCluster(t)
+
+	source := fmt.Sprintf("%s (%s)", t.Name(), goldenTestFile)
+	rec := NewCommandRecorder(source)
+	ctx := context.Background()
+
+	mongosClient := newGoldenMongosClient(t, rec)
+
+	// Reset to only capture listShards
+	rec.Reset()
+
+	shards, err := ListShards(ctx, mongosClient)
+	if err != nil {
+		t.Fatalf("ListShards: %v", err)
+	}
+	if len(shards.Shards) < 2 {
+		t.Fatalf("expected at least 2 shards, got %d", len(shards.Shards))
+	}
+
+	output := normalizeShardedBody(rec.String())
+	goldenCompare(t, "shard_list_shards.golden", output)
 }
