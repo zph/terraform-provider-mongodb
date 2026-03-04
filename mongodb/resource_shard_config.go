@@ -163,7 +163,7 @@ type ShardModel struct {
 // SHARD-003: Members are identified by host (case-sensitive exact match).
 type MemberOverride struct {
 	Host         string
-	Priority     int
+	Priority     float64
 	Votes        int
 	Hidden       bool
 	ArbiterOnly  bool
@@ -173,6 +173,23 @@ type MemberOverride struct {
 
 func intPtr(v int) *int    { return &v }
 func boolPtr(v bool) *bool { return &v }
+
+// toFloat64 converts Terraform schema priority (TypeFloat → float64, or int from state) to float64.
+func toFloat64(v interface{}) float64 {
+	if v == nil {
+		return 0
+	}
+	switch p := v.(type) {
+	case float64:
+		return p
+	case int:
+		return float64(p)
+	case int64:
+		return float64(p)
+	default:
+		return 0
+	}
+}
 func derefBool(p *bool) bool {
 	if p == nil {
 		return false
@@ -306,7 +323,7 @@ func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) 
 		}
 		override := MemberOverride{
 			Host:         host,
-			Priority:     m["priority"].(int),
+			Priority:     toFloat64(m["priority"]),
 			Votes:        m["votes"].(int),
 			Hidden:       m["hidden"].(bool),
 			ArbiterOnly:  m["arbiter_only"].(bool),
@@ -632,9 +649,9 @@ func resourceShardConfig() *schema.Resource {
 							Description: "Whether this member is hidden from client discovery",
 						},
 						"priority": {
-							Type:        schema.TypeInt,
+							Type:        schema.TypeFloat,
 							Optional:    true,
-							Description: "Election priority for this member (0 = never primary)",
+							Description: "Election priority for this member (0 = never primary). MongoDB accepts 0-1000 (integer or decimal).",
 						},
 						"tags": {
 							Type:     schema.TypeMap,

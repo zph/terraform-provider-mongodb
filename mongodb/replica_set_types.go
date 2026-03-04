@@ -49,7 +49,7 @@ type ConfigMember struct {
 	ArbiterOnly  *bool       `bson:"arbiterOnly,omitempty" json:"arbiterOnly,omitempty"`
 	BuildIndexes *bool       `bson:"buildIndexes,omitempty" json:"buildIndexes,omitempty"`
 	Hidden       *bool       `bson:"hidden,omitempty" json:"hidden,omitempty"`
-	Priority     int         `bson:"priority,omitempty" json:"priority,omitempty"`
+	Priority     float64     `bson:"priority,omitempty" json:"priority,omitempty"`
 	Tags         ReplsetTags `bson:"tags,omitempty" json:"tags,omitempty"`
 	SlaveDelay   *int64      `bson:"slaveDelay,omitempty" json:"slaveDelay,omitempty"`
 	Votes        *int        `bson:"votes,omitempty" json:"votes,omitempty"`

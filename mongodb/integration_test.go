@@ -552,8 +552,8 @@ func TestIntegration_MergeMembers_PriorityUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReplSetConfig after update failed: %v", err)
 	}
-	if updated.Members[0].Priority != newPriority {
-		t.Errorf("priority: want %d, got %d", newPriority, updated.Members[0].Priority)
+	if updated.Members[0].Priority != float64(newPriority) {
+		t.Errorf("priority: want %v, got %v", newPriority, updated.Members[0].Priority)
 	}
 }
 

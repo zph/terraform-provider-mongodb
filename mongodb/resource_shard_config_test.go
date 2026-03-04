@@ -71,13 +71,13 @@ func TestMergeMembers_SingleMemberPriority(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result[1].Priority != 5 {
-		t.Errorf("expected priority 5 on mongo2, got %d", result[1].Priority)
+		t.Errorf("expected priority 5 on mongo2, got %v", result[1].Priority)
 	}
 	if result[0].Priority != 1 {
-		t.Errorf("expected priority 1 on mongo1 unchanged, got %d", result[0].Priority)
+		t.Errorf("expected priority 1 on mongo1 unchanged, got %v", result[0].Priority)
 	}
 	if result[2].Priority != 1 {
-		t.Errorf("expected priority 1 on mongo3 unchanged, got %d", result[2].Priority)
+		t.Errorf("expected priority 1 on mongo3 unchanged, got %v", result[2].Priority)
 	}
 }
 
@@ -93,10 +93,10 @@ func TestMergeMembers_MultipleMemberOverrides(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result[0].Priority != 3 {
-		t.Errorf("expected mongo1 priority=3, got %d", result[0].Priority)
+		t.Errorf("expected mongo1 priority=3, got %v", result[0].Priority)
 	}
 	if result[2].Priority != 0 {
-		t.Errorf("expected mongo3 priority=0, got %d", result[2].Priority)
+		t.Errorf("expected mongo3 priority=0, got %v", result[2].Priority)
 	}
 	if *result[2].Hidden != true {
 		t.Errorf("expected mongo3 hidden=true, got %v", *result[2].Hidden)
@@ -152,7 +152,7 @@ func TestMergeMembers_AllFields(t *testing.T) {
 	}
 	m := result[0]
 	if m.Priority != 10 {
-		t.Errorf("priority: want 10, got %d", m.Priority)
+		t.Errorf("priority: want 10, got %v", m.Priority)
 	}
 	if *m.Votes != 1 {
 		t.Errorf("votes: want 1, got %d", *m.Votes)
@@ -184,7 +184,7 @@ func TestMergeMembers_PartialFields(t *testing.T) {
 	}
 	m := result[0]
 	if m.Priority != 5 {
-		t.Errorf("priority: want 5, got %d", m.Priority)
+		t.Errorf("priority: want 5, got %v", m.Priority)
 	}
 	if m.Tags["zone"] != "a" {
 		t.Errorf("tags: want {zone:a}, got %v", m.Tags)
@@ -220,7 +220,7 @@ func TestMergeMembers_TagsReplace(t *testing.T) {
 func TestMergeMembers_UnlistedPreserved(t *testing.T) {
 	rs := threeNodeRS()
 	rs[1].Tags = ReplsetTags{"existing": "tag"}
-	rs[1].Priority = 7
+	rs[1].Priority = 7.0
 
 	overrides := []MemberOverride{
 		{Host: "mongo1:27017", Priority: 2, Votes: 1, BuildIndexes: true},
@@ -231,14 +231,14 @@ func TestMergeMembers_UnlistedPreserved(t *testing.T) {
 	}
 	// mongo2 should be completely unchanged
 	if result[1].Priority != 7 {
-		t.Errorf("unlisted member priority changed: want 7, got %d", result[1].Priority)
+		t.Errorf("unlisted member priority changed: want 7, got %v", result[1].Priority)
 	}
 	if result[1].Tags["existing"] != "tag" {
 		t.Errorf("unlisted member tags changed: want {existing:tag}, got %v", result[1].Tags)
 	}
 	// mongo3 should also be unchanged
 	if result[2].Priority != 1 {
-		t.Errorf("unlisted member mongo3 priority changed: want 1, got %d", result[2].Priority)
+		t.Errorf("unlisted member mongo3 priority changed: want 1, got %v", result[2].Priority)
 	}
 }
 
@@ -263,7 +263,7 @@ func TestRSConfigMembersToState_AllFields(t *testing.T) {
 	if m["host"] != "mongo1:27017" {
 		t.Errorf("host: want mongo1:27017, got %v", m["host"])
 	}
-	if m["priority"] != 5 {
+	if m["priority"] != 5.0 {
 		t.Errorf("priority: want 5, got %v", m["priority"])
 	}
 	if m["votes"] != 1 {

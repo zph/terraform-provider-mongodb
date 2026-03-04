@@ -165,7 +165,7 @@ func TestConfigMemberBSONRoundTrip(t *testing.T) {
 		ID:          0,
 		Host:        "localhost:27017",
 		ArbiterOnly: &arbiter,
-		Priority:    2,
+		Priority:    2.0,
 		Votes:       &votes,
 	}
 	data, err := bson.Marshal(original)
@@ -183,7 +183,7 @@ func TestConfigMemberBSONRoundTrip(t *testing.T) {
 		t.Errorf("Host mismatch: got %s, want %s", decoded.Host, original.Host)
 	}
 	if decoded.Priority != original.Priority {
-		t.Errorf("Priority mismatch: got %d, want %d", decoded.Priority, original.Priority)
+		t.Errorf("Priority mismatch: got %v, want %v", decoded.Priority, original.Priority)
 	}
 	if *decoded.ArbiterOnly != *original.ArbiterOnly {
 		t.Errorf("ArbiterOnly mismatch: got %v, want %v", *decoded.ArbiterOnly, *original.ArbiterOnly)
@@ -200,8 +200,8 @@ func TestRSConfigBSONRoundTrip(t *testing.T) {
 		ID:      "rs0",
 		Version: 3,
 		Members: ConfigMembers{
-			{ID: 0, Host: "localhost:27017", Priority: 2, Votes: &votes},
-			{ID: 1, Host: "localhost:27018", Priority: 1, Votes: &votes},
+			{ID: 0, Host: "localhost:27017", Priority: 2.0, Votes: &votes},
+			{ID: 1, Host: "localhost:27018", Priority: 1.0, Votes: &votes},
 		},
 		Settings: Settings{
 			ChainingAllowed:         true,

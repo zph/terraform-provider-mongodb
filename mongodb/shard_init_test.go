@@ -117,7 +117,7 @@ func TestBuildInitialMembers_AllFields(t *testing.T) {
 		t.Errorf("host: want mongo1:27017, got %s", m.Host)
 	}
 	if m.Priority != 10 {
-		t.Errorf("priority: want 10, got %d", m.Priority)
+		t.Errorf("priority: want 10, got %v", m.Priority)
 	}
 	if derefInt(m.Votes) != 1 {
 		t.Errorf("votes: want 1, got %d", derefInt(m.Votes))
