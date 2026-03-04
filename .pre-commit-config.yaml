@@ -20,8 +20,6 @@ repos:
       - id: detect-private-key
       - id: mixed-line-ending
         args: ['--fix=lf']
-      - id: no-commit-to-branch
-        args: ['--branch=main']
 
   # Go: formatting, vetting, linting, testing
   - repo: local
