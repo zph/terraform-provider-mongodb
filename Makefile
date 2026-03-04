@@ -7,7 +7,7 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden tag
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden tag release
 
 OS_ARCH=linux_amd64
 #
@@ -116,3 +116,24 @@ tag: ## Create a git tag from the VERSION file (v-prefixed)
 	fi
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 	@echo "Tagged v$(VERSION). Run 'git push origin v$(VERSION)' to push."
+
+release: ## Bump VERSION (strip -dev), commit, tag, and push to trigger release
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "Error: working tree is dirty. Commit or stash changes first."; exit 1; \
+	fi
+	@CURRENT=$$(cat $(PROVIDER_ROOT)/VERSION | tr -d '[:space:]'); \
+	RELEASE=$${CURRENT%-dev}; \
+	if [ "$$CURRENT" = "$$RELEASE" ]; then \
+		echo "VERSION ($$CURRENT) has no -dev suffix. Bump manually or pass BUMP=patch|minor|major."; exit 1; \
+	fi; \
+	echo "$$RELEASE" > $(PROVIDER_ROOT)/VERSION; \
+	git add $(PROVIDER_ROOT)/VERSION; \
+	git commit -m "Release v$$RELEASE"; \
+	git tag -a "v$$RELEASE" -m "Release v$$RELEASE"; \
+	git push && git push origin "v$$RELEASE"; \
+	NEXT_PATCH=$$(echo "$$RELEASE" | awk -F. '{printf "%s.%s.%s", $$1, $$2, $$3+1}'); \
+	echo "$${NEXT_PATCH}-dev" > $(PROVIDER_ROOT)/VERSION; \
+	git add $(PROVIDER_ROOT)/VERSION; \
+	git commit -m "Begin v$${NEXT_PATCH}-dev"; \
+	git push; \
+	echo "Released v$$RELEASE and bumped to $${NEXT_PATCH}-dev"

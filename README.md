@@ -113,3 +113,15 @@ make test-sharded-integration
 # All available targets
 make help
 ```
+
+### Releasing
+
+```bash
+make release
+```
+
+This strips `-dev` from `VERSION`, commits, tags `v<version>`, pushes both, then bumps `VERSION` to the next patch `-dev`. For example, `0.2.0-dev` becomes release `v0.2.0`, then `VERSION` is set to `0.2.1-dev`.
+
+Pushing a `v*` tag triggers the GitHub Actions release workflow, which builds binaries via GoReleaser and publishes to the Terraform Registry.
+
+To tag manually without the auto-bump: `make tag && git push origin v$(cat VERSION)`.
