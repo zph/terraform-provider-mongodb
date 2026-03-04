@@ -12,7 +12,7 @@ This document specifies requirements for pure Go unit tests in the terraform-pro
 
 ### ID Parsing
 
-All three resource types encode their Terraform state ID as base64("database.name"). The parse functions decode and split this, returning (name, database, error).
+All three resource types store their Terraform state ID in plain text `database.name` format. The parse functions split this string on ".", returning (name, database, error).
 
 **Test files:** `mongodb/resource_db_user_test.go`, `mongodb/resource_db_role_test.go`, `mongodb/resource_shard_config_test.go`
 **Source functions:** `resourceDatabaseUserParseId`, `resourceDatabaseRoleParseId`, `ResourceShardConfig.ParseId`
@@ -20,72 +20,72 @@ All three resource types encode their Terraform state ID as base64("database.nam
 **TEST-001:** Event Driven
 
 **Requirement:**
-When `resourceDatabaseUserParseId` receives a valid base64-encoded ID in the format "database.username", the Unit Test Suite SHALL return the username as the first value and the database as the second value with a nil error.
+When `resourceDatabaseUserParseId` receives a valid plain text ID in the format "database.username", the Unit Test Suite SHALL return the username as the first value and the database as the second value with a nil error.
 
 **Rationale:**
-The ID parsing is the inverse of ID creation and MUST correctly decompose the encoded ID to retrieve resources from MongoDB.
+The ID parsing is the inverse of ID creation and MUST correctly decompose the ID to retrieve resources from MongoDB.
 
 **Verification:**
-Encode "admin.testuser" as base64, call `resourceDatabaseUserParseId`, assert returns ("testuser", "admin", nil).
+Pass "admin.testuser" directly to `resourceDatabaseUserParseId`, assert returns ("testuser", "admin", nil).
 
 ---
 
 **TEST-002:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceDatabaseUserParseId` receives an invalid base64 string, then the Unit Test Suite SHALL return empty strings and a non-nil error.
+If `resourceDatabaseUserParseId` receives a string without a "." separator, then the Unit Test Suite SHALL return empty strings and a non-nil error.
 
 **Rationale:**
 Corrupted or tampered state IDs MUST produce a clear error rather than a panic or silent failure.
 
 **Verification:**
-Call with "not-valid-base64!@#", assert error is non-nil.
+Call with "nodotstring", assert error is non-nil.
 
 ---
 
 **TEST-003:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceDatabaseUserParseId` receives a valid base64 string that does not contain a "." separator, then the Unit Test Suite SHALL return empty strings and a non-nil error.
+If `resourceDatabaseUserParseId` receives a string without a "." separator, then the Unit Test Suite SHALL return empty strings and a non-nil error.
 
 **Rationale:**
-A base64-decodable string without the expected format is still invalid as a resource ID.
+A string without the expected separator format is invalid as a resource ID.
 
 **Verification:**
-Encode "nodotshere" as base64, call function, assert error is non-nil.
+Pass "nodotshere" directly to the function, assert error is non-nil.
 
 ---
 
 **TEST-004:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceDatabaseUserParseId` receives a valid base64 string where either the database or username portion is empty (e.g., ".username" or "database."), then the Unit Test Suite SHALL return empty strings and a non-nil error.
+If `resourceDatabaseUserParseId` receives a string where either the database or username portion is empty (e.g., ".username" or "database."), then the Unit Test Suite SHALL return empty strings and a non-nil error.
 
 **Rationale:**
 Both components of the ID are required for resource lookups.
 
 **Verification:**
-Encode ".username" and "database." as base64, call function for each, assert error is non-nil for both.
+Pass ".username" and "database." directly to the function, assert error is non-nil for both.
 
 ---
 
 **TEST-005:** Event Driven
 
 **Requirement:**
-When `resourceDatabaseRoleParseId` receives a valid base64-encoded ID in the format "database.roleName", the Unit Test Suite SHALL return the roleName as the first value and the database as the second value with a nil error.
+When `resourceDatabaseRoleParseId` receives a valid plain text ID in the format "database.roleName", the Unit Test Suite SHALL return the roleName as the first value and the database as the second value with a nil error.
 
 **Rationale:**
 Role ID parsing follows the same contract as user ID parsing.
 
 **Verification:**
-Encode "admin.myRole" as base64, call function, assert returns ("myRole", "admin", nil).
+Pass "admin.myRole" directly to the function, assert returns ("myRole", "admin", nil).
 
 ---
 
 **TEST-006:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceDatabaseRoleParseId` receives invalid base64 or a decoded string missing the "." separator or containing empty parts, then the Unit Test Suite SHALL return empty strings and a non-nil error.
+If `resourceDatabaseRoleParseId` receives a string missing the "." separator or containing empty parts, then the Unit Test Suite SHALL return empty strings and a non-nil error.
 
 **Rationale:**
 Same error contract as user ID parsing applies to role ID parsing.
@@ -98,20 +98,20 @@ Repeat TEST-002, TEST-003, TEST-004 patterns against `resourceDatabaseRoleParseI
 **TEST-007:** Event Driven
 
 **Requirement:**
-When `ResourceShardConfig.ParseId` receives a valid base64-encoded ID in the format "database.shardName", the Unit Test Suite SHALL return the shardName as the first value and the database as the second value with a nil error.
+When `ResourceShardConfig.ParseId` receives a valid plain text ID in the format "database.shardName", the Unit Test Suite SHALL return the shardName as the first value and the database as the second value with a nil error.
 
 **Rationale:**
 Shard config ID parsing follows the same contract as user and role ID parsing.
 
 **Verification:**
-Encode "admin.shard01" as base64, call method, assert returns ("shard01", "admin", nil).
+Pass "admin.shard01" directly to the method, assert returns ("shard01", "admin", nil).
 
 ---
 
 **TEST-008:** Unwanted Behaviour
 
 **Requirement:**
-If `ResourceShardConfig.ParseId` receives invalid base64 or a decoded string missing the "." separator or containing empty parts, then the Unit Test Suite SHALL return empty strings and a non-nil error.
+If `ResourceShardConfig.ParseId` receives a string missing the "." separator or containing empty parts, then the Unit Test Suite SHALL return empty strings and a non-nil error.
 
 **Rationale:**
 Same error contract as user and role ID parsing applies to shard config ID parsing.
@@ -743,39 +743,39 @@ Call `resourceOriginalUser()`, invoke `InternalValidate(nil, true)`, assert no e
 **TEST-052:** Event Driven
 
 **Requirement:**
-When `resourceOriginalUserParseId` receives a valid base64-encoded ID in "database.username" format, the Unit Test Suite SHALL return (username, database, nil).
+When `resourceOriginalUserParseId` receives a valid plain text ID in "database.username" format, the Unit Test Suite SHALL return (username, database, nil).
 
 **Rationale:**
-ID parsing MUST correctly decompose the encoded ID for resource lookups.
+ID parsing MUST correctly decompose the ID for resource lookups.
 
 **Verification:**
-Encode "admin.myadmin" as base64, call `resourceOriginalUserParseId`, assert ("myadmin", "admin", nil).
+Pass "admin.myadmin" directly to `resourceOriginalUserParseId`, assert ("myadmin", "admin", nil).
 
 ---
 
 **TEST-053:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceOriginalUserParseId` receives invalid base64, then the Unit Test Suite SHALL return a non-nil error.
+If `resourceOriginalUserParseId` receives a string without a "." separator, then the Unit Test Suite SHALL return a non-nil error.
 
 **Rationale:**
 Corrupted state IDs MUST fail with a clear error.
 
 **Verification:**
-Call with "not-valid!@#", assert error is non-nil.
+Call with "nodotstring", assert error is non-nil.
 
 ---
 
 **TEST-054:** Unwanted Behaviour
 
 **Requirement:**
-If `resourceOriginalUserParseId` receives valid base64 without a "." separator, then the Unit Test Suite SHALL return a non-nil error.
+If `resourceOriginalUserParseId` receives a string without a "." separator, then the Unit Test Suite SHALL return a non-nil error.
 
 **Rationale:**
 Malformed IDs MUST be rejected.
 
 **Verification:**
-Encode "nodotshere" as base64, call, assert error is non-nil.
+Pass "nodotshere" directly to the function, assert error is non-nil.
 
 ---
 
@@ -788,7 +788,7 @@ If `resourceOriginalUserParseId` receives an ID with empty database or empty use
 Empty components indicate a corrupted ID and MUST be rejected.
 
 **Verification:**
-Test both ".username" and "database." encoded as base64, assert error for each.
+Pass both ".username" and "database." directly to the function, assert error for each.
 
 ---
 

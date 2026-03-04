@@ -4,8 +4,6 @@
 
 ~> **IMPORTANT:** Delete is a no-op. When this resource is destroyed, Terraform removes it from state but does **not** reset the MongoDB replica set configuration. To restore defaults, manually reconfigure the replica set.
 
-~> **IMPORTANT:** Read currently only retrieves the `shard_name` and resource ID. Changes made to settings outside of Terraform (drift) will not be detected. This is a known limitation.
-
 ## Example Usage
 
 ### Basic settings
@@ -155,5 +153,4 @@ $ terraform import mongodb_shard_config.shard01 shard01
 ## Known Limitations
 
 * **Delete is a no-op:** Destroying this resource only removes it from Terraform state. The replica set configuration in MongoDB is not reverted.
-* **No drift detection on settings:** Read only populates `shard_name` and the resource ID. If settings are changed outside Terraform, `terraform plan` will not show a diff.
 * **No force reconfiguration:** The provider does not support the `force` flag for `replSetReconfig`, which is needed when a majority of members are unreachable.

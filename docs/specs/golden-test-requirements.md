@@ -59,3 +59,9 @@ GOLDEN-019: WHEN normalizeShardedBody processes output, it SHALL normalize shard
 GOLDEN-020: WHEN TestGolden_ShardConfig_MongosDiscovery runs, it SHALL capture listShards via mongos, then replSetGetConfig, replSetReconfig, replSetGetConfig on a shard, and compare against a golden file with sharded normalization.
 
 GOLDEN-021: WHEN TestGolden_ShardConfig_MultiShard runs, it SHALL capture listShards via mongos, then independent replSetGetConfig on both shard01 and shard02, and compare against a golden file with sharded normalization.
+
+## Shard Resource Golden Tests
+
+GOLDEN-022: WHEN TestGolden_Shard_AddRemove runs, it SHALL start a third shard container, capture addShard, listShards, removeShard (polling), and a final listShards verification, and compare against a golden file without normalization (shard commands use deterministic internal Docker hostnames).
+
+GOLDEN-023: WHEN TestGolden_Shard_ListShards runs against the existing sharded cluster, it SHALL capture the listShards command and compare against a golden file without normalization.
