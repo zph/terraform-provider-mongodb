@@ -54,6 +54,10 @@ func AllResources() []ResourceRegistration {
 		{Name: "mongodb_profiler", Factory: resourceProfiler, Maturity: ResourceExperimental},
 		// PARAM-011
 		{Name: "mongodb_server_parameter", Factory: resourceServerParameter, Maturity: ResourceExperimental},
+		// BAL-014
+		{Name: "mongodb_balancer_config", Factory: resourceBalancerConfig, Maturity: ResourceExperimental},
+		// CBAL-011
+		{Name: "mongodb_collection_balancing", Factory: resourceCollectionBalancing, Maturity: ResourceExperimental},
 	}
 }
 

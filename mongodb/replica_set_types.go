@@ -361,6 +361,26 @@ func GetOplogConfig(ctx context.Context, client *mongo.Client) (*OplogConfig, er
 	}, nil
 }
 
+// GetFCV retrieves the featureCompatibilityVersion string from MongoDB.
+// CBAL-003, CBAL-004
+func GetFCV(ctx context.Context, client *mongo.Client) (string, error) {
+	var resp FCV
+	res := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: 1},
+		{Key: "featureCompatibilityVersion", Value: 1},
+	})
+	if res.Err() != nil {
+		return "", errors.Wrap(res.Err(), "getParameter featureCompatibilityVersion")
+	}
+	if err := res.Decode(&resp); err != nil {
+		return "", errors.Wrap(err, "failed to decode featureCompatibilityVersion")
+	}
+	if resp.OK != 1 {
+		return "", errors.Errorf("getParameter featureCompatibilityVersion: %s", resp.Errmsg)
+	}
+	return resp.FCV.Version, nil
+}
+
 // SetOplogConfig applies oplog size via replSetResizeOplog.
 // OPLOG-003, OPLOG-007
 func SetOplogConfig(ctx context.Context, client *mongo.Client, sizeMB float64) error {

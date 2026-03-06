@@ -15,6 +15,8 @@
 | `mongodb_shard` | `mongodb/resource_shard.go` | experimental | Add/remove shards from a mongos router |
 | `mongodb_profiler` | `mongodb/resource_profiler.go` | experimental | Manage per-database profiler configuration |
 | `mongodb_server_parameter` | `mongodb/resource_server_parameter.go` | experimental | Set/get MongoDB server parameters via setParameter |
+| `mongodb_balancer_config` | `mongodb/resource_balancer_config.go` | experimental | Manage global balancer settings (enable/disable, active window, chunk size) |
+| `mongodb_collection_balancing` | `mongodb/resource_collection_balancing.go` | experimental | Manage per-collection balancer enable/disable and chunk size override |
 
 ### Resource Documentation
 
@@ -29,13 +31,15 @@ Resource documentation is maintained in `docs/resources/`:
 | `mongodb_shard` | [`docs/resources/shard.md`](resources/shard.md) |
 | `mongodb_profiler` | [`docs/resources/profiler.md`](resources/profiler.md) |
 | `mongodb_server_parameter` | [`docs/resources/server_parameter.md`](resources/server_parameter.md) |
+| `mongodb_balancer_config` | [`docs/resources/balancer_config.md`](resources/balancer_config.md) |
+| `mongodb_collection_balancing` | [`docs/resources/collection_balancing.md`](resources/collection_balancing.md) |
 
 ### Resource Capability Gating
 
 Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
 
 ```bash
-export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter,mongodb_balancer_config,mongodb_collection_balancing
 ```
 
 The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resource-gating-requirements.md` for the EARS spec (GATE-001 through GATE-010).
@@ -55,6 +59,9 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_shard_config.go` | `mongodb_shard_config` resource: RS config + initialization flow |
 | `mongodb/resource_profiler.go` | `mongodb_profiler` resource: per-database profiler CRUD |
 | `mongodb/resource_server_parameter.go` | `mongodb_server_parameter` resource: setParameter/getParameter with type coercion |
+| `mongodb/resource_balancer_config.go` | `mongodb_balancer_config` resource: global balancer CRUD via balancerStart/Stop + config.settings |
+| `mongodb/resource_collection_balancing.go` | `mongodb_collection_balancing` resource: per-collection balancing via configureCollectionBalancing / config.collections |
+| `mongodb/mongos_helpers.go` | Shared `requireMongos` helper for mongos-only resources |
 
 ## EARS Specifications
 
@@ -72,6 +79,8 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | CatchUp Timeout | `docs/specs/catchup-timeout-requirements.md` | CATCHUP-001 through CATCHUP-005 |
 | Profiler | `docs/specs/profiler-requirements.md` | PROF-001 through PROF-011 |
 | Server Parameter | `docs/specs/server-parameter-requirements.md` | PARAM-001 through PARAM-012 |
+| Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
+| Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -90,6 +99,9 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
 | `mongodb/resource_profiler_test.go` | PROF-T01..T06 (6 tests) | none |
 | `mongodb/resource_server_parameter_test.go` | PARAM-T01..T10 (10 tests) | none |
+| `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
+| `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
+| `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
 ---
