@@ -37,6 +37,9 @@ const (
 	DefaultVotes        = 1
 	DefaultReadConcern  = "majority"
 	DefaultWriteConcern = "majority"
+
+	// BytesPerMB is the conversion factor from bytes to megabytes.
+	BytesPerMB = 1048576
 )
 
 // ReplsetTags Set tags: https://docs.mongodb.com/manual/tutorial/configure-replica-set-tag-sets/#add-tag-sets-to-a-replica-set
@@ -325,4 +328,57 @@ func GetReplSetConfig(ctx context.Context, client *mongo.Client) (*RSConfig, err
 	}
 
 	return resp.Config, nil
+}
+
+// OplogConfig holds the oplog size setting.
+type OplogConfig struct {
+	SizeMB float64
+}
+
+// CollStatsResponse holds the response from collStats on oplog.rs.
+type CollStatsResponse struct {
+	MaxSize    int64 `bson:"maxSize" json:"maxSize"`
+	OKResponse `bson:",inline"`
+}
+
+// GetOplogConfig reads the current oplog size via collStats on local.oplog.rs.
+// OPLOG-005
+func GetOplogConfig(ctx context.Context, client *mongo.Client) (*OplogConfig, error) {
+	resp := CollStatsResponse{}
+	res := client.Database("local").RunCommand(ctx, bson.D{{Key: "collStats", Value: "oplog.rs"}})
+	if res.Err() != nil {
+		return nil, errors.Wrap(res.Err(), "collStats oplog.rs")
+	}
+	if err := res.Decode(&resp); err != nil {
+		return nil, errors.Wrap(err, "failed to decode collStats oplog.rs")
+	}
+	if resp.OK != 1 {
+		return nil, errors.Errorf("collStats oplog.rs: %s", resp.Errmsg)
+	}
+
+	return &OplogConfig{
+		SizeMB: float64(resp.MaxSize) / float64(BytesPerMB),
+	}, nil
+}
+
+// SetOplogConfig applies oplog size via replSetResizeOplog.
+// OPLOG-003, OPLOG-007
+func SetOplogConfig(ctx context.Context, client *mongo.Client, sizeMB float64) error {
+	cmd := bson.D{
+		{Key: "replSetResizeOplog", Value: 1},
+		{Key: "size", Value: sizeMB},
+	}
+
+	resp := OKResponse{}
+	res := client.Database("admin").RunCommand(ctx, cmd)
+	if res.Err() != nil {
+		return errors.Wrap(res.Err(), "replSetResizeOplog")
+	}
+	if err := res.Decode(&resp); err != nil {
+		return errors.Wrap(err, "failed to decode replSetResizeOplog response")
+	}
+	if resp.OK != 1 {
+		return errors.Errorf("replSetResizeOplog: %s", resp.Errmsg)
+	}
+	return nil
 }

@@ -30,6 +30,17 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
+### With oplog size
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name              = "shard01"
+  chaining_allowed        = true
+  election_timeout_millis = 10000
+  oplog_size_mb           = 2048
+}
+```
+
 ### Mongos auto-discovery (sharded cluster)
 
 When the provider is connected to a mongos router, the resource automatically discovers shard topology via `listShards` and creates temporary direct connections to the appropriate replica set member.
@@ -74,6 +85,8 @@ resource "mongodb_shard_config" "shard01" {
 * `heartbeat_interval_millis` - (Optional) Frequency in milliseconds of the heartbeats. Default: `1000`.
 * `heartbeat_timeout_secs` - (Optional) Number of seconds that the replica set members wait for a successful heartbeat before marking a member as unreachable. Default: `10`.
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
+* `catch_up_timeout_millis` - (Optional) Time in milliseconds that a newly elected primary waits for secondaries to catch up before accepting writes. `-1` means infinite (MongoDB default). Default: `-1`.
+* `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. Configures the oplog capped collection size via `replSetResizeOplog`. When not set, the oplog size is left at its current value (MongoDB default).
 * `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election and majority health). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
 

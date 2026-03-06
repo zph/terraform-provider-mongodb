@@ -104,6 +104,8 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		config.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
 		config.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
 		config.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
+		// CATCHUP-002
+		config.Settings.CatchUpTimeoutMillis = int64(data.Get("catch_up_timeout_millis").(int))
 
 		if err := SetReplSetConfig(ctx, initClient, config); err != nil {
 			return diag.FromErr(err)
@@ -137,6 +139,10 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 	if err := data.Set("election_timeout_millis", finalConfig.Settings.ElectionTimeoutMillis); err != nil {
 		return diag.FromErr(err)
 	}
+	// CATCHUP-004
+	if err := data.Set("catch_up_timeout_millis", finalConfig.Settings.CatchUpTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
 
 	managedHosts := managedHostsFromState(data)
 	memberState := RSConfigMembersToState(finalConfig.Members, managedHosts)
@@ -144,14 +150,26 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(err)
 	}
 
+	// OPLOG-006: Apply oplog settings after RS is initialized and stable
+	if err := applyOplogConfig(ctx, initClient, data); err != nil {
+		return diag.FromErr(err)
+	}
+
+	// OPLOG-005: Read back oplog config
+	if err := readOplogConfig(ctx, initClient, data); err != nil {
+		return diag.FromErr(err)
+	}
+
 	return nil
 }
 
+// CATCHUP-005
 type SettingsModel struct {
 	ChainingAllowed         bool  `tfsdk:"chaining_allowed,omitempty"`
 	HeartbeatIntervalMillis int64 `tfsdk:"heartbeat_interval_millis,omitempty"`
 	HeartbeatTimeoutSecs    int   `tfsdk:"heartbeat_timeout_secs,omitempty"`
 	ElectionTimeoutMillis   int64 `tfsdk:"election_timeout_millis,omitempty"`
+	CatchUpTimeoutMillis    int64 `tfsdk:"catch_up_timeout_millis,omitempty"`
 }
 
 type ShardModel struct {
@@ -367,6 +385,36 @@ func managedHostsFromState(data *schema.ResourceData) map[string]bool {
 	return managed
 }
 
+// oplogConfigured returns true if oplog_size_mb is explicitly set.
+// OPLOG-004
+func oplogConfigured(data *schema.ResourceData) bool {
+	_, ok := data.GetOk("oplog_size_mb")
+	return ok
+}
+
+// applyOplogConfig applies oplog size via replSetResizeOplog if configured.
+// OPLOG-003, OPLOG-004, OPLOG-006
+func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
+	if !oplogConfigured(data) {
+		return nil
+	}
+	sizeMB := data.Get("oplog_size_mb").(float64)
+	return SetOplogConfig(ctx, client, sizeMB)
+}
+
+// readOplogConfig reads oplog size from MongoDB into Terraform state if configured.
+// OPLOG-005, OPLOG-008
+func readOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
+	if !oplogConfigured(data) {
+		return nil
+	}
+	cfg, err := GetOplogConfig(ctx, client)
+	if err != nil {
+		return err
+	}
+	return data.Set("oplog_size_mb", cfg.SizeMB)
+}
+
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var m ShardModel
 
@@ -374,6 +422,8 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	m.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
 	m.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
 	m.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
+	// CATCHUP-005
+	m.Settings.CatchUpTimeoutMillis = int64(data.Get("catch_up_timeout_millis").(int))
 	client, cleanup, errD := r.getShardClient(ctx, data, i)
 	if errD != nil {
 		return errD
@@ -396,6 +446,8 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	config.Settings.HeartbeatIntervalMillis = m.Settings.HeartbeatIntervalMillis
 	config.Settings.HeartbeatTimeoutSecs = m.Settings.HeartbeatTimeoutSecs
 	config.Settings.ElectionTimeoutMillis = m.Settings.ElectionTimeoutMillis
+	// CATCHUP-003
+	config.Settings.CatchUpTimeoutMillis = m.Settings.CatchUpTimeoutMillis
 
 	// SHARD-003/005/006: Apply member overrides if present
 	if overrides, ok := extractMemberOverrides(data); ok {
@@ -429,6 +481,11 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 		return diag.FromErr(err)
 	}
 
+	// OPLOG-003: Apply oplog configuration after replSetReconfig
+	if err := applyOplogConfig(ctx, client, data); err != nil {
+		return diag.FromErr(err)
+	}
+
 	data.SetId(config.ID)
 	if err := data.Set("shard_name", config.ID); err != nil {
 		return diag.FromErr(err)
@@ -445,11 +502,20 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
 		return diag.FromErr(err)
 	}
+	// CATCHUP-004
+	if err := data.Set("catch_up_timeout_millis", config.Settings.CatchUpTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
 
 	// SHARD-007/008: Read back member state for drift detection
 	managedHosts := managedHostsFromState(data)
 	memberState := RSConfigMembersToState(config.Members, managedHosts)
 	if err := data.Set("member", memberState); err != nil {
+		return diag.FromErr(err)
+	}
+
+	// OPLOG-005: Read back oplog state for drift detection
+	if err := readOplogConfig(ctx, client, data); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -489,11 +555,20 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	if err := data.Set("election_timeout_millis", config.Settings.ElectionTimeoutMillis); err != nil {
 		return diag.FromErr(err)
 	}
+	// CATCHUP-004
+	if err := data.Set("catch_up_timeout_millis", config.Settings.CatchUpTimeoutMillis); err != nil {
+		return diag.FromErr(err)
+	}
 
 	// SHARD-007/008/010: Read back managed members for drift detection
 	managedHosts := managedHostsFromState(data)
 	memberState := RSConfigMembersToState(config.Members, managedHosts)
 	if err := data.Set("member", memberState); err != nil {
+		return diag.FromErr(err)
+	}
+
+	// OPLOG-005: Read back oplog config for drift detection
+	if err := readOplogConfig(ctx, client, data); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -621,6 +696,12 @@ func resourceShardConfig() *schema.Resource {
 				Optional: true,
 				Default:  10000,
 			},
+			// CATCHUP-001: Optional catchup timeout in milliseconds
+			"catch_up_timeout_millis": {
+				Type:     schema.TypeInt,
+				Optional: true,
+				Default:  -1,
+			},
 			// SHARD-001: Optional member block for per-member configuration
 			"member": {
 				Type:     schema.TypeList,
@@ -675,6 +756,19 @@ func resourceShardConfig() *schema.Resource {
 				Optional:    true,
 				Default:     DefaultInitTimeoutSecs,
 				Description: "Timeout in seconds for replica set initialization.",
+			},
+			// OPLOG-001/002: Optional oplog size in megabytes
+			"oplog_size_mb": {
+				Type:     schema.TypeFloat,
+				Optional: true,
+				ValidateFunc: func(val interface{}, key string) ([]string, []error) {
+					v := val.(float64)
+					if v <= 0 {
+						return nil, []error{fmt.Errorf("%q must be > 0, got: %v", key, v)}
+					}
+					return nil, nil
+				},
+				Description: "Maximum oplog size in megabytes. Applied via replSetResizeOplog.",
 			},
 			// DISC-008: Override the shard host discovered via listShards
 			"host_override": {

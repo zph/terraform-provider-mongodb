@@ -7,7 +7,10 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden tag release
+# Supported MongoDB versions for integration test matrix
+MONGO_VERSIONS := 3.6 7
+
+.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
 
 OS_ARCH=linux_amd64
 #
@@ -77,10 +80,21 @@ test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cd
 
 test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
 
+test-ci: test-unit cdktn-test test-integration-matrix test-golden ## Unit + integration matrix (3.6, 7) + golden tests
+
 test-unit: ## Run Go unit tests
 	cd $(PROVIDER_ROOT) && go test ./...
 
-test-integration: ## Run integration tests (requires Docker)
+test-integration: ## Run integration tests excluding golden (requires Docker; override image with MONGO_TEST_IMAGE)
+	cd $(PROVIDER_ROOT) && go test -tags integration -run 'TestIntegration_|TestShardedIntegration_' -v -timeout 300s ./mongodb/
+
+test-integration-matrix: ## Run integration tests against all supported MongoDB versions
+	@for v in $(MONGO_VERSIONS); do \
+		echo "=== mongo:$$v ==="; \
+		MONGO_TEST_IMAGE="mongo:$$v" $(MAKE) test-integration || exit 1; \
+	done
+
+test-integration-all: ## Run all integration tests including golden (requires Docker)
 	cd $(PROVIDER_ROOT) && go test -tags integration -v -timeout 300s ./mongodb/
 
 test-plan: re-install ## Build provider and run terraform plan against examples

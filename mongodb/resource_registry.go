@@ -50,6 +50,10 @@ func AllResources() []ResourceRegistration {
 		{Name: "mongodb_original_user", Factory: resourceOriginalUser, Maturity: ResourceMature},
 		{Name: "mongodb_shard_config", Factory: resourceShardConfig, Maturity: ResourceExperimental},
 		{Name: "mongodb_shard", Factory: resourceShard, Maturity: ResourceExperimental},
+		// PROF-011
+		{Name: "mongodb_profiler", Factory: resourceProfiler, Maturity: ResourceExperimental},
+		// PARAM-011
+		{Name: "mongodb_server_parameter", Factory: resourceServerParameter, Maturity: ResourceExperimental},
 	}
 }
 
