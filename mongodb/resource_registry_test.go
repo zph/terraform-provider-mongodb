@@ -26,12 +26,13 @@ func TestAllResources_MatureClassification(t *testing.T) {
 // GATE-T02: Experimental resources are classified correctly
 func TestAllResources_ExperimentalClassification(t *testing.T) {
 	experimentalExpected := map[string]bool{
-		"mongodb_shard_config":         true,
-		"mongodb_shard":                true,
-		"mongodb_profiler":             true,
-		"mongodb_server_parameter":     true,
-		"mongodb_balancer_config":      true,
-		"mongodb_collection_balancing": true,
+		"mongodb_shard_config":                  true,
+		"mongodb_shard":                         true,
+		"mongodb_profiler":                      true,
+		"mongodb_server_parameter":              true,
+		"mongodb_balancer_config":               true,
+		"mongodb_collection_balancing":          true,
+		"mongodb_feature_compatibility_version": true,
 	}
 	for _, reg := range AllResources() {
 		if experimentalExpected[reg.Name] && reg.Maturity != ResourceExperimental {
@@ -63,7 +64,7 @@ func TestBuildResourceMap_DefaultDenyExperimental(t *testing.T) {
 	}
 
 	// Experimental resources MUST NOT be present
-	for _, name := range []string{"mongodb_shard_config", "mongodb_shard", "mongodb_profiler", "mongodb_server_parameter", "mongodb_balancer_config", "mongodb_collection_balancing"} {
+	for _, name := range []string{"mongodb_shard_config", "mongodb_shard", "mongodb_profiler", "mongodb_server_parameter", "mongodb_balancer_config", "mongodb_collection_balancing", "mongodb_feature_compatibility_version"} {
 		if _, ok := resources[name]; ok {
 			t.Errorf("experimental resource %q should NOT be in default resource map", name)
 		}
@@ -90,12 +91,13 @@ func TestBuildResourceMap_EnableOneExperimental(t *testing.T) {
 // GATE-T06: Explicit opt-in for all experimental resources
 func TestBuildResourceMap_EnableAllExperimental(t *testing.T) {
 	enableList := map[string]bool{
-		"mongodb_shard_config":         true,
-		"mongodb_shard":                true,
-		"mongodb_profiler":             true,
-		"mongodb_server_parameter":     true,
-		"mongodb_balancer_config":      true,
-		"mongodb_collection_balancing": true,
+		"mongodb_shard_config":                  true,
+		"mongodb_shard":                         true,
+		"mongodb_profiler":                      true,
+		"mongodb_server_parameter":              true,
+		"mongodb_balancer_config":               true,
+		"mongodb_collection_balancing":          true,
+		"mongodb_feature_compatibility_version": true,
 	}
 	resources := BuildResourceMap(AllResources(), enableList)
 
@@ -103,7 +105,7 @@ func TestBuildResourceMap_EnableAllExperimental(t *testing.T) {
 		"mongodb_db_user", "mongodb_db_role", "mongodb_original_user",
 		"mongodb_shard_config", "mongodb_shard", "mongodb_profiler",
 		"mongodb_server_parameter", "mongodb_balancer_config",
-		"mongodb_collection_balancing",
+		"mongodb_collection_balancing", "mongodb_feature_compatibility_version",
 	}
 	for _, name := range expected {
 		if _, ok := resources[name]; !ok {

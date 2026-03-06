@@ -17,6 +17,7 @@
 | `mongodb_server_parameter` | `mongodb/resource_server_parameter.go` | experimental | Set/get MongoDB server parameters via setParameter |
 | `mongodb_balancer_config` | `mongodb/resource_balancer_config.go` | experimental | Manage global balancer settings (enable/disable, active window, chunk size) |
 | `mongodb_collection_balancing` | `mongodb/resource_collection_balancing.go` | experimental | Manage per-collection balancer enable/disable and chunk size override |
+| `mongodb_feature_compatibility_version` | `mongodb/resource_fcv.go` | experimental | Manage featureCompatibilityVersion with danger_mode safety gate |
 
 ### Resource Documentation
 
@@ -33,13 +34,14 @@ Resource documentation is maintained in `docs/resources/`:
 | `mongodb_server_parameter` | [`docs/resources/server_parameter.md`](resources/server_parameter.md) |
 | `mongodb_balancer_config` | [`docs/resources/balancer_config.md`](resources/balancer_config.md) |
 | `mongodb_collection_balancing` | [`docs/resources/collection_balancing.md`](resources/collection_balancing.md) |
+| `mongodb_feature_compatibility_version` | [`docs/resources/feature_compatibility_version.md`](resources/feature_compatibility_version.md) |
 
 ### Resource Capability Gating
 
 Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
 
 ```bash
-export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter,mongodb_balancer_config,mongodb_collection_balancing
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter,mongodb_balancer_config,mongodb_collection_balancing,mongodb_feature_compatibility_version
 ```
 
 The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resource-gating-requirements.md` for the EARS spec (GATE-001 through GATE-010).
@@ -61,6 +63,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_server_parameter.go` | `mongodb_server_parameter` resource: setParameter/getParameter with type coercion |
 | `mongodb/resource_balancer_config.go` | `mongodb_balancer_config` resource: global balancer CRUD via balancerStart/Stop + config.settings |
 | `mongodb/resource_collection_balancing.go` | `mongodb_collection_balancing` resource: per-collection balancing via configureCollectionBalancing / config.collections |
+| `mongodb/resource_fcv.go` | `mongodb_feature_compatibility_version` resource: FCV management with danger_mode safety gate |
 | `mongodb/mongos_helpers.go` | Shared `requireMongos` helper for mongos-only resources |
 
 ## EARS Specifications
@@ -81,6 +84,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Server Parameter | `docs/specs/server-parameter-requirements.md` | PARAM-001 through PARAM-012 |
 | Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
 | Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
+| Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -101,6 +105,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_server_parameter_test.go` | PARAM-T01..T10 (10 tests) | none |
 | `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
 | `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
+| `mongodb/resource_fcv_test.go` | FCV-T01..T10 (10 tests) | none |
 | `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 

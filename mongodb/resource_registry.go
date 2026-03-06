@@ -58,6 +58,8 @@ func AllResources() []ResourceRegistration {
 		{Name: "mongodb_balancer_config", Factory: resourceBalancerConfig, Maturity: ResourceExperimental},
 		// CBAL-011
 		{Name: "mongodb_collection_balancing", Factory: resourceCollectionBalancing, Maturity: ResourceExperimental},
+		// FCV-013
+		{Name: "mongodb_feature_compatibility_version", Factory: resourceFCV, Maturity: ResourceExperimental},
 	}
 }
 
