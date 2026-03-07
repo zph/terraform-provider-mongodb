@@ -362,3 +362,50 @@ func TestShardConfigSchema_MemberBlock(t *testing.T) {
 		t.Error("member.host should be Required")
 	}
 }
+
+// --- Oplog Configuration tests ---
+
+// OPLOG-T01: OPLOG-001/002 — Schema has oplog_size_mb field, Optional TypeFloat
+func TestShardConfigSchema_OplogSizeMB(t *testing.T) {
+	res := resourceShardConfig()
+	field, ok := res.Schema["oplog_size_mb"]
+	if !ok {
+		t.Fatal("schema missing 'oplog_size_mb' field")
+	}
+	if field.Required {
+		t.Error("oplog_size_mb should be Optional")
+	}
+	if field.Type != schema.TypeFloat {
+		t.Errorf("oplog_size_mb should be TypeFloat, got %v", field.Type)
+	}
+	if field.ValidateFunc == nil {
+		t.Error("oplog_size_mb should have a ValidateFunc")
+	}
+}
+
+// --- CatchUp Timeout tests ---
+
+// CATCHUP-T01: CATCHUP-001 — Schema has catch_up_timeout_millis, Optional TypeInt Default -1
+func TestShardConfigSchema_CatchUpTimeoutMillis(t *testing.T) {
+	res := resourceShardConfig()
+	field, ok := res.Schema["catch_up_timeout_millis"]
+	if !ok {
+		t.Fatal("schema missing 'catch_up_timeout_millis' field")
+	}
+	if field.Required {
+		t.Error("catch_up_timeout_millis should be Optional")
+	}
+	if field.Type != schema.TypeInt {
+		t.Errorf("catch_up_timeout_millis should be TypeInt, got %v", field.Type)
+	}
+	if field.Default != -1 {
+		t.Errorf("catch_up_timeout_millis default should be -1, got %v", field.Default)
+	}
+}
+
+// OPLOG-T02: BytesPerMB constant is correct
+func TestBytesPerMB(t *testing.T) {
+	if BytesPerMB != 1048576 {
+		t.Errorf("BytesPerMB should be 1048576, got %d", BytesPerMB)
+	}
+}

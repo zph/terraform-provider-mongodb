@@ -67,10 +67,10 @@ repos:
         pass_filenames: false
 
       # Integration tests (require Docker via testcontainers)
-      - id: integration-test
-        name: integration test
+      - id: integration-test-matrix
+        name: integration test matrix (mongo 3.6 + 7)
         language: system
-        entry: go test -tags integration -v -timeout 300s ./mongodb/
+        entry: make test-integration-matrix
         files: '^mongodb/.*\.go$'
         pass_filenames: false
         stages: [pre-push]
@@ -78,7 +78,7 @@ repos:
       - id: golden-test
         name: golden test
         language: system
-        entry: go test -tags integration -run TestGolden -v -timeout 300s ./mongodb/
+        entry: make test-golden
         files: '^mongodb/.*\.go$'
         pass_filenames: false
         stages: [pre-push]

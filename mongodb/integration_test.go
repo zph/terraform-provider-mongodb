@@ -5,14 +5,17 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
-	tcmongodb "github.com/testcontainers/testcontainers-go/modules/mongodb"
+	texec "github.com/testcontainers/testcontainers-go/exec"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -27,7 +30,7 @@ const (
 
 // testMongoContainer holds the shared container state for integration tests.
 var testMongoContainer struct {
-	container *tcmongodb.MongoDBContainer
+	container *testcontainers.DockerContainer
 	host      string
 	port      string
 	client    *mongo.Client
@@ -46,6 +49,55 @@ func isPodman() bool {
 	return strings.Contains(strings.ToLower(string(out)), "podman")
 }
 
+// detectMongoShell probes a container for mongosh (7.0+) or mongo (3.6/4.x).
+// Returns the binary name that is available.
+func detectMongoShell(ctx context.Context, c *testcontainers.DockerContainer) string {
+	code, _, _ := c.Exec(ctx, []string{"mongosh", "--version"}, texec.Multiplexed())
+	if code == 0 {
+		return "mongosh"
+	}
+	return "mongo"
+}
+
+// mongoExec runs a JS expression against a container using the correct shell.
+func mongoExec(ctx context.Context, c *testcontainers.DockerContainer, port, js string) error {
+	shell := detectMongoShell(ctx, c)
+	code, reader, err := c.Exec(ctx, []string{
+		shell, "--port", port, "--quiet", "--eval", js,
+	}, texec.Multiplexed())
+	if err != nil {
+		return fmt.Errorf("exec failed: %w", err)
+	}
+	out, _ := io.ReadAll(reader)
+	if code != 0 {
+		return fmt.Errorf("exec exited %d: %s", code, string(out))
+	}
+	return nil
+}
+
+// waitForPrimary polls until the node is PRIMARY and writable.
+// Checks both rs.status().myState==1 and db.isMaster().ismaster==true
+// to handle the catch-up period in older MongoDB versions.
+func waitForPrimary(ctx context.Context, c *testcontainers.DockerContainer, port string) error {
+	shell := detectMongoShell(ctx, c)
+	js := `JSON.stringify({state: rs.status().myState, writable: db.isMaster().ismaster})`
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		code, reader, err := c.Exec(ctx, []string{
+			shell, "--port", port, "--quiet", "--eval", js,
+		}, texec.Multiplexed())
+		if err == nil && code == 0 {
+			out, _ := io.ReadAll(reader)
+			s := string(out)
+			if strings.Contains(s, `"state":1`) && strings.Contains(s, `"writable":true`) {
+				return nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for PRIMARY on port %s", port)
+}
+
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
@@ -59,13 +111,40 @@ func TestMain(m *testing.M) {
 		image = env
 	}
 
-	container, err := tcmongodb.Run(ctx, image,
-		tcmongodb.WithUsername(testAdminUser),
-		tcmongodb.WithPassword(testAdminPassword),
-		tcmongodb.WithReplicaSet(testReplSetName),
+	// Start MongoDB with generic container — works across all versions.
+	natPort := nat.Port("27017/tcp")
+	container, err := testcontainers.Run(ctx, image,
+		testcontainers.WithCmd(
+			"mongod", "--replSet", testReplSetName, "--port", "27017", "--bind_ip_all",
+		),
+		testcontainers.WithExposedPorts(string(natPort)),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort(natPort).WithStartupTimeout(120*time.Second),
+		),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start MongoDB container: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Init replica set
+	initJS := fmt.Sprintf(`rs.initiate({_id:"%s",members:[{_id:0,host:"localhost:27017"}]})`, testReplSetName)
+	if err := mongoExec(ctx, container, "27017", initJS); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to init replica set: %v\n", err)
+		os.Exit(1)
+	}
+	if err := waitForPrimary(ctx, container, "27017"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed waiting for PRIMARY: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create admin user
+	createAdminJS := fmt.Sprintf(
+		`db.getSiblingDB("admin").createUser({user:"%s",pwd:"%s",roles:["root"]})`,
+		testAdminUser, testAdminPassword,
+	)
+	if err := mongoExec(ctx, container, "27017", createAdminJS); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create admin user: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -684,5 +763,63 @@ func TestIntegration_ReadMembers_RoundTrip(t *testing.T) {
 	}
 }
 
+// --- Oplog Configuration tests ---
+
+// INTEG-022: GetOplogConfig returns positive SizeMB from a running replica set
+func TestIntegration_GetOplogConfig(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	config, err := GetOplogConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetOplogConfig failed: %v", err)
+	}
+	if config.SizeMB <= 0 {
+		t.Errorf("expected positive oplog size, got %v MB", config.SizeMB)
+	}
+}
+
+// INTEG-023: SetOplogConfig changes oplog size and persists
+func TestIntegration_SetOplogConfig_Size(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Use a round MB value to avoid fractional precision issues across versions.
+	newSize := float64(1024)
+	err := SetOplogConfig(ctx, client, newSize)
+	if err != nil {
+		t.Fatalf("SetOplogConfig failed: %v", err)
+	}
+
+	updated, err := GetOplogConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetOplogConfig after update failed: %v", err)
+	}
+	if updated.SizeMB != newSize {
+		t.Errorf("oplog size: expected %v, got %v", newSize, updated.SizeMB)
+	}
+}
+
+// INTEG-024: SetOplogConfig round-trip — set, read back, verify
+func TestIntegration_SetOplogConfig_RoundTrip(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Use a round MB value to avoid fractional precision issues across versions.
+	targetSize := float64(2048)
+	err := SetOplogConfig(ctx, client, targetSize)
+	if err != nil {
+		t.Fatalf("SetOplogConfig failed: %v", err)
+	}
+
+	readBack, err := GetOplogConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetOplogConfig read-back failed: %v", err)
+	}
+	if readBack.SizeMB != targetSize {
+		t.Errorf("round-trip mismatch: set %v, got %v", targetSize, readBack.SizeMB)
+	}
+}
+
 // Ensure testcontainers import is used (compile guard).
-var _ testcontainers.Container = (*tcmongodb.MongoDBContainer)(nil)
+var _ testcontainers.Container = (*testcontainers.DockerContainer)(nil)

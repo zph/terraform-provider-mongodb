@@ -1,6 +1,6 @@
 # terraform-provider-mongodb — Implementation
 
-**Last Updated:** 2026-03-03
+**Last Updated:** 2026-03-06
 
 ---
 
@@ -13,6 +13,11 @@
 | `mongodb_original_user` | `mongodb/resource_original_user.go` | mature | Bootstrap the initial admin user |
 | `mongodb_shard_config` | `mongodb/resource_shard_config.go` | experimental | Configure replica set settings and initialize uninitialized RS |
 | `mongodb_shard` | `mongodb/resource_shard.go` | experimental | Add/remove shards from a mongos router |
+| `mongodb_profiler` | `mongodb/resource_profiler.go` | experimental | Manage per-database profiler configuration |
+| `mongodb_server_parameter` | `mongodb/resource_server_parameter.go` | experimental | Set/get MongoDB server parameters via setParameter |
+| `mongodb_balancer_config` | `mongodb/resource_balancer_config.go` | experimental | Manage global balancer settings (enable/disable, active window, chunk size) |
+| `mongodb_collection_balancing` | `mongodb/resource_collection_balancing.go` | experimental | Manage per-collection balancer enable/disable and chunk size override |
+| `mongodb_feature_compatibility_version` | `mongodb/resource_fcv.go` | experimental | Manage featureCompatibilityVersion with danger_mode safety gate |
 
 ### Resource Documentation
 
@@ -25,13 +30,18 @@ Resource documentation is maintained in `docs/resources/`:
 | `mongodb_original_user` | [`docs/resources/original_user.md`](resources/original_user.md) |
 | `mongodb_shard_config` | [`docs/resources/shard_config.md`](resources/shard_config.md) |
 | `mongodb_shard` | [`docs/resources/shard.md`](resources/shard.md) |
+| `mongodb_profiler` | [`docs/resources/profiler.md`](resources/profiler.md) |
+| `mongodb_server_parameter` | [`docs/resources/server_parameter.md`](resources/server_parameter.md) |
+| `mongodb_balancer_config` | [`docs/resources/balancer_config.md`](resources/balancer_config.md) |
+| `mongodb_collection_balancing` | [`docs/resources/collection_balancing.md`](resources/collection_balancing.md) |
+| `mongodb_feature_compatibility_version` | [`docs/resources/feature_compatibility_version.md`](resources/feature_compatibility_version.md) |
 
 ### Resource Capability Gating
 
 Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
 
 ```bash
-export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter,mongodb_balancer_config,mongodb_collection_balancing,mongodb_feature_compatibility_version
 ```
 
 The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resource-gating-requirements.md` for the EARS spec (GATE-001 through GATE-010).
@@ -49,6 +59,12 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/shard_init.go` | RS initialization: `IsNotYetInitialized`, `IsAlreadyInitialized`, `BuildInitialMembers`, `InitiateReplicaSet`, `WaitForPrimary`, `WaitForMajorityHealthy`, `ConnectForInit` |
 | `mongodb/resource_shard.go` | `mongodb_shard` resource: `addShard`, `removeShard` with polling |
 | `mongodb/resource_shard_config.go` | `mongodb_shard_config` resource: RS config + initialization flow |
+| `mongodb/resource_profiler.go` | `mongodb_profiler` resource: per-database profiler CRUD |
+| `mongodb/resource_server_parameter.go` | `mongodb_server_parameter` resource: setParameter/getParameter with type coercion |
+| `mongodb/resource_balancer_config.go` | `mongodb_balancer_config` resource: global balancer CRUD via balancerStart/Stop + config.settings |
+| `mongodb/resource_collection_balancing.go` | `mongodb_collection_balancing` resource: per-collection balancing via configureCollectionBalancing / config.collections |
+| `mongodb/resource_fcv.go` | `mongodb_feature_compatibility_version` resource: FCV management with danger_mode safety gate |
+| `mongodb/mongos_helpers.go` | Shared `requireMongos` helper for mongos-only resources |
 
 ## EARS Specifications
 
@@ -62,6 +78,13 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
 | ID Format | `docs/specs/id-format-requirements.md` | IDFORMAT-001 through IDFORMAT-005 |
+| Oplog Configuration | `docs/specs/oplog-config-requirements.md` | OPLOG-001 through OPLOG-008 |
+| CatchUp Timeout | `docs/specs/catchup-timeout-requirements.md` | CATCHUP-001 through CATCHUP-005 |
+| Profiler | `docs/specs/profiler-requirements.md` | PROF-001 through PROF-011 |
+| Server Parameter | `docs/specs/server-parameter-requirements.md` | PARAM-001 through PARAM-012 |
+| Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
+| Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
+| Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -70,7 +93,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|-------|-----------|
 | `mongodb/shard_init_test.go` | INIT-T01..T12 (12 tests) | none |
 | `mongodb/resource_shard_test.go` | CLUS-T01..T06 (6 tests) | none |
-| `mongodb/resource_shard_config_test.go` | SHARD-T01..T13 (15 tests) | none |
+| `mongodb/resource_shard_config_test.go` | SHARD-T01..T13, CATCHUP-T01 (16 tests) | none |
 | `mongodb/shard_discovery_test.go` | DISC tests | none |
 | `mongodb/replica_set_types_test.go` | RS type tests | none |
 | `mongodb/config_test.go` | Config tests | none |
@@ -78,6 +101,12 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_registry_test.go` | GATE-T01..T15 (15 tests) | none |
 | `mongodb/parse_id_test.go` | IDFORMAT parse/format tests | none |
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
+| `mongodb/resource_profiler_test.go` | PROF-T01..T06 (6 tests) | none |
+| `mongodb/resource_server_parameter_test.go` | PARAM-T01..T10 (10 tests) | none |
+| `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
+| `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
+| `mongodb/resource_fcv_test.go` | FCV-T01..T10 (10 tests) | none |
+| `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
 ---

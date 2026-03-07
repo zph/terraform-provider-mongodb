@@ -50,6 +50,16 @@ func AllResources() []ResourceRegistration {
 		{Name: "mongodb_original_user", Factory: resourceOriginalUser, Maturity: ResourceMature},
 		{Name: "mongodb_shard_config", Factory: resourceShardConfig, Maturity: ResourceExperimental},
 		{Name: "mongodb_shard", Factory: resourceShard, Maturity: ResourceExperimental},
+		// PROF-011
+		{Name: "mongodb_profiler", Factory: resourceProfiler, Maturity: ResourceExperimental},
+		// PARAM-011
+		{Name: "mongodb_server_parameter", Factory: resourceServerParameter, Maturity: ResourceExperimental},
+		// BAL-014
+		{Name: "mongodb_balancer_config", Factory: resourceBalancerConfig, Maturity: ResourceExperimental},
+		// CBAL-011
+		{Name: "mongodb_collection_balancing", Factory: resourceCollectionBalancing, Maturity: ResourceExperimental},
+		// FCV-013
+		{Name: "mongodb_feature_compatibility_version", Factory: resourceFCV, Maturity: ResourceExperimental},
 	}
 }
 
