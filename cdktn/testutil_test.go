@@ -10,9 +10,11 @@ import (
 )
 
 // goldenCompare compares data against a golden file in testdata/.
+// The filename is derived from t.Name() (e.g. TestNewMongoShard_GoldenFile → TestNewMongoShard_GoldenFile.golden).
 // When the UPDATE_GOLDEN env var is set, it writes the golden file instead.
-func goldenCompare(t *testing.T, filename string, data []byte) {
+func goldenCompare(t *testing.T, data []byte) {
 	t.Helper()
+	filename := t.Name() + ".golden"
 	path := filepath.Join("testdata", filename)
 
 	if os.Getenv("UPDATE_GOLDEN") != "" {

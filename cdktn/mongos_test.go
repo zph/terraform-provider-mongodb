@@ -103,7 +103,7 @@ func TestNewMongoMongos_GoldenFile(t *testing.T) {
 	data, err := stack.Synth()
 	require.NoError(t, err)
 	assert.True(t, json.Valid(data))
-	goldenCompare(t, "mongos_basic.json", data)
+	goldenCompare(t, data)
 }
 
 // CDKTN-025: Duplicate host:port

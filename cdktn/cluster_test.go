@@ -249,7 +249,7 @@ func TestNewMongoShardedCluster_MinimalGolden(t *testing.T) {
 	data, err := cluster.Stack.Synth()
 	require.NoError(t, err)
 	assert.True(t, json.Valid(data))
-	goldenCompare(t, "cluster_minimal.json", data)
+	goldenCompare(t, data)
 }
 
 func TestNewMongoShardedCluster_FullGolden(t *testing.T) {
@@ -259,7 +259,7 @@ func TestNewMongoShardedCluster_FullGolden(t *testing.T) {
 	data, err := cluster.Stack.Synth()
 	require.NoError(t, err)
 	assert.True(t, json.Valid(data))
-	goldenCompare(t, "cluster_full.json", data)
+	goldenCompare(t, data)
 }
 
 // CDKTN-052: Cluster-level original users cascade to components

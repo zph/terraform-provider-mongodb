@@ -16,10 +16,12 @@ import (
 // fail the test with a diff message.
 
 // goldenCompare compares data against a golden file in testdata/golden/.
+// The filename is derived from t.Name() (e.g. TestGolden_DbUser_Basic → TestGolden_DbUser_Basic.golden).
 // When UPDATE_GOLDEN is set, it writes the file instead of comparing.
-func goldenCompare(t *testing.T, filename string, data string) {
+func goldenCompare(t *testing.T, data string) {
 	t.Helper()
 	dir := filepath.Join("testdata", "golden")
+	filename := t.Name() + ".golden"
 	path := filepath.Join(dir, filename)
 
 	if os.Getenv("UPDATE_GOLDEN") != "" {

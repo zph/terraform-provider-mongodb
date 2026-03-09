@@ -273,7 +273,7 @@ func TestNewMongoShard_MemberOverrides_GoldenFile(t *testing.T) {
 	data, err := stack.Synth()
 	require.NoError(t, err)
 	assert.True(t, json.Valid(data))
-	goldenCompare(t, "shard_with_members.json", data)
+	goldenCompare(t, data)
 }
 
 // CDKTN-052: Basic original user resource generation
@@ -437,5 +437,5 @@ func TestNewMongoShard_GoldenFile(t *testing.T) {
 	assert.True(t, json.Valid(data))
 
 	// If golden file exists, compare. Otherwise write it.
-	goldenCompare(t, "shard_basic.json", data)
+	goldenCompare(t, data)
 }

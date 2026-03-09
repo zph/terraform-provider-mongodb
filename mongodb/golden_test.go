@@ -182,7 +182,7 @@ func TestGolden_DbUser_Basic(t *testing.T) {
 		t.Fatalf("dropUser: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_user_basic.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbUser_CustomRole(t *testing.T) {
@@ -239,7 +239,7 @@ func TestGolden_DbUser_CustomRole(t *testing.T) {
 		t.Fatalf("dropRole: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_user_custom_role.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbUser_MultipleRoles(t *testing.T) {
@@ -304,7 +304,7 @@ func TestGolden_DbUser_MultipleRoles(t *testing.T) {
 		t.Fatalf("dropUser: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_user_multiple_roles.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbUser_Import(t *testing.T) {
@@ -336,7 +336,7 @@ func TestGolden_DbUser_Import(t *testing.T) {
 		t.Fatalf("dropUser: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_user_import.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // --- Golden Tests: db_role ---
@@ -385,7 +385,7 @@ func TestGolden_DbRole_Basic(t *testing.T) {
 		t.Fatalf("dropRole: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_role_basic.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbRole_ClusterPrivilege(t *testing.T) {
@@ -414,7 +414,7 @@ func TestGolden_DbRole_ClusterPrivilege(t *testing.T) {
 		t.Fatalf("dropRole: %v", result.Err())
 	}
 
-	goldenCompare(t, "db_role_cluster_privilege.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbRole_Composite(t *testing.T) {
@@ -483,7 +483,7 @@ func TestGolden_DbRole_Composite(t *testing.T) {
 		}
 	}
 
-	goldenCompare(t, "db_role_composite.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 func TestGolden_DbRole_Inherited(t *testing.T) {
@@ -531,7 +531,7 @@ func TestGolden_DbRole_Inherited(t *testing.T) {
 		}
 	}
 
-	goldenCompare(t, "db_role_inherited.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // --- Golden Tests: shard_config ---
@@ -668,7 +668,7 @@ func TestGolden_ShardConfig_Basic(t *testing.T) {
 	}
 
 	output := normalizeReplSetBody(rec.String())
-	goldenCompare(t, "shard_config_basic.golden", output)
+	goldenCompare(t, output)
 }
 
 // GOLDEN-020: WHEN TestGolden_ShardConfig_MongosDiscovery runs, it SHALL capture
@@ -718,7 +718,7 @@ func TestGolden_ShardConfig_MongosDiscovery(t *testing.T) {
 	}
 
 	output := normalizeShardedBody(rec.String())
-	goldenCompare(t, "shard_config_mongos_discovery.golden", output)
+	goldenCompare(t, output)
 }
 
 // GOLDEN-021: WHEN TestGolden_ShardConfig_MultiShard runs, it SHALL capture
@@ -758,7 +758,7 @@ func TestGolden_ShardConfig_MultiShard(t *testing.T) {
 	}
 
 	output := normalizeShardedBody(rec.String())
-	goldenCompare(t, "shard_config_multi_shard.golden", output)
+	goldenCompare(t, output)
 }
 
 // --- Golden Tests: original_user ---
@@ -792,7 +792,7 @@ func TestGolden_OriginalUser(t *testing.T) {
 		t.Fatalf("dropUser: %v", result.Err())
 	}
 
-	goldenCompare(t, "original_user.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // --- Golden Tests: patterns ---
@@ -855,7 +855,7 @@ func TestGolden_Pattern_MonitoringUser(t *testing.T) {
 		t.Fatalf("dropRole: %v", result.Err())
 	}
 
-	goldenCompare(t, "pattern_monitoring_user.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // GOLDEN-013: WHEN TestGolden_Pattern_RoleHierarchy runs, it SHALL capture
@@ -954,7 +954,7 @@ func TestGolden_Pattern_RoleHierarchy(t *testing.T) {
 		}
 	}
 
-	goldenCompare(t, "pattern_role_hierarchy.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // --- Golden Tests: shard ---
@@ -1115,7 +1115,7 @@ func TestGolden_Shard_AddRemove(t *testing.T) {
 		}
 	}
 
-	goldenCompare(t, "shard_add_remove.golden", rec.String())
+	goldenCompare(t, rec.String())
 }
 
 // GOLDEN-023: WHEN TestGolden_Shard_ListShards runs against the existing
@@ -1141,5 +1141,5 @@ func TestGolden_Shard_ListShards(t *testing.T) {
 		t.Fatalf("expected at least 2 shards, got %d", len(shards.Shards))
 	}
 
-	goldenCompare(t, "shard_list_shards.golden", rec.String())
+	goldenCompare(t, rec.String())
 }

@@ -155,12 +155,13 @@ terraform-provider-mongodb/
     mongos.go
     cluster.go
     *_test.go
-    testdata/                # golden JSON files for synthesis tests
-      cluster_minimal.json
-      cluster_full.json
-      shard_basic.json
-      config_server_basic.json
-      mongos_basic.json
+    testdata/                # golden files for synthesis tests (named by test function)
+      TestNewMongoShardedCluster_MinimalGolden.golden
+      TestNewMongoShardedCluster_FullGolden.golden
+      TestNewMongoShard_GoldenFile.golden
+      TestNewMongoShard_MemberOverrides_GoldenFile.golden
+      TestNewMongoConfigServer_GoldenFile.golden
+      TestNewMongoMongos_GoldenFile.golden
 ```
 
 ### Synthesis Engine
@@ -321,7 +322,7 @@ Pattern: `<component_type>_<replica_set_name>_<member_index>` for shards and con
 | CDKTN-040 | `auth_database = "admin"` default on all providers | Done | `provider_factory.go:BuildProviderConfig`, `constants.go:DefaultAuthDatabase` |
 | CDKTN-041 | Custom `auth_database` per member override | Not done | Not implemented in `MemberConfig` |
 | CDKTN-042 | `ProviderVersion` field in cluster props | Done | `types.go:MongoShardedClusterProps`, `cluster.go` |
-| CDKTN-043 | Unit tests with golden file comparisons | Done | `*_test.go`, `testdata/*.json` |
+| CDKTN-043 | Unit tests with golden file comparisons | Done | `*_test.go`, `testdata/*.golden` |
 | CDKTN-044 | Integration tests running `terraform validate` | Not done | See Future Work |
 | CDKTN-045 | E2E tests using `testcontainers-go` | Not done | See Future Work |
 | CDKTN-046 | Buildable via `make cdktn-build`, testable via `make cdktn-test` | Done | `Makefile` targets |
@@ -373,7 +374,7 @@ Tests live in `cdktn/*_test.go` (package `cdktn`, same package — white-box acc
 - Synthesized JSON structure via `SynthToMap()` assertions
 - Golden file comparisons via `goldenCompare()` in `testutil_test.go`
 
-**Golden files** (`testdata/*.json`) are committed JSON snapshots of known-good synthesis output. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
+**Golden files** (`testdata/<TestName>.golden`) are committed snapshots of known-good synthesis output. Filenames are derived automatically from `t.Name()`. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
 
 **Integration and E2E tests are not yet implemented** (CDKTN-044, CDKTN-045).
 
@@ -404,24 +405,24 @@ The provider includes a golden file testing engine that captures deterministic s
 
 ### Golden Files
 
-Each test captures commands for one example configuration's lifecycle and compares against a committed `.golden` file:
+Each test captures commands for one example configuration's lifecycle and compares against a committed `.golden` file. Filenames are derived automatically from `t.Name()` (e.g. `TestGolden_DbUser_Basic.golden`). One file per test case.
 
-- `db_user_basic.golden` — single user with one role (CRUD)
-- `db_user_custom_role.golden` — custom role + user (create + delete)
-- `db_user_multiple_roles.golden` — user with 4 roles (CRUD)
-- `db_user_import.golden` — import existing user
-- `db_role_basic.golden` — single privilege role (CRUD)
-- `db_role_cluster_privilege.golden` — cluster-level privilege
-- `db_role_composite.golden` — 3 roles with inheritance
-- `db_role_inherited.golden` — base + derived role
-- `shard_config_basic.golden` — replSetReconfig + read (normalized)
-- `shard_config_mongos_discovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
-- `shard_config_multi_shard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
-- `shard_add_remove.golden` — addShard + listShards + removeShard lifecycle (sharded normalization)
-- `shard_list_shards.golden` — listShards against existing cluster (sharded normalization)
-- `original_user.golden` — bootstrap admin user
-- `pattern_monitoring_user.golden` — monitoring role + exporter user
-- `pattern_role_hierarchy.golden` — 3-tier role hierarchy with 3 users
+- `TestGolden_DbUser_Basic.golden` — single user with one role (CRUD)
+- `TestGolden_DbUser_CustomRole.golden` — custom role + user (create + delete)
+- `TestGolden_DbUser_MultipleRoles.golden` — user with 4 roles (CRUD)
+- `TestGolden_DbUser_Import.golden` — import existing user
+- `TestGolden_DbRole_Basic.golden` — single privilege role (CRUD)
+- `TestGolden_DbRole_ClusterPrivilege.golden` — cluster-level privilege
+- `TestGolden_DbRole_Composite.golden` — 3 roles with inheritance
+- `TestGolden_DbRole_Inherited.golden` — base + derived role
+- `TestGolden_ShardConfig_Basic.golden` — replSetReconfig + read (normalized)
+- `TestGolden_ShardConfig_MongosDiscovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
+- `TestGolden_ShardConfig_MultiShard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
+- `TestGolden_Shard_AddRemove.golden` — addShard + listShards + removeShard lifecycle (sharded normalization)
+- `TestGolden_Shard_ListShards.golden` — listShards against existing cluster (sharded normalization)
+- `TestGolden_OriginalUser.golden` — bootstrap admin user
+- `TestGolden_Pattern_MonitoringUser.golden` — monitoring role + exporter user
+- `TestGolden_Pattern_RoleHierarchy.golden` — 3-tier role hierarchy with 3 users
 
 ### Shard Config Normalization
 
