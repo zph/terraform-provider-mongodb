@@ -85,7 +85,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
 | Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
 | Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
-| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-007 |
+| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-008 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files

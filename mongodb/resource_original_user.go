@@ -25,23 +25,19 @@ func resourceOriginalUser() *schema.Resource {
 		ReadContext:   resourceOriginalUserRead,
 		UpdateContext: resourceOriginalUserUpdate,
 		DeleteContext: resourceOriginalUserDelete,
-		// DANGER-009
+		// DANGER-009: block all updates at plan time
 		CustomizeDiff: customdiff.All(
-			func(ctx context.Context, d *schema.ResourceDiff, meta interface{}) error {
+			func(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
 				if d.Id() == "" {
 					return nil
 				}
 				if !d.HasChanges() {
 					return nil
 				}
-				allowDangerous := d.Get("allow_dangerous_update").(bool)
-				if !allowDangerous {
-					return fmt.Errorf(
-						"mongodb_original_user update uses drop+recreate and authenticates as the user " +
-							"it drops, risking cluster lockout; set allow_dangerous_update = true to proceed",
-					)
-				}
-				return nil
+				return fmt.Errorf(
+					"mongodb_original_user does not support updates; " +
+						"the original admin user cannot be safely dropped and recreated",
+				)
 			},
 		),
 		Schema: map[string]*schema.Schema{
@@ -109,13 +105,6 @@ func resourceOriginalUser() *schema.Resource {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
-			},
-			// DANGER-009
-			"allow_dangerous_update": {
-				Type:        schema.TypeBool,
-				Optional:    true,
-				Default:     false,
-				Description: "Must be true to allow updates. Updates use drop+recreate and authenticate as the user being dropped, risking cluster lockout.",
 			},
 		},
 	}
@@ -294,72 +283,30 @@ func resourceOriginalUserRead(ctx context.Context, data *schema.ResourceData, _ 
 	return nil
 }
 
-// ORIG-005: WHEN updating the original user, the resource SHALL connect with
-// authentication and recreate the user with new credentials/roles.
-func resourceOriginalUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	conf := buildOriginalUserAuthConfig(data)
-	ensureReplicaSetDiscovered(ctx, conf, data)
-
-	client, err := MongoClientInit(ctx, conf)
-	if err != nil {
-		return diag.Errorf("error connecting to MongoDB: %s", err)
-	}
-	defer func() { _ = client.Disconnect(ctx) }()
-
-	username, database, parseErr := resourceOriginalUserParseId(data.Id())
-	if parseErr != nil {
-		return diag.Errorf("%s", parseErr)
-	}
-
-	adminDB := client.Database(database)
-	result := adminDB.RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: username}})
-	if result.Err() != nil {
-		return diag.Errorf("error dropping user for update: %s", result.Err())
-	}
-
-	userPassword := data.Get("password").(string)
-	var roleList []Role
-	roles := data.Get("role").(*schema.Set).List()
-	if err := mapstructure.Decode(roles, &roleList); err != nil {
-		return diag.Errorf("error decoding roles: %s", err)
-	}
-	if len(roleList) == 0 {
-		roleList = []Role{{Role: "root", Db: defaultAuthDatabase}}
-	}
-
-	user := DbUser{Name: username, Password: userPassword}
-	if err := createUser(client, user, roleList, database); err != nil {
-		return diag.Errorf("could not recreate user: %s", err)
-	}
-
-	data.SetId(formatResourceId(database, username))
-	return resourceOriginalUserRead(ctx, data, i)
+// ORIG-005, DANGER-009: Update is fundamentally refused. The original implementation
+// authenticated as the user it was about to drop, risking cluster lockout. No drop
+// of the original admin user is ever performed. Destroy and recreate the resource
+// (which itself only removes state — see Delete) if you need to change credentials.
+func resourceOriginalUserUpdate(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
+	return diag.Errorf(
+		"mongodb_original_user does not support updates; " +
+			"the original admin user cannot be safely dropped and recreated",
+	)
 }
 
-// ORIG-006: WHEN deleting the original user, the resource SHALL connect with
-// authentication and drop the user.
-func resourceOriginalUserDelete(ctx context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	conf := buildOriginalUserAuthConfig(data)
-	ensureReplicaSetDiscovered(ctx, conf, data)
-
-	client, err := MongoClientInit(ctx, conf)
-	if err != nil {
-		return diag.Errorf("error connecting to MongoDB: %s", err)
+// ORIG-006, DANGER-008: Delete removes the resource from Terraform state but
+// does NOT drop the user from MongoDB. Dropping the original admin user would
+// lock out the cluster. Use `terraform state rm` if you need to disassociate
+// without any server-side effect, or manage the user lifecycle outside Terraform.
+func resourceOriginalUserDelete(_ context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
+	data.SetId("")
+	return diag.Diagnostics{
+		{
+			Severity: diag.Warning,
+			Summary:  "mongodb_original_user removed from state only",
+			Detail:   "The user was NOT dropped from MongoDB. Dropping the original admin user would lock out the cluster.",
+		},
 	}
-	defer func() { _ = client.Disconnect(ctx) }()
-
-	username, database, parseErr := resourceOriginalUserParseId(data.Id())
-	if parseErr != nil {
-		return diag.Errorf("%s", parseErr)
-	}
-
-	adminDB := client.Database(database)
-	result := adminDB.RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: username}})
-	if result.Err() != nil {
-		return diag.Errorf("error dropping user: %s", result.Err())
-	}
-
-	return nil
 }
 
 // resourceOriginalUserAdopt verifies the user already exists via auth and

@@ -87,8 +87,6 @@ resource "mongodb_original_user" "shard02_admin" {
 * `certificate` - (Optional, Sensitive) PEM-encoded certificate content for TLS.
 * `insecure_skip_verify` - (Optional) Skip certificate verification. Default: `false`.
 * `replica_set` - (Optional, Computed) Replica set name. Auto-discovered from the server via `isMaster` if not set. When present, the driver uses discovery mode to route writes to the primary.
-* `allow_dangerous_update` - (Optional) Must be `true` to allow updates. Updates use drop+recreate and authenticate as the user being dropped, risking cluster lockout. Default: `false`.
-
 ### Role
 
 Each role block assigns a role to the user. If no roles are specified, the user is granted the `root` role on `admin` by default.
@@ -113,14 +111,8 @@ Each role block assigns a role to the user. If no roles are specified, the user 
 
 ### Update
 
-~> **WARNING:** Updates are blocked by default because the update authenticates as the user it drops, risking cluster lockout. Set `allow_dangerous_update = true` to proceed.
-
-1. Blocked at plan time unless `allow_dangerous_update = true`.
-2. Connects with authentication.
-3. Drops the existing user.
-4. Recreates the user with updated credentials and roles.
+~> **BLOCKED:** Updates are unconditionally refused. The original implementation authenticated as the user it was about to drop, risking cluster lockout. Destroy and recreate the resource if you need to change credentials (Delete only removes state — see below).
 
 ### Delete
 
-1. Connects with authentication.
-2. Drops the user.
+~> **State-only removal.** Delete removes the resource from Terraform state but does **not** drop the user from MongoDB. Dropping the original admin user would lock out the cluster. A warning is emitted to confirm this behavior.
