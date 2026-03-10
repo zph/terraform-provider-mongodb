@@ -43,11 +43,16 @@ func resourceServerParameter() *schema.Resource {
 		ReadContext:   resourceServerParameterRead,
 		UpdateContext: resourceServerParameterUpdate,
 		DeleteContext: resourceServerParameterDelete,
+		// GATE-005: require feature opt-in
 		// DANGER-013: block parameter identity changes at plan time
+		// PREVIEW-013: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_server_parameter"),
 			blockFieldChange("parameter"),
+			previewCommands(serverParameterCommandPreview),
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"parameter": {
 				Type:     schema.TypeString,
 				Required: true,

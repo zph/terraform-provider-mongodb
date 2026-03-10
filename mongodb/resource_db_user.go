@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
@@ -18,7 +19,12 @@ func resourceDatabaseUser() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
+		// PREVIEW-016, PREVIEW-017: command preview
+		CustomizeDiff: customdiff.All(
+			previewCommands(dbUserCommandPreview),
+		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"auth_database": {
 				Type:     schema.TypeString,
 				Required: true,

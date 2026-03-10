@@ -35,11 +35,16 @@ func resourceCollectionBalancing() *schema.Resource {
 		ReadContext:   resourceCollectionBalancingRead,
 		UpdateContext: resourceCollectionBalancingUpdate,
 		DeleteContext: resourceCollectionBalancingDelete,
+		// GATE-005: require feature opt-in
 		// DANGER-014: block namespace identity changes at plan time
+		// PREVIEW-014: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_collection_balancing"),
 			blockFieldChange("namespace"),
+			previewCommands(collectionBalancingCommandPreview),
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"namespace": {
 				Type:     schema.TypeString,
 				Required: true,

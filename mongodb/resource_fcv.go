@@ -78,8 +78,12 @@ func resourceFCV() *schema.Resource {
 		ReadContext:   resourceFCVRead,
 		UpdateContext: resourceFCVUpdate,
 		DeleteContext: resourceFCVDelete,
+		// GATE-005: require feature opt-in
 		// FCV-008, FCV-009
+		// PREVIEW-020: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_feature_compatibility_version"),
+			previewCommands(fcvCommandPreview),
 			func(ctx context.Context, d *schema.ResourceDiff, meta interface{}) error {
 				// Only gate changes on existing resources (Id != "")
 				if d.Id() == "" {
@@ -101,6 +105,7 @@ func resourceFCV() *schema.Resource {
 			},
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"version": {
 				Type:         schema.TypeString,
 				Required:     true,

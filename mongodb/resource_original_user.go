@@ -26,7 +26,9 @@ func resourceOriginalUser() *schema.Resource {
 		UpdateContext: resourceOriginalUserUpdate,
 		DeleteContext: resourceOriginalUserDelete,
 		// DANGER-009: block all updates at plan time
+		// PREVIEW-024: command preview
 		CustomizeDiff: customdiff.All(
+			previewCommands(originalUserCommandPreview),
 			func(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
 				if d.Id() == "" {
 					return nil
@@ -41,6 +43,7 @@ func resourceOriginalUser() *schema.Resource {
 			},
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"host": {
 				Type:        schema.TypeString,
 				Required:    true,

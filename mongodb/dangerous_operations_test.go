@@ -6,19 +6,21 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-// DANGER-T01: DANGER-001 — db_user no longer has CustomizeDiff (uses updateUser in-place)
-func TestDangerousOps_DbUserNoCustomizeDiff(t *testing.T) {
+// DANGER-T01: DANGER-001 — db_user uses updateUser in-place (no identity field blocking).
+// CustomizeDiff is present for command preview only (PREVIEW-016/017).
+func TestDangerousOps_DbUserHasCustomizeDiff(t *testing.T) {
 	res := resourceDatabaseUser()
-	if res.CustomizeDiff != nil {
-		t.Error("mongodb_db_user should not have CustomizeDiff (uses updateUser in-place)")
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_db_user should have CustomizeDiff (for command preview)")
 	}
 }
 
-// DANGER-T02: DANGER-002 — db_role no longer has CustomizeDiff (uses updateRole in-place)
-func TestDangerousOps_DbRoleNoCustomizeDiff(t *testing.T) {
+// DANGER-T02: DANGER-002 — db_role uses updateRole in-place (no identity field blocking).
+// CustomizeDiff is present for command preview only (PREVIEW-018/019).
+func TestDangerousOps_DbRoleHasCustomizeDiff(t *testing.T) {
 	res := resourceDatabaseRole()
-	if res.CustomizeDiff != nil {
-		t.Error("mongodb_db_role should not have CustomizeDiff (uses updateRole in-place)")
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_db_role should have CustomizeDiff (for command preview)")
 	}
 }
 

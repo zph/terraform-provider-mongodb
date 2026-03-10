@@ -23,8 +23,25 @@ DocumentDB shipped with a single-writer architecture for its first years of exis
 | [`mongodb_original_user`](docs/resources/original_user.md) | Stable | Bootstrap the initial admin user on a no-auth instance |
 | [`mongodb_shard_config`](docs/resources/shard_config.md) | Experimental | Configure replica set settings, initialize replica sets, manage members |
 | [`mongodb_shard`](docs/resources/shard.md) | Experimental | Add/remove shards from a mongos router |
+| [`mongodb_profiler`](docs/resources/profiler.md) | Experimental | Manage per-database profiler configuration |
+| [`mongodb_server_parameter`](docs/resources/server_parameter.md) | Experimental | Set/get MongoDB server parameters via setParameter |
+| [`mongodb_balancer_config`](docs/resources/balancer_config.md) | Experimental | Manage global balancer settings |
+| [`mongodb_collection_balancing`](docs/resources/collection_balancing.md) | Experimental | Manage per-collection balancer enable/disable and chunk size |
+| [`mongodb_feature_compatibility_version`](docs/resources/feature_compatibility_version.md) | Experimental | Manage featureCompatibilityVersion with safety gate |
 
-Experimental resources require opt-in via environment variable:
+Experimental resources require opt-in via `features_enabled` in the provider block or the `TERRAFORM_PROVIDER_MONGODB_ENABLE` environment variable. Both sources are merged.
+
+```hcl
+provider "mongodb" {
+  # ...
+  features_enabled = [
+    "mongodb_shard_config",
+    "mongodb_shard",
+  ]
+}
+```
+
+Or via environment variable:
 
 ```bash
 export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
@@ -48,8 +65,26 @@ provider "mongodb" {
   direct             = false
   retrywrites        = true
   proxy              = ""              # ALL_PROXY / all_proxy (socks5)
+  command_preview    = false           # TERRAFORM_PROVIDER_MONGODB_COMMAND_PREVIEW
+  features_enabled   = []             # TERRAFORM_PROVIDER_MONGODB_ENABLE
 }
 ```
+
+### Command Preview
+
+Set `command_preview = true` (or `TERRAFORM_PROVIDER_MONGODB_COMMAND_PREVIEW=true`) to see the exact MongoDB commands that will execute during `terraform plan`:
+
+```
+# mongodb_profiler.mydb will be created
+  + resource "mongodb_profiler" "mydb" {
+      + database         = "mydb"
+      + level            = 1
+      + planned_commands = "db.getSiblingDB(\"mydb\").runCommand({profile: 1, slowms: 100, ratelimit: 1})"
+      + slowms           = 100
+    }
+```
+
+Commands are computed from the Terraform config diff — no MongoDB connection is made during plan. Passwords are always shown as `[REDACTED]`.
 
 ## CDKTN Construct Library
 

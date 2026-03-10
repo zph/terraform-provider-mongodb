@@ -41,8 +41,12 @@ func resourceBalancerConfig() *schema.Resource {
 		ReadContext:   resourceBalancerConfigRead,
 		UpdateContext: resourceBalancerConfigUpdate,
 		DeleteContext: resourceBalancerConfigDelete,
+		// GATE-005: require feature opt-in
 		// BAL-010
+		// PREVIEW-021: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_balancer_config"),
+			previewCommands(balancerConfigCommandPreview),
 			func(ctx context.Context, d *schema.ResourceDiff, meta interface{}) error {
 				start := d.Get("active_window_start").(string)
 				stop := d.Get("active_window_stop").(string)
@@ -53,6 +57,7 @@ func resourceBalancerConfig() *schema.Resource {
 			},
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"enabled": {
 				Type:     schema.TypeBool,
 				Optional: true,

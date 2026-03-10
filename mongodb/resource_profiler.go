@@ -26,11 +26,16 @@ func resourceProfiler() *schema.Resource {
 		ReadContext:   resourceProfilerRead,
 		UpdateContext: resourceProfilerUpdate,
 		DeleteContext: resourceProfilerDelete,
+		// GATE-005: require feature opt-in
 		// DANGER-015: block database identity changes at plan time
+		// PREVIEW-012: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_profiler"),
 			blockFieldChange("database"),
+			previewCommands(profilerCommandPreview),
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"database": {
 				Type:     schema.TypeString,
 				Required: true,

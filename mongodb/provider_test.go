@@ -1,8 +1,6 @@
 package mongodb
 
 import (
-	"sort"
-	"strings"
 	"testing"
 )
 
@@ -14,54 +12,18 @@ func TestProviderSchemaValid(t *testing.T) {
 	}
 }
 
-// TEST-031: Provider with no enable env var registers only mature resources
-func TestProviderResourceMap_DefaultMatureOnly(t *testing.T) {
-	t.Setenv(EnableEnvVar, "")
+// TEST-031: All resources (mature + experimental) are registered unconditionally
+func TestProviderResourceMap_AllRegistered(t *testing.T) {
 	p := Provider()
-	expected := []string{"mongodb_db_user", "mongodb_db_role", "mongodb_original_user"}
-	sort.Strings(expected)
-
-	got := make([]string, 0, len(p.ResourcesMap))
-	for k := range p.ResourcesMap {
-		got = append(got, k)
-	}
-	sort.Strings(got)
-
-	if len(got) != len(expected) {
-		t.Fatalf("expected %d resources, got %d: %v", len(expected), len(got), got)
-	}
-	if strings.Join(got, ",") != strings.Join(expected, ",") {
-		t.Errorf("resource mismatch: got %v, want %v", got, expected)
+	for _, reg := range AllResources() {
+		if _, ok := p.ResourcesMap[reg.Name]; !ok {
+			t.Errorf("resource %q not registered in ResourcesMap", reg.Name)
+		}
 	}
 }
 
-// TEST-033: Provider with enable env var registers mature + opted-in experimental
-func TestProviderResourceMap_WithExperimentalEnabled(t *testing.T) {
-	t.Setenv(EnableEnvVar, "mongodb_shard_config,mongodb_shard")
-	p := Provider()
-	expected := []string{
-		"mongodb_db_user", "mongodb_db_role", "mongodb_original_user",
-		"mongodb_shard_config", "mongodb_shard",
-	}
-	sort.Strings(expected)
-
-	got := make([]string, 0, len(p.ResourcesMap))
-	for k := range p.ResourcesMap {
-		got = append(got, k)
-	}
-	sort.Strings(got)
-
-	if len(got) != len(expected) {
-		t.Fatalf("expected %d resources, got %d: %v", len(expected), len(got), got)
-	}
-	if strings.Join(got, ",") != strings.Join(expected, ",") {
-		t.Errorf("resource mismatch: got %v, want %v", got, expected)
-	}
-}
-
-// TEST-032: Each resource schema passes InternalValidate (with all resources enabled)
+// TEST-032: Each resource schema passes InternalValidate
 func TestProviderResourceSchemasValid(t *testing.T) {
-	t.Setenv(EnableEnvVar, "mongodb_shard_config,mongodb_shard")
 	p := Provider()
 	for name, resource := range p.ResourcesMap {
 		t.Run(name, func(t *testing.T) {
@@ -69,5 +31,17 @@ func TestProviderResourceSchemasValid(t *testing.T) {
 				t.Errorf("resource %q schema validation failed: %v", name, err)
 			}
 		})
+	}
+}
+
+// TEST-033: Provider schema includes features_enabled field
+func TestProviderSchema_FeaturesEnabled(t *testing.T) {
+	p := Provider()
+	field, ok := p.Schema["features_enabled"]
+	if !ok {
+		t.Fatal("provider schema missing features_enabled field")
+	}
+	if !field.Optional {
+		t.Error("features_enabled should be Optional")
 	}
 }

@@ -40,12 +40,17 @@ func resourceShard() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
+		// GATE-005: require feature opt-in
 		// DANGER-016, DANGER-017: block identity field changes at plan time
+		// PREVIEW-015: command preview
 		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_shard"),
 			blockFieldChange("shard_name"),
 			blockFieldChange("hosts"),
+			previewCommands(shardCommandPreview),
 		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			// CLUS-001, DANGER-017, DANGER-018: shard_name keeps ForceNew (allowlisted exception)
 			"shard_name": {
 				Type:        schema.TypeString,
