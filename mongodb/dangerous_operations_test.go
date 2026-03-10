@@ -92,3 +92,98 @@ func TestDangerousOps_ProviderSchemaValid(t *testing.T) {
 		t.Errorf("provider schema validation failed: %v", err)
 	}
 }
+
+// DANGER-T11: DANGER-010, DANGER-012 — No ForceNew in any resource schema
+// except explicitly allowlisted fields.
+func TestDangerousOps_NoForceNewExceptAllowlist(t *testing.T) {
+	// DANGER-018: Exactly one allowed entry
+	allowlist := map[string]map[string]bool{
+		"mongodb_shard": {
+			"shard_name": true,
+		},
+	}
+
+	for _, reg := range AllResources() {
+		res := reg.Factory()
+		for fieldName, field := range res.Schema {
+			if field.ForceNew {
+				if allowlist[reg.Name][fieldName] {
+					continue
+				}
+				t.Errorf("resource %q field %q has ForceNew: true (banned by DANGER-010); "+
+					"use CustomizeDiff to block changes instead", reg.Name, fieldName)
+			}
+		}
+	}
+}
+
+// DANGER-T12: DANGER-018 — Allowlisted ForceNew entries MUST actually exist
+// and have ForceNew set (prevents stale allowlist entries).
+func TestDangerousOps_AllowlistEntriesExist(t *testing.T) {
+	allowlist := map[string]string{
+		"mongodb_shard": "shard_name",
+	}
+
+	registry := make(map[string]func() *schema.Resource)
+	for _, reg := range AllResources() {
+		registry[reg.Name] = reg.Factory
+	}
+
+	for resName, fieldName := range allowlist {
+		factory, ok := registry[resName]
+		if !ok {
+			t.Errorf("allowlist entry %q: resource not found in AllResources()", resName)
+			continue
+		}
+		res := factory()
+		field, ok := res.Schema[fieldName]
+		if !ok {
+			t.Errorf("allowlist entry %q.%q: field not found in schema", resName, fieldName)
+			continue
+		}
+		if !field.ForceNew {
+			t.Errorf("allowlist entry %q.%q: field does not have ForceNew (stale allowlist?)",
+				resName, fieldName)
+		}
+	}
+}
+
+// DANGER-T13: DANGER-013 — server_parameter has CustomizeDiff blocking parameter changes
+func TestDangerousOps_ServerParameterCustomizeDiff(t *testing.T) {
+	res := resourceServerParameter()
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_server_parameter should have CustomizeDiff blocking parameter changes")
+	}
+}
+
+// DANGER-T14: DANGER-014 — collection_balancing has CustomizeDiff blocking namespace changes
+func TestDangerousOps_CollectionBalancingCustomizeDiff(t *testing.T) {
+	res := resourceCollectionBalancing()
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_collection_balancing should have CustomizeDiff blocking namespace changes")
+	}
+}
+
+// DANGER-T15: DANGER-015 — profiler has CustomizeDiff blocking database changes
+func TestDangerousOps_ProfilerCustomizeDiff(t *testing.T) {
+	res := resourceProfiler()
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_profiler should have CustomizeDiff blocking database changes")
+	}
+}
+
+// DANGER-T16: DANGER-016, DANGER-017 — shard has CustomizeDiff blocking hosts and shard_name changes
+func TestDangerousOps_ShardCustomizeDiff(t *testing.T) {
+	res := resourceShard()
+	if res.CustomizeDiff == nil {
+		t.Error("mongodb_shard should have CustomizeDiff blocking hosts and shard_name changes")
+	}
+}
+
+// DANGER-T17: Schema validation passes for shard after ForceNew changes
+func TestDangerousOps_ShardSchemaValid(t *testing.T) {
+	res := resourceShard()
+	if err := res.InternalValidate(nil, true); err != nil {
+		t.Errorf("shard schema validation failed: %v", err)
+	}
+}

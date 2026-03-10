@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -34,11 +35,14 @@ func resourceCollectionBalancing() *schema.Resource {
 		ReadContext:   resourceCollectionBalancingRead,
 		UpdateContext: resourceCollectionBalancingUpdate,
 		DeleteContext: resourceCollectionBalancingDelete,
+		// DANGER-014: block namespace identity changes at plan time
+		CustomizeDiff: customdiff.All(
+			blockFieldChange("namespace"),
+		),
 		Schema: map[string]*schema.Schema{
 			"namespace": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true, // CBAL-012
 				// CBAL-002
 				ValidateFunc: func(val interface{}, key string) ([]string, []error) {
 					v := val.(string)

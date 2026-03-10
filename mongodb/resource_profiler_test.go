@@ -77,12 +77,12 @@ func TestProfilerSchema_SlowmsValidation(t *testing.T) {
 	}
 }
 
-// PROF-T04: PROF-010 — database is ForceNew
-func TestProfilerSchema_DatabaseForceNew(t *testing.T) {
+// PROF-T04: DANGER-015 — database is immutable via CustomizeDiff (not ForceNew)
+func TestProfilerSchema_DatabaseNoForceNew(t *testing.T) {
 	res := resourceProfiler()
 	field := res.Schema["database"]
-	if !field.ForceNew {
-		t.Error("database should be ForceNew")
+	if field.ForceNew {
+		t.Error("database should not be ForceNew (DANGER-010); use CustomizeDiff instead")
 	}
 	if !field.Required {
 		t.Error("database should be Required")

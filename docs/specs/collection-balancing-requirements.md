@@ -8,7 +8,7 @@
 
 ## Schema
 
-- **CBAL-001:** WHEN the `mongodb_collection_balancing` resource schema is defined, THEN it SHALL include: `namespace` (Required, ForceNew, TypeString), `enabled` (Optional, TypeBool, Default true), `chunk_size_mb` (Optional, TypeInt).
+- **CBAL-001:** WHEN the `mongodb_collection_balancing` resource schema is defined, THEN it SHALL include: `namespace` (Required, TypeString, immutable via CustomizeDiff — DANGER-014), `enabled` (Optional, TypeBool, Default true), `chunk_size_mb` (Optional, TypeInt).
 
 ## Namespace Validation
 
@@ -47,6 +47,6 @@
 
 - **CBAL-011:** WHEN the resource is registered, THEN it SHALL be classified as `ResourceExperimental`.
 
-## Force Replacement
+## Identity Field Immutability
 
-- **CBAL-012:** WHEN the `namespace` field changes, THEN the system SHALL force replacement of the resource.
+- **CBAL-012:** WHEN the `namespace` field changes on an existing resource, THEN the `CustomizeDiff` SHALL return an error blocking the change at plan time (DANGER-014). The field does not use `ForceNew`.

@@ -40,7 +40,7 @@ resource "mongodb_server_parameter" "wt_cache" {
 
 ## Argument Reference
 
-* `parameter` - (Required, ForceNew) The name of the server parameter to set. Changing this forces replacement.
+* `parameter` - (Required) The name of the server parameter to set. This field is immutable (changes blocked at plan time).
 * `value` - (Required) The value to set. Always specified as a string; the provider automatically coerces to the appropriate type (bool, int, float, or string) before sending to MongoDB.
 * `ignore_read` - (Optional) When `true`, the provider skips `getParameter` on read and trusts the configured value. Use for parameters that return a different format on read than what was written. Default: `false`.
 

@@ -45,6 +45,13 @@ repos:
         files: '\.go$'
         pass_filenames: false
 
+      - id: noforceenew
+        name: noforceenew (DANGER-010)
+        language: system
+        entry: make lint-noforceenew
+        files: '\.go$'
+        pass_filenames: false
+
       - id: go-mod-tidy
         name: go mod tidy
         language: system

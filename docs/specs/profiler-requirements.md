@@ -8,7 +8,7 @@
 
 ## Schema
 
-- **PROF-001:** WHEN the `mongodb_profiler` resource schema is defined, THEN it SHALL include: `database` (Required, ForceNew, TypeString), `level` (Required, TypeInt), `slowms` (Optional, TypeInt, Default 100), `ratelimit` (Optional, TypeInt, Default 1).
+- **PROF-001:** WHEN the `mongodb_profiler` resource schema is defined, THEN it SHALL include: `database` (Required, TypeString, immutable via CustomizeDiff — DANGER-015), `level` (Required, TypeInt), `slowms` (Optional, TypeInt, Default 100), `ratelimit` (Optional, TypeInt, Default 1).
 
 ## Validation
 
@@ -39,9 +39,9 @@
 
 - **PROF-009:** WHEN a profile command fails, THEN the error message SHALL include the command name and the MongoDB error message.
 
-## Force Replacement
+## Identity Field Immutability
 
-- **PROF-010:** WHEN the `database` field changes, THEN the system SHALL force replacement of the resource.
+- **PROF-010:** WHEN the `database` field changes on an existing resource, THEN the `CustomizeDiff` SHALL return an error blocking the change at plan time (DANGER-015). The field does not use `ForceNew`.
 
 ## Maturity
 

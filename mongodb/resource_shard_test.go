@@ -43,7 +43,7 @@ func TestShardSchema_ShardName(t *testing.T) {
 	}
 }
 
-// CLUS-T04: Schema: hosts Required, TypeList, ForceNew
+// CLUS-T04: DANGER-016 — hosts Required, TypeList, immutable via CustomizeDiff (not ForceNew)
 func TestShardSchema_Hosts(t *testing.T) {
 	res := resourceShard()
 	field, ok := res.Schema["hosts"]
@@ -56,8 +56,8 @@ func TestShardSchema_Hosts(t *testing.T) {
 	if field.Type != schema.TypeList {
 		t.Errorf("hosts type: want TypeList, got %v", field.Type)
 	}
-	if !field.ForceNew {
-		t.Error("hosts should be ForceNew")
+	if field.ForceNew {
+		t.Error("hosts should not be ForceNew (DANGER-010); use CustomizeDiff instead")
 	}
 }
 

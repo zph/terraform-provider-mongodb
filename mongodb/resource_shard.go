@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -39,19 +40,23 @@ func resourceShard() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
+		// DANGER-016, DANGER-017: block identity field changes at plan time
+		CustomizeDiff: customdiff.All(
+			blockFieldChange("shard_name"),
+			blockFieldChange("hosts"),
+		),
 		Schema: map[string]*schema.Schema{
-			// CLUS-001: shard_name Required, ForceNew
+			// CLUS-001, DANGER-017, DANGER-018: shard_name keeps ForceNew (allowlisted exception)
 			"shard_name": {
 				Type:        schema.TypeString,
 				Required:    true,
-				ForceNew:    true,
+				ForceNew:    true, //nolint:noforceenew // DANGER-018: allowlisted exception
 				Description: "The replica set name of the shard to add.",
 			},
-			// CLUS-001: hosts Required, TypeList, ForceNew
+			// CLUS-001, DANGER-016: hosts immutable via CustomizeDiff
 			"hosts": {
 				Type:     schema.TypeList,
 				Required: true,
-				ForceNew: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
@@ -159,9 +164,13 @@ func (r *ResourceShard) Read(ctx context.Context, data *schema.ResourceData, i i
 	return nil
 }
 
-// Update returns an error since all schema fields are ForceNew. // CLUS-007
+// Update handles changes to client-side-only fields (e.g. remove_timeout_secs).
+// Identity fields (shard_name, hosts) are blocked by CustomizeDiff. // CLUS-007, DANGER-019
 func (r *ResourceShard) Update(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	return diag.Errorf("mongodb_shard does not support in-place updates; all changes force replacement")
+	// remove_timeout_secs is read directly from ResourceData at delete time;
+	// no MongoDB operation needed. The SDK persists the new value to state
+	// automatically after Update returns nil.
+	return nil
 }
 
 // Delete runs removeShard and polls until the shard is fully removed. // CLUS-006

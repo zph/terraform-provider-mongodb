@@ -29,7 +29,7 @@ resource "mongodb_profiler" "mydb_full" {
 
 ## Argument Reference
 
-* `database` - (Required, ForceNew) The name of the database to configure profiling on. Changing this forces replacement.
+* `database` - (Required) The name of the database to configure profiling on. This field is immutable (changes blocked at plan time).
 * `level` - (Required) The profiling level. `0` = off, `1` = slow operations only, `2` = all operations.
 * `slowms` - (Optional) The threshold in milliseconds for slow operations. Default: `100`.
 * `ratelimit` - (Optional) The fraction of slow operations to profile (Percona Server only). Default: `1`.

@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -42,11 +43,14 @@ func resourceServerParameter() *schema.Resource {
 		ReadContext:   resourceServerParameterRead,
 		UpdateContext: resourceServerParameterUpdate,
 		DeleteContext: resourceServerParameterDelete,
+		// DANGER-013: block parameter identity changes at plan time
+		CustomizeDiff: customdiff.All(
+			blockFieldChange("parameter"),
+		),
 		Schema: map[string]*schema.Schema{
 			"parameter": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true,
 			},
 			"value": {
 				Type:     schema.TypeString,

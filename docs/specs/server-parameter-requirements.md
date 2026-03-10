@@ -8,7 +8,7 @@
 
 ## Schema
 
-- **PARAM-001:** WHEN the `mongodb_server_parameter` resource schema is defined, THEN it SHALL include: `parameter` (Required, ForceNew, TypeString), `value` (Required, TypeString), `ignore_read` (Optional, TypeBool, Default false).
+- **PARAM-001:** WHEN the `mongodb_server_parameter` resource schema is defined, THEN it SHALL include: `parameter` (Required, TypeString, immutable via CustomizeDiff — DANGER-013), `value` (Required, TypeString), `ignore_read` (Optional, TypeBool, Default false).
 
 ## Create
 

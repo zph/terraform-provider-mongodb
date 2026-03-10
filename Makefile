@@ -10,7 +10,7 @@ default: help
 # Supported MongoDB versions for integration test matrix
 MONGO_VERSIONS := 3.6 7
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
+.PHONY: help setup dev-overrides build install re-install lint lint-noforceenew prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
 
 OS_ARCH=linux_amd64
 #
@@ -68,8 +68,14 @@ re-install: ## Clean reinstall of the provider
 	cd $(PROVIDER_ROOT)/examples && rm -rf .terraform
 	cd $(PROVIDER_ROOT)/examples && make init
 
-lint: ## Run all prek hooks on all files
+NOFORCEENEW_BIN := $(PROVIDER_ROOT)/.hermit/.cache/noforceenew
+
+lint: lint-noforceenew ## Run all linters and prek hooks on all files
 	cd $(PROVIDER_ROOT) && prek run --all-files
+
+lint-noforceenew: ## Ban ForceNew: true in schemas (DANGER-010)
+	@cd $(PROVIDER_ROOT) && go build -o $(NOFORCEENEW_BIN) ./linters/noforceenew/cmd/noforceenew
+	cd $(PROVIDER_ROOT) && $(NOFORCEENEW_BIN) -allow=resource_shard.go:shard_name ./mongodb/...
 
 prek: lint ## Alias for lint
 

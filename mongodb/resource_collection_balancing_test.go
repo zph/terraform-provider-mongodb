@@ -26,15 +26,15 @@ func TestCollectionBalancingSchema_AllFields(t *testing.T) {
 	}
 }
 
-// CBAL-T02: CBAL-001, CBAL-012 — namespace is Required + ForceNew
-func TestCollectionBalancingSchema_NamespaceForceNew(t *testing.T) {
+// CBAL-T02: DANGER-014 — namespace is Required, immutable via CustomizeDiff (not ForceNew)
+func TestCollectionBalancingSchema_NamespaceNoForceNew(t *testing.T) {
 	res := resourceCollectionBalancing()
 	field := res.Schema["namespace"]
 	if !field.Required {
 		t.Error("namespace should be Required")
 	}
-	if !field.ForceNew {
-		t.Error("namespace should be ForceNew")
+	if field.ForceNew {
+		t.Error("namespace should not be ForceNew (DANGER-010); use CustomizeDiff instead")
 	}
 }
 

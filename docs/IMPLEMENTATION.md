@@ -1,6 +1,6 @@
 # terraform-provider-mongodb — Implementation
 
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-10
 
 ---
 
@@ -85,7 +85,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
 | Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
 | Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
-| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-008 |
+| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-020 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -107,7 +107,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
 | `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
 | `mongodb/resource_fcv_test.go` | FCV-T01..T10 (10 tests) | none |
-| `mongodb/dangerous_operations_test.go` | DANGER-T01..T10 (10 tests) | none |
+| `mongodb/dangerous_operations_test.go` | DANGER-T01..T17 (17 tests) | none |
 | `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
@@ -335,6 +335,22 @@ Pattern: `<component_type>_<replica_set_name>_<member_index>` for shards and con
 
 ---
 
+## Linters
+
+### noforceenew
+
+A custom `go/analysis` linter that detects `ForceNew: true` in `schema.Schema` composite literals at compile time. It enforces DANGER-010 through DANGER-012 by preventing accidental re-introduction of `ForceNew` fields. One allowlisted exception exists: `mongodb_shard.shard_name` (DANGER-017, DANGER-018).
+
+| Item | Location |
+|------|----------|
+| Linter source | `linters/noforceenew/` |
+| Makefile target | `make lint-noforceenew` |
+| Pre-commit hook | `noforceenew` |
+
+`make lint` runs `lint-noforceenew` first, then any additional linters.
+
+---
+
 ## Build Commands
 
 All commands run from the repository root. Terraform is managed via [Hermit](https://github.com/cashapp/hermit) (`.hermit/`) to pin the version. Activate the Hermit environment before running any `terraform` or `make` commands that invoke Terraform:
@@ -351,6 +367,8 @@ All commands run from the repository root. Terraform is managed via [Hermit](htt
 | `make test-golden` | Run golden file tests against MongoDB container |
 | `make test-golden-update` | Regenerate provider golden files |
 | `make test` | Run all tests: unit + cdktn + terraform plan |
+| `make lint` | Run all linters (runs `lint-noforceenew` first) |
+| `make lint-noforceenew` | Run the ForceNew static analysis linter |
 | `make help` | Show all Makefile targets |
 
 To update golden files after an intentional synthesis change:

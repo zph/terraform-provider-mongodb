@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -25,11 +26,14 @@ func resourceProfiler() *schema.Resource {
 		ReadContext:   resourceProfilerRead,
 		UpdateContext: resourceProfilerUpdate,
 		DeleteContext: resourceProfilerDelete,
+		// DANGER-015: block database identity changes at plan time
+		CustomizeDiff: customdiff.All(
+			blockFieldChange("database"),
+		),
 		Schema: map[string]*schema.Schema{
 			"database": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true, // PROF-010
 			},
 			"level": {
 				Type:     schema.TypeInt,

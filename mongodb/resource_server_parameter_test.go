@@ -26,12 +26,12 @@ func TestServerParameterSchema_AllFields(t *testing.T) {
 	}
 }
 
-// PARAM-T02: PARAM-001 — parameter is ForceNew
-func TestServerParameterSchema_ParameterForceNew(t *testing.T) {
+// PARAM-T02: DANGER-013 — parameter is immutable via CustomizeDiff (not ForceNew)
+func TestServerParameterSchema_ParameterNoForceNew(t *testing.T) {
 	res := resourceServerParameter()
 	field := res.Schema["parameter"]
-	if !field.ForceNew {
-		t.Error("parameter should be ForceNew")
+	if field.ForceNew {
+		t.Error("parameter should not be ForceNew (DANGER-010); use CustomizeDiff instead")
 	}
 	if !field.Required {
 		t.Error("parameter should be Required")

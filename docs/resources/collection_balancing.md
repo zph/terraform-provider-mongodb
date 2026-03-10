@@ -29,7 +29,7 @@ resource "mongodb_collection_balancing" "logs" {
 
 ## Argument Reference
 
-* `namespace` - (Required, ForceNew) The full namespace in `db.collection` format. Changing this forces replacement.
+* `namespace` - (Required) The full namespace in `db.collection` format. This field is immutable (changes blocked at plan time).
 * `enabled` - (Optional) Whether balancing is enabled for this collection. Default: `true`. When `false`, sets `noBalance: true`.
 * `chunk_size_mb` - (Optional) Per-collection chunk size override in megabytes. Only supported on MongoDB 6.0+; ignored with a warning on older versions.
 
