@@ -2,9 +2,11 @@ package mongodb
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
@@ -23,6 +25,25 @@ func resourceOriginalUser() *schema.Resource {
 		ReadContext:   resourceOriginalUserRead,
 		UpdateContext: resourceOriginalUserUpdate,
 		DeleteContext: resourceOriginalUserDelete,
+		// DANGER-009
+		CustomizeDiff: customdiff.All(
+			func(ctx context.Context, d *schema.ResourceDiff, meta interface{}) error {
+				if d.Id() == "" {
+					return nil
+				}
+				if !d.HasChanges() {
+					return nil
+				}
+				allowDangerous := d.Get("allow_dangerous_update").(bool)
+				if !allowDangerous {
+					return fmt.Errorf(
+						"mongodb_original_user update uses drop+recreate and authenticates as the user " +
+							"it drops, risking cluster lockout; set allow_dangerous_update = true to proceed",
+					)
+				}
+				return nil
+			},
+		),
 		Schema: map[string]*schema.Schema{
 			"host": {
 				Type:        schema.TypeString,
@@ -88,6 +109,13 @@ func resourceOriginalUser() *schema.Resource {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
+			},
+			// DANGER-009
+			"allow_dangerous_update": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Must be true to allow updates. Updates use drop+recreate and authenticate as the user being dropped, risking cluster lockout.",
 			},
 		},
 	}

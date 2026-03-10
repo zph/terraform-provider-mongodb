@@ -132,25 +132,17 @@ func resourceDatabaseRoleDelete(ctx context.Context, data *schema.ResourceData, 
 	return nil
 }
 
+// DANGER-007: uses updateRole for in-place modification instead of drop+recreate
 func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
 	client, connectionError := MongoClientInit(ctx, config)
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	var role = data.Get("name").(string)
 	var stateId = data.State().ID
 	roleName, database, err := resourceDatabaseRoleParseId(stateId)
-
 	if err != nil {
 		return diag.Errorf("%s", err)
-	}
-
-	db := client.Database(database)
-	result := db.RunCommand(context.Background(), bson.D{{Key: "dropRole", Value: roleName}})
-
-	if result.Err() != nil {
-		return diag.Errorf("%s", result.Err())
 	}
 
 	var roleList []Role
@@ -168,12 +160,10 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("Error decoding map : %s ", privMapErr)
 	}
 
-	err2 := createRole(client, role, roleList, privileges, database)
-
-	if err2 != nil {
-		return diag.Errorf("Could not create the role  :  %s ", err2)
+	if err := updateRole(client, roleName, roleList, privileges, database); err != nil {
+		return diag.Errorf("Could not update the role : %s ", err)
 	}
-	data.SetId(formatResourceId(database, role))
+	data.SetId(formatResourceId(database, roleName))
 
 	return resourceDatabaseRoleRead(ctx, data, i)
 }

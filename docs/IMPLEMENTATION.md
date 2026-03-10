@@ -85,6 +85,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
 | Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
 | Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
+| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-007 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -106,6 +107,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
 | `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
 | `mongodb/resource_fcv_test.go` | FCV-T01..T10 (10 tests) | none |
+| `mongodb/dangerous_operations_test.go` | DANGER-T01..T10 (10 tests) | none |
 | `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
