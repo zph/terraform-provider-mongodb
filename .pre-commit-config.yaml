@@ -72,12 +72,21 @@ repos:
         entry: bash -c 'cd cdktn && go test ./...'
         files: '^cdktn/.*\.go$'
         pass_filenames: false
+        stages: [pre-commit, pre-push]
 
       # Integration tests (require Docker via testcontainers)
       - id: integration-test-matrix
         name: integration test matrix (mongo 3.6 + 7)
         language: system
         entry: make test-integration-matrix
+        files: '^mongodb/.*\.go$'
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: sharded-integration-test
+        name: sharded integration test
+        language: system
+        entry: make test-sharded-integration
         files: '^mongodb/.*\.go$'
         pass_filenames: false
         stages: [pre-push]

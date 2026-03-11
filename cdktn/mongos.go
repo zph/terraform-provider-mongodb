@@ -36,6 +36,14 @@ func NewMongoMongosWithOffset(stack *TerraformStack, id string, props *MongosPro
 		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
 	}
 
+	if len(props.Profilers) > 0 {
+		BuildProfilers(stack, aliases, props.Profilers)
+	}
+	if len(props.ServerParameters) > 0 {
+		BuildServerParameters(stack, aliases, props.ServerParameters)
+	}
+	// Mongos does not support FCV (only mongod processes have FCV)
+
 	return &MongoMongos{
 		Aliases: aliases,
 	}, nil

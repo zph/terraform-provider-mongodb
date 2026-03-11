@@ -6,3 +6,4 @@
 **/testgo/**
 **/.terraform.lock.hcl
 **/terraform-provider-mongodb
+.hermit/.cache

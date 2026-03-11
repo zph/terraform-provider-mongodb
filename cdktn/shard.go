@@ -43,6 +43,21 @@ func NewMongoShard(stack *TerraformStack, id string, props *MongoShardProps) (*M
 		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
 	}
 
+	// Per-node: profilers on all members
+	if len(props.Profilers) > 0 {
+		BuildProfilers(stack, aliases, props.Profilers)
+	}
+
+	// Per-node: server parameters on all members
+	if len(props.ServerParameters) > 0 {
+		BuildServerParameters(stack, aliases, props.ServerParameters)
+	}
+
+	// FCV on primary (first alias)
+	if props.FCV != nil {
+		BuildFCV(stack, aliases[0], props.FCV)
+	}
+
 	return &MongoShard{
 		ReplicaSetName: props.ReplicaSetName,
 		Aliases:        aliases,

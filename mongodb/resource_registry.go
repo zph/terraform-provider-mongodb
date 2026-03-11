@@ -63,6 +63,10 @@ func AllResources() []ResourceRegistration {
 		{Name: "mongodb_collection_balancing", Factory: resourceCollectionBalancing, Maturity: ResourceExperimental},
 		// FCV-013
 		{Name: "mongodb_feature_compatibility_version", Factory: resourceFCV, Maturity: ResourceExperimental},
+		// ZONE-012
+		{Name: "mongodb_shard_zone", Factory: resourceShardZone, Maturity: ResourceExperimental},
+		// ZONE-029
+		{Name: "mongodb_zone_key_range", Factory: resourceZoneKeyRange, Maturity: ResourceExperimental},
 	}
 }
 

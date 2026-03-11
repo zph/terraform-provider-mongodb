@@ -1,0 +1,219 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "configsvr_configRS_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg0.example.com",
+        "password": "test-password",
+        "port": "27019",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_configRS_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg1.example.com",
+        "password": "test-password",
+        "port": "27019",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_configRS_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg2.example.com",
+        "password": "test-password",
+        "port": "27019",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "mongos_0",
+        "auth_database": "admin",
+        "direct": false,
+        "host": "mongos0.example.com",
+        "password": "test-password",
+        "port": "27017",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard01a.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard01b.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard01c.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard02a.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard02b.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard02c.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_balancer_config": {
+      "balancer": {
+        "active_window_start": "02:00",
+        "active_window_stop": "06:00",
+        "chunk_size_mb": 128,
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": true,
+        "provider": "mongodb.mongos_0"
+      }
+    },
+    "mongodb_collection_balancing": {
+      "colbal_app_db_config_data": {
+        "chunk_size_mb": 32,
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": true,
+        "namespace": "app_db.config_data",
+        "provider": "mongodb.mongos_0"
+      },
+      "colbal_app_db_events": {
+        "chunk_size_mb": 256,
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": true,
+        "namespace": "app_db.events",
+        "provider": "mongodb.mongos_0"
+      },
+      "colbal_app_db_staging_imports": {
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": false,
+        "namespace": "app_db.staging_imports",
+        "provider": "mongodb.mongos_0"
+      }
+    },
+    "mongodb_shard": {
+      "shard_shard01": {
+        "hosts": [
+          "shard01a.example.com:27018",
+          "shard01b.example.com:27018",
+          "shard01c.example.com:27018"
+        ],
+        "provider": "mongodb.mongos_0",
+        "remove_timeout_secs": 300,
+        "shard_name": "shard01"
+      },
+      "shard_shard02": {
+        "hosts": [
+          "shard02a.example.com:27018",
+          "shard02b.example.com:27018",
+          "shard02c.example.com:27018"
+        ],
+        "provider": "mongodb.mongos_0",
+        "remove_timeout_secs": 300,
+        "shard_name": "shard02"
+      }
+    },
+    "mongodb_shard_config": {
+      "configRS_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.configsvr_configRS_0",
+        "shard_name": "configRS"
+      },
+      "shard01_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.shard_shard01_0",
+        "shard_name": "shard01"
+      },
+      "shard02_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.shard_shard02_0",
+        "shard_name": "shard02"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

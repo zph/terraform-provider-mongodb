@@ -18,6 +18,8 @@
 | `mongodb_balancer_config` | `mongodb/resource_balancer_config.go` | experimental | Manage global balancer settings (enable/disable, active window, chunk size) |
 | `mongodb_collection_balancing` | `mongodb/resource_collection_balancing.go` | experimental | Manage per-collection balancer enable/disable and chunk size override |
 | `mongodb_feature_compatibility_version` | `mongodb/resource_fcv.go` | experimental | Manage featureCompatibilityVersion with danger_mode safety gate |
+| `mongodb_shard_zone` | `mongodb/resource_shard_zone.go` | experimental | Map shards to zones via addShardToZone/removeShardFromZone |
+| `mongodb_zone_key_range` | `mongodb/resource_zone_key_range.go` | experimental | Assign shard key ranges to zones via updateZoneKeyRange |
 
 ### Resource Documentation
 
@@ -35,6 +37,32 @@ Resource documentation is maintained in `docs/resources/`:
 | `mongodb_balancer_config` | [`docs/resources/balancer_config.md`](resources/balancer_config.md) |
 | `mongodb_collection_balancing` | [`docs/resources/collection_balancing.md`](resources/collection_balancing.md) |
 | `mongodb_feature_compatibility_version` | [`docs/resources/feature_compatibility_version.md`](resources/feature_compatibility_version.md) |
+| `mongodb_shard_zone` | [`docs/resources/shard_zone.md`](resources/shard_zone.md) |
+| `mongodb_zone_key_range` | [`docs/resources/zone_key_range.md`](resources/zone_key_range.md) |
+
+### Example Patterns (Terraform HCL)
+
+| Example | Path | Description |
+|---------|------|-------------|
+| Full Cluster Setup | [`examples/patterns/full-cluster-setup/`](../examples/patterns/full-cluster-setup/main.tf) | End-to-end: bootstrap users, configure 3-member RS shards, add shards, balancer, roles, users |
+| Sharded Cluster | [`examples/patterns/sharded-cluster/`](../examples/patterns/sharded-cluster/main.tf) | Shard config + roles + users (assumes credentials exist) |
+| Monitoring User | [`examples/patterns/monitoring-user/`](../examples/patterns/monitoring-user/main.tf) | Least-privilege monitoring role + exporter user |
+| Role Hierarchy | [`examples/patterns/role-hierarchy/`](../examples/patterns/role-hierarchy/main.tf) | 3-tier role inheritance |
+| Add Replicaset to Cluster | [`examples/patterns/add-replicaset-to-cluster/`](../examples/patterns/add-replicaset-to-cluster/main.tf) | Day-2 scale-out: bootstrap new RS from scratch and register as shard |
+
+### Example Patterns (cdktn Go)
+
+Go equivalents of the above using the `cdktn` construct library. See [`cdktn/examples/README.md`](../cdktn/examples/README.md) for a usage guide.
+
+| Example | Path | Construct | Description |
+|---------|------|-----------|-------------|
+| Full Cluster Setup | [`cdktn/examples/patterns/full-cluster-setup/`](../cdktn/examples/patterns/full-cluster-setup/main.go) | L3 `MongoShardedCluster` | Bootstrap, RS config, shard registration, balancer, zones, roles, users |
+| Sharded Cluster | [`cdktn/examples/patterns/sharded-cluster/`](../cdktn/examples/patterns/sharded-cluster/main.go) | L3 `MongoShardedCluster` | SSL/TLS + custom roles + users (assumes credentials exist) |
+| Monitoring User | [`cdktn/examples/patterns/monitoring-user/`](../cdktn/examples/patterns/monitoring-user/main.go) | L2 `MongoMongos` | Least-privilege monitoring role + exporter user |
+| Role Hierarchy | [`cdktn/examples/patterns/role-hierarchy/`](../cdktn/examples/patterns/role-hierarchy/main.go) | L2 `MongoMongos` | 3-tier role inheritance (viewer → editor → admin) |
+| Add Replicaset | [`cdktn/examples/patterns/add-replicaset-to-cluster/`](../cdktn/examples/patterns/add-replicaset-to-cluster/main.go) | L2 `MongoShard` | Day-2 scale-out: bootstrap new RS and configure membership |
+| Zone Sharding | [`cdktn/examples/patterns/zone-sharding/`](../cdktn/examples/patterns/zone-sharding/main.go) | L3 `MongoShardedCluster` | Shard-to-zone mapping, key range routing, multi-zone shards, compound keys |
+| Collection Balancing | [`cdktn/examples/patterns/collection-balancing/`](../cdktn/examples/patterns/collection-balancing/main.go) | L3 `MongoShardedCluster` | Per-collection balancing enable/disable, chunk size overrides |
 
 ### Resource Capability Gating
 
@@ -66,6 +94,8 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_fcv.go` | `mongodb_feature_compatibility_version` resource: FCV management with danger_mode safety gate |
 | `mongodb/mongos_helpers.go` | Shared `requireMongos` helper for mongos-only resources |
 | `mongodb/command_preview.go` | Command preview infrastructure: `commandPreviewSchema`, `commandPreviewEnabled`, `previewCommands` wrapper, per-resource builders |
+| `mongodb/resource_shard_zone.go` | `mongodb_shard_zone` resource: shard-to-zone mapping via addShardToZone/removeShardFromZone |
+| `mongodb/resource_zone_key_range.go` | `mongodb_zone_key_range` resource: zone key range assignment via updateZoneKeyRange |
 
 ## EARS Specifications
 
@@ -73,8 +103,8 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|------|----------|
 | Shard Config | `docs/specs/` (inline in code) | SHARD-001 through SHARD-011 |
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
-| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
-| Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
+| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-029 |
+| Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-014 |
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-023 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
@@ -88,6 +118,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
 | Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-020 |
 | Command Preview | `docs/specs/command-preview-requirements.md` | PREVIEW-001 through PREVIEW-024 |
+| Zone Sharding | `docs/specs/zone-sharding-requirements.md` | ZONE-001 through ZONE-030 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -112,6 +143,8 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/dangerous_operations_test.go` | DANGER-T01..T17 (17 tests) | none |
 | `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
 | `mongodb/command_preview_test.go` | PREVIEW-T01..T20 (22 tests) | none |
+| `mongodb/resource_shard_zone_test.go` | ZONE-T01..T07 (7 tests) | none |
+| `mongodb/resource_zone_key_range_test.go` | ZONE-T08..T19 (12 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
 ---
@@ -370,9 +403,28 @@ All commands run from the repository root. Terraform is managed via [Hermit](htt
 | `make test-golden` | Run golden file tests against MongoDB container |
 | `make test-golden-update` | Regenerate provider golden files |
 | `make test` | Run all tests: unit + cdktn + terraform plan |
+| `make test-ci` | CI suite: unit + cdktn + integration matrix + sharded + golden |
+| `make test-all` | Every test suite (unit, cdktn, integration, sharded, golden, plan) |
 | `make lint` | Run all linters (runs `lint-noforceenew` first) |
 | `make lint-noforceenew` | Run the ForceNew static analysis linter |
 | `make help` | Show all Makefile targets |
+
+### Test Coverage Matrix
+
+Tests run at three gates: pre-commit (on `git commit`), pre-push (on `git push`), and CI (GitHub Actions on PR/push to main). Hooks are managed by prek (`.pre-commit-config.yaml`).
+
+| Test Suite | Pre-commit | Pre-push | CI |
+|------------|:----------:|:--------:|:--:|
+| go fmt / go vet / golangci-lint | Y | | Y |
+| noforceenew (DANGER-010) | Y | | Y |
+| go test (unit) | Y | | Y |
+| cdktn test | Y | Y | Y |
+| integration matrix (mongo 3.6 + 7) | | Y | Y |
+| sharded integration | | Y | Y |
+| golden file tests | | Y | Y |
+| terraform fmt | Y | | Y |
+
+Pre-commit hooks run only when matching files are staged (`files:` filter). Pre-push hooks run only when matching files are in the commits being pushed. CI (`prek run --all-files`) bypasses file filters and runs against the full repo, then runs Docker-dependent tests via `make` targets.
 
 To update golden files after an intentional synthesis change:
 
@@ -399,7 +451,17 @@ Tests live in `cdktn/*_test.go` (package `cdktn`, same package — white-box acc
 
 **Golden files** (`testdata/<TestName>.golden`) are committed snapshots of known-good synthesis output. Filenames are derived automatically from `t.Name()`. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
 
-**Integration and E2E tests are not yet implemented** (CDKTN-044, CDKTN-045).
+**Example pattern tests** (`example_patterns_test.go`) are end-to-end tests that reconstruct each usage pattern from `cdktn/examples/patterns/` and validate the synthesized Terraform JSON. Each test asserts construction succeeds, JSON is valid, output matches a golden file, and pattern-specific behavioral properties hold (resource counts, field values, dependency chains).
+
+| Test | Pattern | Construct | Key Assertions |
+|------|---------|-----------|----------------|
+| `TestExamplePattern_FullClusterSetup` | full-cluster-setup | L3 | 10 providers, 4 original users, shard registration, balancer window, zones, key ranges, member overrides |
+| `TestExamplePattern_ShardedCluster` | sharded-cluster | L3 | SSL on all providers, 2 roles, multi-role user, chaining_allowed=false |
+| `TestExamplePattern_MonitoringUser` | monitoring-user | L2 Mongos | 1 provider (direct=false), 3 privilege blocks, 2-role user, no shard_config |
+| `TestExamplePattern_RoleHierarchy` | role-hierarchy | L2 Mongos | 3 roles with inheritance chain, 3 users each depending on all roles |
+| `TestExamplePattern_AddReplicaset` | add-replicaset | L2 Shard | 3 providers (direct=true), original user, member overrides with tags |
+| `TestExamplePattern_ZoneSharding` | zone-sharding | L3 | 4 zone mappings (multi-zone shard), 3 key ranges, depends_on zones |
+| `TestExamplePattern_CollectionBalancing` | collection-balancing | L3 | Global balancer, 3 per-collection configs (disabled/large/small chunks) |
 
 ---
 

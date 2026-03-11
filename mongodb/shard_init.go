@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -19,6 +21,29 @@ const (
 	// MongoErrAlreadyInitialized is MongoDB error code 23, returned when
 	// replSetInitiate is called on an already-initialized RS. // INIT-015
 	MongoErrAlreadyInitialized = 23
+
+	// MongoErrNotWriteReady is MongoDB error code 17405 (Location17405),
+	// returned when replSetReconfig is called on a freshly elected PRIMARY
+	// that cannot yet accept writes. // INIT-025
+	MongoErrNotWriteReady = 17405
+
+	// MongoErrVersionConflict is MongoDB error code 103
+	// (NewReplicaSetConfigurationIncompatible), returned when replSetReconfig
+	// sends a config version not greater than the current one. // INIT-027
+	MongoErrVersionConflict = 103
+
+	// MongoErrUnauthorized is MongoDB error code 13, returned when an
+	// operation requires authentication but the client is not authorized. // INIT-029
+	MongoErrUnauthorized = 13
+
+	// MongoErrAuthenticationFailed is MongoDB error code 18, returned when
+	// SCRAM-SHA authentication fails (wrong credentials or user missing). // INIT-029
+	MongoErrAuthenticationFailed = 18
+
+	// MongoErrFailedReadPreference is MongoDB error code 133
+	// (FailedToSatisfyReadPreference), returned when addShard cannot find a
+	// host matching the read preference (e.g. PRIMARY not yet discovered). // CLUS-011
+	MongoErrFailedReadPreference = 133
 
 	// DefaultInitTimeoutSecs is the default timeout for RS initialization. // INIT-020
 	DefaultInitTimeoutSecs = 60
@@ -44,6 +69,70 @@ func IsAlreadyInitialized(err error) bool {
 	var cmdErr mongo.CommandError
 	if errors.As(err, &cmdErr) {
 		return cmdErr.Code == MongoErrAlreadyInitialized
+	}
+	return false
+}
+
+// IsNotWriteReady returns true if err wraps a mongo.CommandError with
+// code 17405 (Location17405). This occurs when a freshly elected PRIMARY
+// has not yet written its initial no-op oplog entry. // INIT-025
+func IsNotWriteReady(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrNotWriteReady
+	}
+	return false
+}
+
+// IsAuthError returns true if err indicates an authentication or authorization
+// failure. Checks for mongo.CommandError codes 13 (Unauthorized) and 18
+// (AuthenticationFailed), as well as connection-level SCRAM handshake failures
+// which are not wrapped as CommandErrors. // INIT-029
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrUnauthorized || cmdErr.Code == MongoErrAuthenticationFailed
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "AuthenticationFailed") || strings.Contains(msg, "auth error")
+}
+
+// IsReadPreferenceError returns true if err indicates a FailedToSatisfyReadPreference
+// error (code 133). This occurs when mongos cannot find a PRIMARY for a newly
+// added replica set that hasn't been fully discovered yet. // CLUS-011
+func IsReadPreferenceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrFailedReadPreference
+	}
+	return strings.Contains(err.Error(), "FailedToSatisfyReadPreference")
+}
+
+// diagContainsAuthError returns true if any diagnostic in the slice contains
+// an authentication or authorization error message. // INIT-029
+func diagContainsAuthError(diags diag.Diagnostics) bool {
+	for _, d := range diags {
+		if IsAuthError(fmt.Errorf("%s %s", d.Summary, d.Detail)) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsVersionConflict returns true if err wraps a mongo.CommandError with
+// code 103 (NewReplicaSetConfigurationIncompatible). This occurs when the
+// config version sent is not greater than the server's current version,
+// typically due to an internal auto-reconfig between read and write. // INIT-027
+func IsVersionConflict(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrVersionConflict
 	}
 	return false
 }
@@ -163,6 +252,48 @@ func WaitForMajorityHealthy(ctx context.Context, client *mongo.Client, expectedC
 			}
 		}
 
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(initPollInterval):
+		}
+	}
+}
+
+// SetReplSetConfigWithRetry wraps SetReplSetConfig with retry logic for
+// transient post-election errors:
+//   - Location17405: freshly elected PRIMARY cannot accept writes yet (INIT-025)
+//   - Code 103: config version conflict from internal auto-reconfig (INIT-027)
+//
+// On version conflicts, the function re-reads the current config version from
+// the server before retrying. Retries use initPollInterval backoff until the
+// timeout is exceeded. // INIT-025, INIT-026, INIT-027, INIT-028
+func SetReplSetConfigWithRetry(ctx context.Context, client *mongo.Client, cfg *RSConfig, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := SetReplSetConfig(ctx, client, cfg)
+		if err == nil {
+			return nil
+		}
+		retryable := IsNotWriteReady(err) || IsVersionConflict(err)
+		if !retryable {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("replSetReconfig: transient error not resolved within %s: %w", timeout, err)
+		}
+		// INIT-027/028: Re-read current version to handle auto-reconfig drift
+		if IsVersionConflict(err) {
+			current, readErr := GetReplSetConfig(ctx, client)
+			if readErr != nil {
+				return fmt.Errorf("replSetReconfig version conflict and failed to re-read config: %w", readErr)
+			}
+			cfg.Version = current.Version + 1
+		}
+		tflog.Debug(ctx, "retrying replSetReconfig after transient error", map[string]interface{}{
+			"error":   err.Error(),
+			"version": cfg.Version,
+		})
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

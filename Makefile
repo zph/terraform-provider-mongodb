@@ -30,10 +30,13 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=zph
 NAME=mongodb
 VERSION=$(shell cat $(PROVIDER_ROOT)/VERSION | tr -d '[:space:]')
+# Local dev builds always use 9.9.9 so the binary lands where dev_overrides expects.
+# Actual releases use VERSION (via tag/release targets).
+DEV_VERSION=9.9.9
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
-LDFLAGS=-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+LDFLAGS=-s -w -X main.version=$(DEV_VERSION) -X main.commit=$(COMMIT)
 ## on linux base os
-TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${DEV_VERSION}/${OS_ARCH}
 TERRAFORMRC=$(HOME)/.terraformrc
 
 help: ## Show this help
@@ -86,7 +89,7 @@ test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cd
 
 test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
 
-test-ci: test-unit cdktn-test test-integration-matrix test-golden ## Unit + integration matrix (3.6, 7) + golden tests
+test-ci: test-unit cdktn-test test-integration-matrix test-sharded-integration test-golden ## Unit + cdktn + integration matrix + sharded + golden tests
 
 test-unit: ## Run Go unit tests
 	cd $(PROVIDER_ROOT) && go test ./...

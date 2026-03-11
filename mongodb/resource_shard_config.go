@@ -21,9 +21,16 @@ type ResourceShardConfig struct {
 // INIT-001: If replSetGetConfig returns code 94, enter init flow.
 // INIT-002: If replSetGetConfig returns a valid config, delegate to Update.
 // INIT-015: If replSetGetConfig returns code 23, delegate to Update.
+// INIT-029: If getShardClient fails with an auth error, enter init flow
+// (user may not exist yet on a fresh instance; ConnectForInit has no-auth fallback).
 func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	client, cleanup, errD := r.getShardClient(ctx, data, i)
 	if errD != nil {
+		// INIT-029: Auth failure on fresh instance — fall through to init
+		// flow which uses ConnectForInit with no-auth fallback.
+		if diagContainsAuthError(errD) {
+			return r.initializeReplicaSet(ctx, data, i, nil)
+		}
 		return errD
 	}
 	defer cleanup()
@@ -31,11 +38,11 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	_, err := GetReplSetConfig(ctx, client)
 	switch {
 	case err == nil:
-		// INIT-002: Already configured, delegate to Update
-		return r.Update(ctx, data, i)
+		// INIT-002: Already configured, delegate to Update (client is authed)
+		return r.updateWithClient(ctx, data, client)
 	case IsAlreadyInitialized(err):
-		// INIT-015: Already initialized, delegate to Update
-		return r.Update(ctx, data, i)
+		// INIT-015: Already initialized, delegate to Update (client is authed)
+		return r.updateWithClient(ctx, data, client)
 	case IsNotYetInitialized(err):
 		// INIT-001: Enter initialization flow
 		return r.initializeReplicaSet(ctx, data, i, client)
@@ -79,8 +86,14 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 	err = InitiateReplicaSet(ctx, initClient, shardName, firstHost)
 	if err != nil {
 		if IsAlreadyInitialized(err) {
-			// INIT-015: Idempotent — fall through to Update
-			return r.Update(ctx, data, i)
+			// INIT-015/030: Already initialized — try authenticated client
+			// first (users may exist from a previous run), fall back to
+			// initClient if auth fails.
+			if authClient, authCleanup, authErr := r.getShardClient(ctx, data, i); authErr == nil {
+				defer authCleanup()
+				return r.updateWithClient(ctx, data, authClient)
+			}
+			return r.updateWithClient(ctx, data, initClient)
 		}
 		return diag.FromErr(err)
 	}
@@ -108,7 +121,9 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		// CATCHUP-002
 		config.Settings.CatchUpTimeoutMillis = int64(data.Get("catch_up_timeout_millis").(int))
 
-		if err := SetReplSetConfig(ctx, initClient, config); err != nil {
+		// INIT-025/026: Retry replSetReconfig if the freshly elected PRIMARY
+		// cannot yet accept writes (Location17405).
+		if err := SetReplSetConfigWithRetry(ctx, initClient, config, timeout); err != nil {
 			return diag.FromErr(err)
 		}
 
@@ -417,6 +432,19 @@ func readOplogConfig(ctx context.Context, client *mongo.Client, data *schema.Res
 }
 
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
+	client, cleanup, errD := r.getShardClient(ctx, data, i)
+	if errD != nil {
+		return errD
+	}
+	defer cleanup()
+	return r.updateWithClient(ctx, data, client)
+}
+
+// updateWithClient performs the Update logic using a pre-established client.
+// This allows both Update (which creates its own authenticated connection) and
+// initializeReplicaSet (which may only have a no-auth connection) to share
+// the same reconfig logic. // INIT-030
+func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client) diag.Diagnostics {
 	var m ShardModel
 
 	m.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
@@ -425,11 +453,6 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	m.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
 	// CATCHUP-005
 	m.Settings.CatchUpTimeoutMillis = int64(data.Get("catch_up_timeout_millis").(int))
-	client, cleanup, errD := r.getShardClient(ctx, data, i)
-	if errD != nil {
-		return errD
-	}
-	defer cleanup()
 
 	config, errD := r.getReplSetConfig(ctx, client)
 	if errD != nil {
@@ -477,7 +500,9 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	ctx = tflog.SetField(ctx, `updated replSetConfig`, config)
 	tflog.Debug(ctx, `replacement ReplSetConfig`)
 
-	err := SetReplSetConfig(ctx, client, config)
+	// INIT-025/026/027/028: Retry on transient post-election errors
+	timeout := time.Duration(data.Get("init_timeout_secs").(int)) * time.Second
+	err := SetReplSetConfigWithRetry(ctx, client, config, timeout)
 	if err != nil {
 		return diag.FromErr(err)
 	}

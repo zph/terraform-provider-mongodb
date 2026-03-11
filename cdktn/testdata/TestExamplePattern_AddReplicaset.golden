@@ -1,0 +1,113 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "shard_shard03_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard03a.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard03_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard03b.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard03_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "shard03c.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "admin"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_original_user": {
+      "shard_shard03_0_origuser_admin": {
+        "auth_database": "admin",
+        "host": "shard03a.example.com",
+        "password": "test-password",
+        "port": "27018",
+        "role": [
+          {
+            "db": "admin",
+            "role": "root"
+          }
+        ],
+        "username": "admin"
+      }
+    },
+    "mongodb_shard_config": {
+      "shard03_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "member": [
+          {
+            "arbiter_only": false,
+            "build_indexes": false,
+            "hidden": false,
+            "host": "shard03a.example.com:27018",
+            "priority": 10,
+            "secondary_delay_secs": 0,
+            "tags": {
+              "role": "primary-preferred"
+            },
+            "votes": 1
+          },
+          {
+            "arbiter_only": false,
+            "build_indexes": false,
+            "hidden": false,
+            "host": "shard03b.example.com:27018",
+            "priority": 5,
+            "secondary_delay_secs": 0,
+            "tags": {
+              "role": "secondary"
+            },
+            "votes": 1
+          },
+          {
+            "arbiter_only": false,
+            "build_indexes": false,
+            "hidden": false,
+            "host": "shard03c.example.com:27018",
+            "priority": 5,
+            "secondary_delay_secs": 0,
+            "tags": {
+              "role": "secondary"
+            },
+            "votes": 1
+          }
+        ],
+        "provider": "mongodb.shard_shard03_0",
+        "shard_name": "shard03"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

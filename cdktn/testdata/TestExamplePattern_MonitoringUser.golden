@@ -1,0 +1,79 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "mongos_0",
+        "auth_database": "admin",
+        "direct": false,
+        "host": "127.0.0.1",
+        "password": "test-password",
+        "port": "27017",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "root"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_db_role": {
+      "mongos_0_role_metrics_exporter": {
+        "database": "admin",
+        "name": "metrics_exporter",
+        "privilege": [
+          {
+            "actions": [
+              "serverStatus",
+              "replSetGetStatus"
+            ],
+            "cluster": true
+          },
+          {
+            "actions": [
+              "dbStats",
+              "collStats",
+              "indexStats"
+            ]
+          },
+          {
+            "actions": [
+              "find"
+            ],
+            "collection": "oplog.rs",
+            "db": "local"
+          }
+        ],
+        "provider": "mongodb.mongos_0"
+      }
+    },
+    "mongodb_db_user": {
+      "mongos_0_user_mongodb_exporter": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_0_role_metrics_exporter"
+        ],
+        "name": "mongodb_exporter",
+        "password": "exporter-pass",
+        "provider": "mongodb.mongos_0",
+        "role": [
+          {
+            "db": "admin",
+            "role": "metrics_exporter"
+          },
+          {
+            "db": "admin",
+            "role": "clusterMonitor"
+          }
+        ]
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

@@ -337,6 +337,43 @@ func shardConfigCommandPreview(d *schema.ResourceDiff) string {
 	return buildShardConfigPreview(shardName, d.Id() == "")
 }
 
+// buildShardZonePreview builds the addShardToZone command string.
+// ZONE-013
+func buildShardZonePreview(shardName, zone string) string {
+	return fmt.Sprintf("db.adminCommand({addShardToZone: %q, zone: %q})", shardName, zone)
+}
+
+// buildZoneKeyRangePreview builds the updateZoneKeyRange command string.
+// ZONE-030
+func buildZoneKeyRangePreview(namespace, zone, minJSON, maxJSON string) string {
+	return fmt.Sprintf("db.adminCommand({updateZoneKeyRange: %q, min: %s, max: %s, zone: %q})",
+		namespace, minJSON, maxJSON, zone)
+}
+
+// shardZoneCommandPreview extracts fields from ResourceDiff and delegates.
+func shardZoneCommandPreview(d *schema.ResourceDiff) string {
+	if d.Id() != "" {
+		return "" // Updates are no-ops
+	}
+	return buildShardZonePreview(
+		d.Get("shard_name").(string),
+		d.Get("zone").(string),
+	)
+}
+
+// zoneKeyRangeCommandPreview extracts fields from ResourceDiff and delegates.
+func zoneKeyRangeCommandPreview(d *schema.ResourceDiff) string {
+	if d.Id() != "" {
+		return "" // Updates are no-ops
+	}
+	return buildZoneKeyRangePreview(
+		d.Get("namespace").(string),
+		d.Get("zone").(string),
+		d.Get("min").(string),
+		d.Get("max").(string),
+	)
+}
+
 // --- Helpers ---
 
 // extractPreviewRoles converts a schema Set list to previewRole slice.

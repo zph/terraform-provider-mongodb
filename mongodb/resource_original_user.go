@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -61,9 +62,9 @@ func resourceOriginalUser() *schema.Resource {
 			},
 			"password": {
 				Type:        schema.TypeString,
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "Admin password to create",
+				Description: "Admin password to create. Prefer MONGODB_ORIGINAL_USER_PASSWORD env var so the password is never stored in Terraform state.",
 			},
 			"auth_database": {
 				Type:        schema.TypeString,
@@ -113,6 +114,16 @@ func resourceOriginalUser() *schema.Resource {
 	}
 }
 
+// getOriginalUserPassword returns the password from config/state or from
+// MONGODB_ORIGINAL_USER_PASSWORD env var. Using the env var avoids storing
+// the password in Terraform state.
+func getOriginalUserPassword(data *schema.ResourceData) string {
+	if v, ok := data.GetOk("password"); ok && v.(string) != "" {
+		return v.(string)
+	}
+	return os.Getenv("MONGODB_ORIGINAL_USER_PASSWORD")
+}
+
 // buildOriginalUserConfig builds a ClientConfig from the resource's own
 // connection attributes (not from the provider config).
 func buildOriginalUserConfig(data *schema.ResourceData) *MongoDatabaseConfiguration {
@@ -141,7 +152,7 @@ func buildOriginalUserConfig(data *schema.ResourceData) *MongoDatabaseConfigurat
 func buildOriginalUserAuthConfig(data *schema.ResourceData) *MongoDatabaseConfiguration {
 	cfg := buildOriginalUserConfig(data)
 	cfg.Config.Username = data.Get("username").(string)
-	cfg.Config.Password = data.Get("password").(string)
+	cfg.Config.Password = getOriginalUserPassword(data)
 	return cfg
 }
 
@@ -209,7 +220,10 @@ func resourceOriginalUserCreate(ctx context.Context, data *schema.ResourceData, 
 
 	database := data.Get("auth_database").(string)
 	userName := data.Get("username").(string)
-	userPassword := data.Get("password").(string)
+	userPassword := getOriginalUserPassword(data)
+	if userPassword == "" {
+		return diag.Errorf("password is required: set the password attribute or MONGODB_ORIGINAL_USER_PASSWORD environment variable")
+	}
 
 	var roleList []Role
 	roles := data.Get("role").(*schema.Set).List()

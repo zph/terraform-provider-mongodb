@@ -116,3 +116,7 @@ Each role block assigns a role to the user. If no roles are specified, the user 
 ### Delete
 
 ~> **State-only removal.** Delete removes the resource from Terraform state but does **not** drop the user from MongoDB. Dropping the original admin user would lock out the cluster. A warning is emitted to confirm this behavior.
+
+## Limitations
+
+* **Localhost exception required.** This resource relies on MongoDB's [localhost exception](https://www.mongodb.com/docs/manual/core/localhost-exception/): when `--auth` is enabled but no users exist, MongoDB permits unauthenticated connections from the loopback interface to create the first user. The Terraform provider (or its proxy) must be able to reach MongoDB via `localhost`/`127.0.0.1` for the bootstrap connection to succeed. Remote bootstrap without an existing user is not supported by MongoDB.

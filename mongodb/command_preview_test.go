@@ -242,3 +242,26 @@ func TestShardConfigPreviewBuild_Update(t *testing.T) {
 		t.Errorf("update should show replSetReconfig, got: %s", got)
 	}
 }
+
+// PREVIEW-T21: ZONE-013 — shard zone preview shows addShardToZone
+func TestShardZonePreviewBuild(t *testing.T) {
+	got := buildShardZonePreview("shard01", "US-East")
+	want := `db.adminCommand({addShardToZone: "shard01", zone: "US-East"})`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// PREVIEW-T22: ZONE-030 — zone key range preview shows updateZoneKeyRange
+func TestZoneKeyRangePreviewBuild(t *testing.T) {
+	got := buildZoneKeyRangePreview("app_db.orders", "US-East", `{"region": "east"}`, `{"region": "west"}`)
+	if !strings.Contains(got, "updateZoneKeyRange") {
+		t.Errorf("should contain updateZoneKeyRange, got: %s", got)
+	}
+	if !strings.Contains(got, `"app_db.orders"`) {
+		t.Errorf("should contain namespace, got: %s", got)
+	}
+	if !strings.Contains(got, `"US-East"`) {
+		t.Errorf("should contain zone name, got: %s", got)
+	}
+}

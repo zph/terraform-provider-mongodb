@@ -6,10 +6,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-// TEST-046: resourceOriginalUser schema has required fields: host, port, username, password
+// TEST-046: resourceOriginalUser schema has required fields: host, port, username (password optional to avoid state)
 func TestResourceOriginalUser_SchemaRequiredFields(t *testing.T) {
 	res := resourceOriginalUser()
-	requiredFields := []string{"host", "port", "username", "password"}
+	requiredFields := []string{"host", "port", "username"}
 	for _, field := range requiredFields {
 		s, ok := res.Schema[field]
 		if !ok {
@@ -48,12 +48,15 @@ func TestResourceOriginalUser_SchemaOptionalFields(t *testing.T) {
 	}
 }
 
-// TEST-048: password field is marked Sensitive
+// TEST-048: password field is Optional (use env var to avoid storing in state) and Sensitive
 func TestResourceOriginalUser_PasswordSensitive(t *testing.T) {
 	res := resourceOriginalUser()
 	s := res.Schema["password"]
 	if !s.Sensitive {
 		t.Error("password field SHOULD be Sensitive")
+	}
+	if s.Required {
+		t.Error("password field SHOULD be Optional so MONGODB_ORIGINAL_USER_PASSWORD can be used without state")
 	}
 }
 

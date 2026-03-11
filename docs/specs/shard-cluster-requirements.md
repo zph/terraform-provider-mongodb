@@ -58,3 +58,18 @@ resource SHALL poll at 5-second intervals until completed or timeout.
 
 **CLUS-010** (Optional Feature): WHERE `remove_timeout_secs` is set, the
 resource SHALL use the specified value as the remove timeout in seconds.
+
+## addShard Retry
+
+**CLUS-011** (Event Driven): WHEN `addShard` fails with MongoDB error code
+133 (FailedToSatisfyReadPreference), the resource SHALL retry at 2-second
+intervals until `add_timeout_secs` is exceeded, because mongos may not have
+discovered the newly initialized RS primary yet.
+
+**CLUS-012** (Unwanted Behaviour): IF `addShard` retries do not succeed
+before `add_timeout_secs`, the resource SHALL return the last error.
+
+**CLUS-013** (Ubiquitous): The default add timeout SHALL be 60 seconds.
+
+**CLUS-014** (Optional Feature): WHERE `add_timeout_secs` is set, the
+resource SHALL use the specified value as the addShard retry timeout.
