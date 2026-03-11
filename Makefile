@@ -111,7 +111,7 @@ test-plan: re-install ## Build provider and run terraform plan against examples
 
 test-shard-plan: export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
 test-shard-plan: re-install ## Build provider and run terraform plan for shard_config example
-	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && terraform plan
+	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && rm -rf .terraform .terraform.lock.hcl && make init && terraform plan
 
 run: install ## Alias for install
 
