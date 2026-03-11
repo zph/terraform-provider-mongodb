@@ -1,0 +1,147 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "mongos_0",
+        "auth_database": "admin",
+        "direct": false,
+        "host": "127.0.0.1",
+        "password": "test-password",
+        "port": "27017",
+        "retrywrites": true,
+        "ssl": false,
+        "username": "root"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_db_role": {
+      "mongos_0_role_app_admin": {
+        "database": "admin",
+        "inherited_role": [
+          {
+            "db": "admin",
+            "role": "app_editor"
+          }
+        ],
+        "name": "app_admin",
+        "privilege": [
+          {
+            "actions": [
+              "createIndex",
+              "dropIndex",
+              "createCollection",
+              "dropCollection"
+            ],
+            "db": "app_db"
+          }
+        ],
+        "provider": "mongodb.mongos_0"
+      },
+      "mongos_0_role_app_editor": {
+        "database": "admin",
+        "inherited_role": [
+          {
+            "db": "admin",
+            "role": "app_viewer"
+          }
+        ],
+        "name": "app_editor",
+        "privilege": [
+          {
+            "actions": [
+              "insert",
+              "update",
+              "remove"
+            ],
+            "db": "app_db"
+          }
+        ],
+        "provider": "mongodb.mongos_0"
+      },
+      "mongos_0_role_app_viewer": {
+        "database": "admin",
+        "name": "app_viewer",
+        "privilege": [
+          {
+            "actions": [
+              "find",
+              "listCollections"
+            ],
+            "db": "app_db"
+          },
+          {
+            "actions": [
+              "collStats",
+              "dbStats"
+            ],
+            "db": "app_db"
+          }
+        ],
+        "provider": "mongodb.mongos_0"
+      }
+    },
+    "mongodb_db_user": {
+      "mongos_0_user_admin_user": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_0_role_app_admin",
+          "mongodb_db_role.mongos_0_role_app_editor",
+          "mongodb_db_role.mongos_0_role_app_viewer"
+        ],
+        "name": "admin_user",
+        "password": "admin-pass",
+        "provider": "mongodb.mongos_0",
+        "role": [
+          {
+            "db": "admin",
+            "role": "app_admin"
+          }
+        ]
+      },
+      "mongos_0_user_editor_user": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_0_role_app_admin",
+          "mongodb_db_role.mongos_0_role_app_editor",
+          "mongodb_db_role.mongos_0_role_app_viewer"
+        ],
+        "name": "editor_user",
+        "password": "editor-pass",
+        "provider": "mongodb.mongos_0",
+        "role": [
+          {
+            "db": "admin",
+            "role": "app_editor"
+          }
+        ]
+      },
+      "mongos_0_user_viewer_user": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_0_role_app_admin",
+          "mongodb_db_role.mongos_0_role_app_editor",
+          "mongodb_db_role.mongos_0_role_app_viewer"
+        ],
+        "name": "viewer_user",
+        "password": "viewer-pass",
+        "provider": "mongodb.mongos_0",
+        "role": [
+          {
+            "db": "admin",
+            "role": "app_viewer"
+          }
+        ]
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

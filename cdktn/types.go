@@ -102,41 +102,100 @@ func DefaultShardConfigSettings() *ShardConfigSettings {
 	}
 }
 
+// BalancerConfig configures the global balancer (mongodb_balancer_config). // BAL-001
+type BalancerConfig struct {
+	Enabled           bool
+	ActiveWindowStart string // HH:MM format
+	ActiveWindowStop  string // HH:MM format
+	ChunkSizeMB       int
+	SecondaryThrottle string
+	WaitForDelete     *bool
+}
+
+// ShardZoneConfig maps a shard to a zone (mongodb_shard_zone). // ZONE-001
+type ShardZoneConfig struct {
+	ShardName string // RS name of the shard
+	Zone      string
+}
+
+// ZoneKeyRangeConfig assigns a key range to a zone (mongodb_zone_key_range). // ZONE-014
+type ZoneKeyRangeConfig struct {
+	Namespace string // db.collection format
+	Zone      string
+	Min       string // JSON string
+	Max       string // JSON string
+}
+
+// CollectionBalancingConfig manages per-collection balancing (mongodb_collection_balancing). // CBAL-001
+type CollectionBalancingConfig struct {
+	Namespace   string // db.collection format
+	Enabled     bool
+	ChunkSizeMB int
+}
+
+// ProfilerConfig manages per-database profiler settings (mongodb_profiler). // PROF-001
+type ProfilerConfig struct {
+	Database  string
+	Level     int
+	SlowMs    int
+	RateLimit int
+}
+
+// ServerParameterConfig manages a server parameter (mongodb_server_parameter). // PARAM-001
+type ServerParameterConfig struct {
+	Parameter string
+	Value     string
+}
+
+// FCVConfig manages featureCompatibilityVersion (mongodb_feature_compatibility_version). // FCV-001
+type FCVConfig struct {
+	Version    string
+	DangerMode bool
+}
+
 // MongoShardProps configures a MongoShard L2 construct. // CDKTN-001
 type MongoShardProps struct {
-	ReplicaSetName string
-	Members        []MemberConfig
-	Credentials    CredentialSource
-	SSL            *SSLConfig
-	Proxy          string
-	Users          []UserConfig
-	Roles          []RoleConfig
-	ShardConfig    *ShardConfigSettings
-	OriginalUsers  []OriginalUserConfig // CDKTN-052
+	ReplicaSetName   string
+	Members          []MemberConfig
+	Credentials      CredentialSource
+	SSL              *SSLConfig
+	Proxy            string
+	Users            []UserConfig
+	Roles            []RoleConfig
+	ShardConfig      *ShardConfigSettings
+	OriginalUsers    []OriginalUserConfig    // CDKTN-052
+	Profilers        []ProfilerConfig        // per-node profiler configs
+	ServerParameters []ServerParameterConfig // per-node server params
+	FCV              *FCVConfig              // FCV on primary
 }
 
 // ConfigServerProps configures a MongoConfigServer L2 construct. // CDKTN-001
 type ConfigServerProps struct {
-	ReplicaSetName string
-	Members        []MemberConfig
-	Credentials    CredentialSource
-	SSL            *SSLConfig
-	Proxy          string
-	Users          []UserConfig
-	Roles          []RoleConfig
-	ShardConfig    *ShardConfigSettings
-	OriginalUsers  []OriginalUserConfig // CDKTN-052
+	ReplicaSetName   string
+	Members          []MemberConfig
+	Credentials      CredentialSource
+	SSL              *SSLConfig
+	Proxy            string
+	Users            []UserConfig
+	Roles            []RoleConfig
+	ShardConfig      *ShardConfigSettings
+	OriginalUsers    []OriginalUserConfig    // CDKTN-052
+	Profilers        []ProfilerConfig        // per-node profiler configs
+	ServerParameters []ServerParameterConfig // per-node server params
+	FCV              *FCVConfig              // FCV on primary
 }
 
 // MongosProps configures a MongoMongos L2 construct. // CDKTN-001
 type MongosProps struct {
-	Members       []MemberConfig
-	Credentials   CredentialSource
-	SSL           *SSLConfig
-	Proxy         string
-	Users         []UserConfig
-	Roles         []RoleConfig
-	OriginalUsers []OriginalUserConfig // CDKTN-052
+	Members          []MemberConfig
+	Credentials      CredentialSource
+	SSL              *SSLConfig
+	Proxy            string
+	Users            []UserConfig
+	Roles            []RoleConfig
+	OriginalUsers    []OriginalUserConfig    // CDKTN-052
+	Profilers        []ProfilerConfig        // per-node profiler configs
+	ServerParameters []ServerParameterConfig // per-node server params
 }
 
 // ShardConfig is an entry in MongoShardedClusterProps.Shards. // CDKTN-033
@@ -179,4 +238,14 @@ type MongoShardedClusterProps struct {
 	Roles           []RoleConfig
 	ProviderVersion string               // CDKTN-042
 	OriginalUsers   []OriginalUserConfig // CDKTN-052: cluster-level original users
+
+	// Cluster-level resource configs
+	RegisterShards      bool                        // opt-in: generate mongodb_shard resources via mongos
+	Balancer            *BalancerConfig             // global balancer settings
+	ShardZones          []ShardZoneConfig           // shard-to-zone mappings
+	ZoneKeyRanges       []ZoneKeyRangeConfig        // zone key range assignments
+	CollectionBalancing []CollectionBalancingConfig // per-collection balancing
+	Profilers           []ProfilerConfig            // cluster-level profilers (cascade to all nodes)
+	ServerParameters    []ServerParameterConfig     // cluster-level server params (cascade to all nodes)
+	FCV                 *FCVConfig                  // cluster-level FCV (applied to primary of each RS)
 }

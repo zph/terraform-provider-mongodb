@@ -91,5 +91,5 @@ func TestNewMongoConfigServer_GoldenFile(t *testing.T) {
 	data, err := stack.Synth()
 	require.NoError(t, err)
 	assert.True(t, json.Valid(data))
-	goldenCompare(t, "config_server_basic.json", data)
+	goldenCompare(t, data)
 }

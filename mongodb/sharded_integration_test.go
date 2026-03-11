@@ -5,7 +5,6 @@ package mongodb
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -210,7 +208,7 @@ func setupShardedCluster() error {
 			`db.getSiblingDB("admin").createUser({user:"%s",pwd:"%s",roles:["root"]})`,
 			shardedAdminUser, shardedAdminPassword,
 		)
-		if err := containerExec(ctx, sc.c, sc.port, js); err != nil {
+		if err := mongoExec(ctx, sc.c, sc.port, js); err != nil {
 			return fmt.Errorf("create admin on %s: %w", sc.name, err)
 		}
 	}
@@ -224,46 +222,17 @@ func initRS(ctx context.Context, c *testcontainers.DockerContainer, rsName, host
 		`rs.initiate({_id:"%s",members:[{_id:0,host:"%s:%s"}]})`,
 		rsName, hostname, port,
 	)
-	return containerExec(ctx, c, port, js)
+	return mongoExec(ctx, c, port, js)
 }
 
 // waitForPrimaryExec polls rs.status() via container exec until myState == 1 (PRIMARY).
 func waitForPrimaryExec(ctx context.Context, c *testcontainers.DockerContainer, port string) error {
-	deadline := time.Now().Add(120 * time.Second)
-	js := `JSON.stringify({state: rs.status().myState})`
-	for time.Now().Before(deadline) {
-		code, reader, err := c.Exec(ctx, []string{
-			"mongosh", "--port", port, "--quiet", "--eval", js,
-		}, exec.Multiplexed())
-		if err == nil && code == 0 {
-			out, _ := io.ReadAll(reader)
-			if strings.Contains(string(out), `"state":1`) {
-				return nil
-			}
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("timed out waiting for PRIMARY on port %s", port)
+	return waitForPrimary(ctx, c, port)
 }
 
 // mongosExec runs a JS expression against the mongos container.
 func mongosExec(ctx context.Context, c *testcontainers.DockerContainer, js string) error {
-	return containerExec(ctx, c, "27017", js)
-}
-
-// containerExec runs a JS expression via mongosh on a container.
-func containerExec(ctx context.Context, c *testcontainers.DockerContainer, port, js string) error {
-	code, reader, err := c.Exec(ctx, []string{
-		"mongosh", "--port", port, "--quiet", "--eval", js,
-	}, exec.Multiplexed())
-	if err != nil {
-		return fmt.Errorf("exec failed: %w", err)
-	}
-	out, _ := io.ReadAll(reader)
-	if code != 0 {
-		return fmt.Errorf("exec exited %d: %s", code, string(out))
-	}
-	return nil
+	return mongoExec(ctx, c, "27017", js)
 }
 
 // ensureShardedCluster lazily starts the sharded cluster. If setup fails, it

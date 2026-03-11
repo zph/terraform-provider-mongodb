@@ -33,6 +33,7 @@ provider "mongodb" {
 #   to = mongodb_db_user.existing
 #   id = "admin.existing_user"
 # }
+# Then remove it after the import is complete and declare the identical resource again below.
 
 resource "mongodb_db_user" "existing" {
   auth_database = "admin"

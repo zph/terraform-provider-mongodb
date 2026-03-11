@@ -7,7 +7,10 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 default: help
 
-.PHONY: help setup dev-overrides build install re-install lint prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan run cdktn-build cdktn-test cdktn-test-golden tag release
+# Supported MongoDB versions for integration test matrix
+MONGO_VERSIONS := 3.6 7
+
+.PHONY: help setup dev-overrides build install re-install lint lint-noforceenew prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
 
 OS_ARCH=linux_amd64
 #
@@ -27,10 +30,13 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=zph
 NAME=mongodb
 VERSION=$(shell cat $(PROVIDER_ROOT)/VERSION | tr -d '[:space:]')
+# Local dev builds always use 9.9.9 so the binary lands where dev_overrides expects.
+# Actual releases use VERSION (via tag/release targets).
+DEV_VERSION=9.9.9
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
-LDFLAGS=-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+LDFLAGS=-s -w -X main.version=$(DEV_VERSION) -X main.commit=$(COMMIT)
 ## on linux base os
-TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+TERRAFORM_PLUGINS_DIRECTORY=$(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${DEV_VERSION}/${OS_ARCH}
 TERRAFORMRC=$(HOME)/.terraformrc
 
 help: ## Show this help
@@ -65,8 +71,14 @@ re-install: ## Clean reinstall of the provider
 	cd $(PROVIDER_ROOT)/examples && rm -rf .terraform
 	cd $(PROVIDER_ROOT)/examples && make init
 
-lint: ## Run all prek hooks on all files
+NOFORCEENEW_BIN := $(PROVIDER_ROOT)/.hermit/.cache/noforceenew
+
+lint: lint-noforceenew ## Run all linters and prek hooks on all files
 	cd $(PROVIDER_ROOT) && prek run --all-files
+
+lint-noforceenew: ## Ban ForceNew: true in schemas (DANGER-010)
+	@cd $(PROVIDER_ROOT) && go build -o $(NOFORCEENEW_BIN) ./linters/noforceenew/cmd/noforceenew
+	cd $(PROVIDER_ROOT) && $(NOFORCEENEW_BIN) -allow=resource_shard.go:shard_name ./mongodb/...
 
 prek: lint ## Alias for lint
 
@@ -77,10 +89,21 @@ test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cd
 
 test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
 
+test-ci: test-unit cdktn-test test-integration-matrix test-sharded-integration test-golden ## Unit + cdktn + integration matrix + sharded + golden tests
+
 test-unit: ## Run Go unit tests
 	cd $(PROVIDER_ROOT) && go test ./...
 
-test-integration: ## Run integration tests (requires Docker)
+test-integration: ## Run integration tests excluding golden (requires Docker; override image with MONGO_TEST_IMAGE)
+	cd $(PROVIDER_ROOT) && go test -tags integration -run 'TestIntegration_|TestShardedIntegration_' -v -timeout 300s ./mongodb/
+
+test-integration-matrix: ## Run integration tests against all supported MongoDB versions
+	@for v in $(MONGO_VERSIONS); do \
+		echo "=== mongo:$$v ==="; \
+		MONGO_TEST_IMAGE="mongo:$$v" $(MAKE) test-integration || exit 1; \
+	done
+
+test-integration-all: ## Run all integration tests including golden (requires Docker)
 	cd $(PROVIDER_ROOT) && go test -tags integration -v -timeout 300s ./mongodb/
 
 test-plan: re-install ## Build provider and run terraform plan against examples
@@ -88,7 +111,7 @@ test-plan: re-install ## Build provider and run terraform plan against examples
 
 test-shard-plan: export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
 test-shard-plan: re-install ## Build provider and run terraform plan for shard_config example
-	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && terraform plan
+	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && rm -rf .terraform .terraform.lock.hcl && make init && terraform plan
 
 run: install ## Alias for install
 

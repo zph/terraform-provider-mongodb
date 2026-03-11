@@ -134,6 +134,38 @@ members.
 client created during initialization after the operation completes,
 consistent with DISC-007.
 
+## Post-Election Write Readiness
+
+**INIT-025** (Event Driven): WHEN `replSetReconfig` fails with MongoDB error
+code 17405 (Location17405, "logOp() but can't accept write to collection"),
+the resource SHALL retry the reconfig with `initPollInterval` backoff until
+the `init_timeout_secs` deadline is exceeded, because a freshly elected
+PRIMARY cannot accept writes until it completes its initial no-op oplog entry.
+
+**INIT-026** (Unwanted Behaviour): IF retries of `replSetReconfig` do not
+succeed before `init_timeout_secs`, the resource SHALL return an error
+indicating the transient error was not resolved within the timeout.
+
+**INIT-027** (Event Driven): WHEN `replSetReconfig` fails with MongoDB error
+code 103 (NewReplicaSetConfigurationIncompatible) due to a stale config
+version, the resource SHALL re-read the current config version from the
+server, increment it, and retry the reconfig, because internal
+auto-reconfigurations (e.g. term updates after election) can bump the version
+between `replSetGetConfig` and `replSetReconfig`.
+
+**INIT-028** (Unwanted Behaviour): IF the config version re-read fails during
+a version-conflict retry, the resource SHALL return an error immediately
+rather than retrying with stale data.
+
+## Auth Fallback on Create
+
+**INIT-029** (Event Driven): WHEN `getShardClient` fails with an
+authentication or authorization error (codes 13 or 18, or a SCRAM handshake
+failure) during Create, the resource SHALL fall through to the initialization
+flow via `initializeReplicaSet`, because on a fresh instance the admin user
+may not exist yet. The initialization flow uses `ConnectForInit` which has its
+own no-auth fallback via the localhost exception.
+
 ## Scope
 
 **INIT-024** (Event Driven): WHEN the provider is connected to a mongos

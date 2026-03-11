@@ -1,0 +1,540 @@
+{
+  "provider": {
+    "mongodb": [
+      {
+        "alias": "configsvr_csrs_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg1",
+        "password": "pass",
+        "port": "27019",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_csrs_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg2",
+        "password": "pass",
+        "port": "27020",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "configsvr_csrs_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "cfg3",
+        "password": "pass",
+        "port": "27021",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "mongos_0",
+        "auth_database": "admin",
+        "direct": false,
+        "host": "mongos1",
+        "password": "pass",
+        "port": "27017",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "mongos_1",
+        "auth_database": "admin",
+        "direct": false,
+        "host": "mongos2",
+        "password": "pass",
+        "port": "27017",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m1",
+        "password": "pass",
+        "port": "27018",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m2",
+        "password": "pass",
+        "port": "27019",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard01_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s1m3",
+        "password": "pass",
+        "port": "27020",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_0",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s2m1",
+        "password": "pass",
+        "port": "27018",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_1",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s2m2",
+        "password": "pass",
+        "port": "27019",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      },
+      {
+        "alias": "shard_shard02_2",
+        "auth_database": "admin",
+        "direct": true,
+        "host": "s2m3",
+        "password": "pass",
+        "port": "27020",
+        "proxy": "socks5://proxy:1080",
+        "retrywrites": true,
+        "ssl": true,
+        "username": "admin"
+      }
+    ]
+  },
+  "resource": {
+    "mongodb_balancer_config": {
+      "balancer": {
+        "active_window_start": "02:00",
+        "active_window_stop": "06:00",
+        "chunk_size_mb": 128,
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": true,
+        "provider": "mongodb.mongos_0",
+        "secondary_throttle": "majority",
+        "wait_for_delete": true
+      }
+    },
+    "mongodb_collection_balancing": {
+      "colbal_app_orders": {
+        "chunk_size_mb": 64,
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "enabled": true,
+        "namespace": "app.orders",
+        "provider": "mongodb.mongos_0"
+      }
+    },
+    "mongodb_db_role": {
+      "configsvr_csrs_0_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.configsvr_csrs_0"
+      },
+      "configsvr_csrs_1_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.configsvr_csrs_1"
+      },
+      "configsvr_csrs_2_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.configsvr_csrs_2"
+      },
+      "mongos_0_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.mongos_0"
+      },
+      "mongos_1_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.mongos_1"
+      },
+      "shard_shard01_0_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard01_0"
+      },
+      "shard_shard01_1_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard01_1"
+      },
+      "shard_shard01_2_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard01_2"
+      },
+      "shard_shard02_0_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard02_0"
+      },
+      "shard_shard02_1_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard02_1"
+      },
+      "shard_shard02_2_role_StaffRole": {
+        "database": "admin",
+        "name": "StaffRole",
+        "provider": "mongodb.shard_shard02_2"
+      }
+    },
+    "mongodb_db_user": {
+      "mongos_0_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_0_role_StaffRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.mongos_0",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      },
+      "mongos_1_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.mongos_1_role_StaffRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.mongos_1",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      },
+      "shard_shard01_0_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.shard_shard01_0_role_StaffRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.shard_shard01_0",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      },
+      "shard_shard02_0_user_appuser": {
+        "auth_database": "admin",
+        "depends_on": [
+          "mongodb_db_role.shard_shard02_0_role_StaffRole"
+        ],
+        "name": "appuser",
+        "password": "secret",
+        "provider": "mongodb.shard_shard02_0",
+        "role": [
+          {
+            "db": "mydb",
+            "role": "readWrite"
+          }
+        ]
+      }
+    },
+    "mongodb_feature_compatibility_version": {
+      "configsvr_csrs_0_fcv": {
+        "danger_mode": true,
+        "provider": "mongodb.configsvr_csrs_0",
+        "version": "7.0"
+      },
+      "shard_shard01_0_fcv": {
+        "danger_mode": true,
+        "provider": "mongodb.shard_shard01_0",
+        "version": "7.0"
+      },
+      "shard_shard02_0_fcv": {
+        "danger_mode": true,
+        "provider": "mongodb.shard_shard02_0",
+        "version": "7.0"
+      }
+    },
+    "mongodb_profiler": {
+      "configsvr_csrs_0_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.configsvr_csrs_0",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "configsvr_csrs_1_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.configsvr_csrs_1",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "configsvr_csrs_2_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.configsvr_csrs_2",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "mongos_0_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.mongos_0",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "mongos_1_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.mongos_1",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard01_0_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard01_0",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard01_1_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard01_1",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard01_2_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard01_2",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard02_0_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard02_0",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard02_1_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard02_1",
+        "ratelimit": 100,
+        "slowms": 100
+      },
+      "shard_shard02_2_profiler_app": {
+        "database": "app",
+        "level": 1,
+        "provider": "mongodb.shard_shard02_2",
+        "ratelimit": 100,
+        "slowms": 100
+      }
+    },
+    "mongodb_server_parameter": {
+      "configsvr_csrs_0_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.configsvr_csrs_0",
+        "value": "256"
+      },
+      "configsvr_csrs_1_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.configsvr_csrs_1",
+        "value": "256"
+      },
+      "configsvr_csrs_2_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.configsvr_csrs_2",
+        "value": "256"
+      },
+      "mongos_0_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.mongos_0",
+        "value": "256"
+      },
+      "mongos_1_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.mongos_1",
+        "value": "256"
+      },
+      "shard_shard01_0_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard01_0",
+        "value": "256"
+      },
+      "shard_shard01_1_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard01_1",
+        "value": "256"
+      },
+      "shard_shard01_2_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard01_2",
+        "value": "256"
+      },
+      "shard_shard02_0_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard02_0",
+        "value": "256"
+      },
+      "shard_shard02_1_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard02_1",
+        "value": "256"
+      },
+      "shard_shard02_2_param_wiredTigerConcurrentReadTransactions": {
+        "parameter": "wiredTigerConcurrentReadTransactions",
+        "provider": "mongodb.shard_shard02_2",
+        "value": "256"
+      }
+    },
+    "mongodb_shard": {
+      "shard_shard01": {
+        "hosts": [
+          "s1m1:27018",
+          "s1m2:27019",
+          "s1m3:27020"
+        ],
+        "provider": "mongodb.mongos_0",
+        "remove_timeout_secs": 300,
+        "shard_name": "shard01"
+      },
+      "shard_shard02": {
+        "hosts": [
+          "s2m1:27018",
+          "s2m2:27019",
+          "s2m3:27020"
+        ],
+        "provider": "mongodb.mongos_0",
+        "remove_timeout_secs": 300,
+        "shard_name": "shard02"
+      }
+    },
+    "mongodb_shard_config": {
+      "csrs_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.configsvr_csrs_0",
+        "shard_name": "csrs"
+      },
+      "shard01_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.shard_shard01_0",
+        "shard_name": "shard01"
+      },
+      "shard02_config": {
+        "chaining_allowed": true,
+        "election_timeout_millis": 10000,
+        "heartbeat_interval_millis": 1000,
+        "heartbeat_timeout_secs": 10,
+        "provider": "mongodb.shard_shard02_0",
+        "shard_name": "shard02"
+      }
+    },
+    "mongodb_shard_zone": {
+      "shard01_US_East": {
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "provider": "mongodb.mongos_0",
+        "shard_name": "shard01",
+        "zone": "US-East"
+      },
+      "shard02_US_West": {
+        "depends_on": [
+          "mongodb_shard.shard_shard01",
+          "mongodb_shard.shard_shard02"
+        ],
+        "provider": "mongodb.mongos_0",
+        "shard_name": "shard02",
+        "zone": "US-West"
+      }
+    },
+    "mongodb_zone_key_range": {
+      "app_orders_US_East_0": {
+        "depends_on": [
+          "mongodb_shard_zone.shard01_US_East",
+          "mongodb_shard_zone.shard02_US_West"
+        ],
+        "max": "{\"_id\":0}",
+        "min": "{\"_id\":{\"$minKey\":1}}",
+        "namespace": "app.orders",
+        "provider": "mongodb.mongos_0",
+        "zone": "US-East"
+      },
+      "app_orders_US_West_1": {
+        "depends_on": [
+          "mongodb_shard_zone.shard01_US_East",
+          "mongodb_shard_zone.shard02_US_West"
+        ],
+        "max": "{\"_id\":{\"$maxKey\":1}}",
+        "min": "{\"_id\":0}",
+        "namespace": "app.orders",
+        "provider": "mongodb.mongos_0",
+        "zone": "US-West"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "mongodb": {
+        "source": "registry.terraform.io/zph/mongodb",
+        "version": "9.9.9"
+      }
+    },
+    "required_version": "\u003e= 1.7.5"
+  }
+}

@@ -17,10 +17,8 @@ terraform {
 # bootstrap — auth doesn't exist yet. After bootstrap, replace these
 # with real credentials matching the user created below.
 provider "mongodb" {
-  host     = "127.0.0.1"
-  port     = "30109"
-  username = "placeholder"
-  password = "placeholder"
+  host = "127.0.0.1"
+  port = "27017"
 }
 
 variable "admin_password" {
@@ -29,21 +27,21 @@ variable "admin_password" {
 }
 
 # mongos
-resource "mongodb_original_user" "admin" {
-  host     = "127.0.0.1"
-  port     = "30109"
-  username = "admin"
-  password = var.admin_password
-
-  role {
-    role = "root"
-    db   = "admin"
-  }
-}
+# resource "mongodb_original_user" "admin" {
+#   host     = "127.0.0.1"
+#   port     = "30109"
+#   username = "admin"
+#   password = var.admin_password
+#
+#   role {
+#     role = "root"
+#     db   = "admin"
+#   }
+# }
 
 resource "mongodb_original_user" "shard_01_admin" {
   host     = "127.0.0.1"
-  port     = "30103"
+  port     = "27017"
   username = "admin"
   password = var.admin_password
 
@@ -53,14 +51,15 @@ resource "mongodb_original_user" "shard_01_admin" {
   }
 }
 
-resource "mongodb_original_user" "shard_02_admin" {
-  host     = "127.0.0.1"
-  port     = "30106"
-  username = "admin"
-  password = var.admin_password
-
-  role {
-    role = "root"
-    db   = "admin"
-  }
-}
+# resource "mongodb_original_user" "shard_02_admin" {
+#   host     = "127.0.0.1"
+#   port     = "27018"
+#   username = "admin"
+#   password = var.admin_password
+#
+#   role {
+#     role = "root"
+#     db   = "admin"
+#   }
+# }
+#

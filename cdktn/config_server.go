@@ -35,6 +35,16 @@ func NewMongoConfigServer(stack *TerraformStack, id string, props *ConfigServerP
 		BuildOriginalUsers(stack, aliases[0], props.OriginalUsers)
 	}
 
+	if len(props.Profilers) > 0 {
+		BuildProfilers(stack, aliases, props.Profilers)
+	}
+	if len(props.ServerParameters) > 0 {
+		BuildServerParameters(stack, aliases, props.ServerParameters)
+	}
+	if props.FCV != nil {
+		BuildFCV(stack, aliases[0], props.FCV)
+	}
+
 	return &MongoConfigServer{
 		ReplicaSetName: props.ReplicaSetName,
 		Aliases:        aliases,

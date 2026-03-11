@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -16,8 +17,15 @@ const (
 	// DefaultRemoveTimeoutSecs is the default timeout for shard removal. // CLUS-009
 	DefaultRemoveTimeoutSecs = 300
 
+	// DefaultAddTimeoutSecs is the default timeout for addShard retries when
+	// the mongos has not yet discovered the RS primary. // CLUS-011
+	DefaultAddTimeoutSecs = 60
+
 	// shardRemovePollInterval is the polling interval for removeShard. // CLUS-008
 	shardRemovePollInterval = 5 * time.Second
+
+	// shardAddPollInterval is the polling interval for addShard retries. // CLUS-011
+	shardAddPollInterval = 2 * time.Second
 )
 
 // BuildShardConnectionString builds the connection string for addShard:
@@ -39,19 +47,28 @@ func resourceShard() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
+		// GATE-005: require feature opt-in
+		// DANGER-016, DANGER-017: block identity field changes at plan time
+		// PREVIEW-015: command preview
+		CustomizeDiff: customdiff.All(
+			requireFeature("mongodb_shard"),
+			blockFieldChange("shard_name"),
+			blockFieldChange("hosts"),
+			previewCommands(shardCommandPreview),
+		),
 		Schema: map[string]*schema.Schema{
-			// CLUS-001: shard_name Required, ForceNew
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
+			// CLUS-001, DANGER-017, DANGER-018: shard_name keeps ForceNew (allowlisted exception)
 			"shard_name": {
 				Type:        schema.TypeString,
 				Required:    true,
-				ForceNew:    true,
+				ForceNew:    true, //nolint:noforceenew // DANGER-018: allowlisted exception
 				Description: "The replica set name of the shard to add.",
 			},
-			// CLUS-001: hosts Required, TypeList, ForceNew
+			// CLUS-001, DANGER-016: hosts immutable via CustomizeDiff
 			"hosts": {
 				Type:     schema.TypeList,
 				Required: true,
-				ForceNew: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
@@ -62,6 +79,13 @@ func resourceShard() *schema.Resource {
 				Type:        schema.TypeInt,
 				Computed:    true,
 				Description: "The state of the shard as reported by listShards.",
+			},
+			// CLUS-011/012: add_timeout_secs Optional, Default 60
+			"add_timeout_secs": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     DefaultAddTimeoutSecs,
+				Description: "Timeout in seconds for addShard retry when mongos has not yet discovered the RS primary.",
 			},
 			// CLUS-009/010: remove_timeout_secs Optional, Default 300
 			"remove_timeout_secs": {
@@ -97,20 +121,48 @@ func (r *ResourceShard) Create(ctx context.Context, data *schema.ResourceData, i
 		"connection_string": connStr,
 	})
 
-	// CLUS-002: addShard command
-	res := client.Database("admin").RunCommand(ctx, bson.D{
-		{Key: "addShard", Value: connStr},
-	})
-	if res.Err() != nil {
-		return diag.FromErr(fmt.Errorf("addShard failed: %w", res.Err()))
-	}
+	// CLUS-002/011/012: addShard with retry on FailedToSatisfyReadPreference.
+	// After a fresh RS init, mongos may not have discovered the PRIMARY yet.
+	addTimeout := time.Duration(data.Get("add_timeout_secs").(int)) * time.Second
+	deadline := time.Now().Add(addTimeout)
 
-	var resp OKResponse
-	if err := res.Decode(&resp); err != nil {
-		return diag.FromErr(fmt.Errorf("addShard decode: %w", err))
-	}
-	if resp.OK != 1 {
-		return diag.Errorf("addShard failed: %s", resp.Errmsg)
+	for {
+		res := client.Database("admin").RunCommand(ctx, bson.D{
+			{Key: "addShard", Value: connStr},
+		})
+		if res.Err() != nil {
+			if IsReadPreferenceError(res.Err()) && time.Now().Before(deadline) {
+				tflog.Debug(ctx, "addShard: mongos has not discovered RS primary yet, retrying", map[string]interface{}{
+					"shard_name": shardName,
+					"error":      res.Err().Error(),
+				})
+				select {
+				case <-ctx.Done():
+					return diag.FromErr(ctx.Err())
+				case <-time.After(shardAddPollInterval):
+				}
+				continue
+			}
+			if IsReadPreferenceError(res.Err()) {
+				return diag.Errorf(
+					"addShard failed after %s: %s\n\n"+
+						"Hint: FailedToSatisfyReadPreference often means mongos cannot authenticate "+
+						"to the shard via internal cluster auth. Verify that the shard members use the "+
+						"same --keyFile as mongos and the config servers.",
+					addTimeout, res.Err(),
+				)
+			}
+			return diag.FromErr(fmt.Errorf("addShard failed: %w", res.Err()))
+		}
+
+		var resp OKResponse
+		if err := res.Decode(&resp); err != nil {
+			return diag.FromErr(fmt.Errorf("addShard decode: %w", err))
+		}
+		if resp.OK != 1 {
+			return diag.Errorf("addShard failed: %s", resp.Errmsg)
+		}
+		break
 	}
 
 	data.SetId(shardName)
@@ -159,9 +211,13 @@ func (r *ResourceShard) Read(ctx context.Context, data *schema.ResourceData, i i
 	return nil
 }
 
-// Update returns an error since all schema fields are ForceNew. // CLUS-007
+// Update handles changes to client-side-only fields (e.g. remove_timeout_secs).
+// Identity fields (shard_name, hosts) are blocked by CustomizeDiff. // CLUS-007, DANGER-019
 func (r *ResourceShard) Update(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	return diag.Errorf("mongodb_shard does not support in-place updates; all changes force replacement")
+	// remove_timeout_secs is read directly from ResourceData at delete time;
+	// no MongoDB operation needed. The SDK persists the new value to state
+	// automatically after Update returns nil.
+	return nil
 }
 
 // Delete runs removeShard and polls until the shard is fully removed. // CLUS-006

@@ -250,6 +250,26 @@ func createUser(client *mongo.Client, user DbUser, roles []Role, database string
 	return nil
 }
 
+// updateUser modifies an existing user in-place via the MongoDB updateUser command.
+// DANGER-005
+func updateUser(client *mongo.Client, username, password string, roles []Role, database string) error {
+	var rolesValue any
+	if len(roles) != 0 {
+		rolesValue = roles
+	} else {
+		rolesValue = []bson.M{}
+	}
+	result := client.Database(database).RunCommand(context.Background(), bson.D{
+		{Key: "updateUser", Value: username},
+		{Key: "pwd", Value: password},
+		{Key: "roles", Value: rolesValue},
+	})
+	if result.Err() != nil {
+		return result.Err()
+	}
+	return nil
+}
+
 func getUser(client *mongo.Client, username string, database string) (SingleResultGetUser, error) {
 	var result *mongo.SingleResult
 	result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "usersInfo", Value: bson.D{
@@ -328,6 +348,35 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	result := client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createRole", Value: role},
 		{Key: "privileges", Value: privValue}, {Key: "roles", Value: rolesValue}})
 
+	if result.Err() != nil {
+		return result.Err()
+	}
+	return nil
+}
+
+// updateRole modifies an existing role in-place via the MongoDB updateRole command.
+// DANGER-007
+func updateRole(client *mongo.Client, role string, roles []Role, privilege []PrivilegeDto, database string) error {
+	privDocs, err := buildPrivilegeDocs(role, privilege)
+	if err != nil {
+		return err
+	}
+	var rolesValue any
+	if len(roles) != 0 {
+		rolesValue = roles
+	} else {
+		rolesValue = []bson.M{}
+	}
+	privValue := any(privDocs)
+	if len(privDocs) == 0 {
+		privValue = []bson.M{}
+	}
+
+	result := client.Database(database).RunCommand(context.Background(), bson.D{
+		{Key: "updateRole", Value: role},
+		{Key: "privileges", Value: privValue},
+		{Key: "roles", Value: rolesValue},
+	})
 	if result.Err() != nil {
 		return result.Err()
 	}

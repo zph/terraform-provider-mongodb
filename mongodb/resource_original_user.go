@@ -2,9 +2,12 @@ package mongodb
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
@@ -23,7 +26,25 @@ func resourceOriginalUser() *schema.Resource {
 		ReadContext:   resourceOriginalUserRead,
 		UpdateContext: resourceOriginalUserUpdate,
 		DeleteContext: resourceOriginalUserDelete,
+		// DANGER-009: block all updates at plan time
+		// PREVIEW-024: command preview
+		CustomizeDiff: customdiff.All(
+			previewCommands(originalUserCommandPreview),
+			func(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+				if d.Id() == "" {
+					return nil
+				}
+				if !d.HasChanges() {
+					return nil
+				}
+				return fmt.Errorf(
+					"mongodb_original_user does not support updates; " +
+						"the original admin user cannot be safely dropped and recreated",
+				)
+			},
+		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"host": {
 				Type:        schema.TypeString,
 				Required:    true,
@@ -41,9 +62,9 @@ func resourceOriginalUser() *schema.Resource {
 			},
 			"password": {
 				Type:        schema.TypeString,
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "Admin password to create",
+				Description: "Admin password to create. Prefer MONGODB_ORIGINAL_USER_PASSWORD env var so the password is never stored in Terraform state.",
 			},
 			"auth_database": {
 				Type:        schema.TypeString,
@@ -93,6 +114,16 @@ func resourceOriginalUser() *schema.Resource {
 	}
 }
 
+// getOriginalUserPassword returns the password from config/state or from
+// MONGODB_ORIGINAL_USER_PASSWORD env var. Using the env var avoids storing
+// the password in Terraform state.
+func getOriginalUserPassword(data *schema.ResourceData) string {
+	if v, ok := data.GetOk("password"); ok && v.(string) != "" {
+		return v.(string)
+	}
+	return os.Getenv("MONGODB_ORIGINAL_USER_PASSWORD")
+}
+
 // buildOriginalUserConfig builds a ClientConfig from the resource's own
 // connection attributes (not from the provider config).
 func buildOriginalUserConfig(data *schema.ResourceData) *MongoDatabaseConfiguration {
@@ -121,7 +152,7 @@ func buildOriginalUserConfig(data *schema.ResourceData) *MongoDatabaseConfigurat
 func buildOriginalUserAuthConfig(data *schema.ResourceData) *MongoDatabaseConfiguration {
 	cfg := buildOriginalUserConfig(data)
 	cfg.Config.Username = data.Get("username").(string)
-	cfg.Config.Password = data.Get("password").(string)
+	cfg.Config.Password = getOriginalUserPassword(data)
 	return cfg
 }
 
@@ -189,7 +220,10 @@ func resourceOriginalUserCreate(ctx context.Context, data *schema.ResourceData, 
 
 	database := data.Get("auth_database").(string)
 	userName := data.Get("username").(string)
-	userPassword := data.Get("password").(string)
+	userPassword := getOriginalUserPassword(data)
+	if userPassword == "" {
+		return diag.Errorf("password is required: set the password attribute or MONGODB_ORIGINAL_USER_PASSWORD environment variable")
+	}
 
 	var roleList []Role
 	roles := data.Get("role").(*schema.Set).List()
@@ -266,72 +300,30 @@ func resourceOriginalUserRead(ctx context.Context, data *schema.ResourceData, _ 
 	return nil
 }
 
-// ORIG-005: WHEN updating the original user, the resource SHALL connect with
-// authentication and recreate the user with new credentials/roles.
-func resourceOriginalUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	conf := buildOriginalUserAuthConfig(data)
-	ensureReplicaSetDiscovered(ctx, conf, data)
-
-	client, err := MongoClientInit(ctx, conf)
-	if err != nil {
-		return diag.Errorf("error connecting to MongoDB: %s", err)
-	}
-	defer func() { _ = client.Disconnect(ctx) }()
-
-	username, database, parseErr := resourceOriginalUserParseId(data.Id())
-	if parseErr != nil {
-		return diag.Errorf("%s", parseErr)
-	}
-
-	adminDB := client.Database(database)
-	result := adminDB.RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: username}})
-	if result.Err() != nil {
-		return diag.Errorf("error dropping user for update: %s", result.Err())
-	}
-
-	userPassword := data.Get("password").(string)
-	var roleList []Role
-	roles := data.Get("role").(*schema.Set).List()
-	if err := mapstructure.Decode(roles, &roleList); err != nil {
-		return diag.Errorf("error decoding roles: %s", err)
-	}
-	if len(roleList) == 0 {
-		roleList = []Role{{Role: "root", Db: defaultAuthDatabase}}
-	}
-
-	user := DbUser{Name: username, Password: userPassword}
-	if err := createUser(client, user, roleList, database); err != nil {
-		return diag.Errorf("could not recreate user: %s", err)
-	}
-
-	data.SetId(formatResourceId(database, username))
-	return resourceOriginalUserRead(ctx, data, i)
+// ORIG-005, DANGER-009: Update is fundamentally refused. The original implementation
+// authenticated as the user it was about to drop, risking cluster lockout. No drop
+// of the original admin user is ever performed. Destroy and recreate the resource
+// (which itself only removes state — see Delete) if you need to change credentials.
+func resourceOriginalUserUpdate(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
+	return diag.Errorf(
+		"mongodb_original_user does not support updates; " +
+			"the original admin user cannot be safely dropped and recreated",
+	)
 }
 
-// ORIG-006: WHEN deleting the original user, the resource SHALL connect with
-// authentication and drop the user.
-func resourceOriginalUserDelete(ctx context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	conf := buildOriginalUserAuthConfig(data)
-	ensureReplicaSetDiscovered(ctx, conf, data)
-
-	client, err := MongoClientInit(ctx, conf)
-	if err != nil {
-		return diag.Errorf("error connecting to MongoDB: %s", err)
+// ORIG-006, DANGER-008: Delete removes the resource from Terraform state but
+// does NOT drop the user from MongoDB. Dropping the original admin user would
+// lock out the cluster. Use `terraform state rm` if you need to disassociate
+// without any server-side effect, or manage the user lifecycle outside Terraform.
+func resourceOriginalUserDelete(_ context.Context, data *schema.ResourceData, _ interface{}) diag.Diagnostics {
+	data.SetId("")
+	return diag.Diagnostics{
+		{
+			Severity: diag.Warning,
+			Summary:  "mongodb_original_user removed from state only",
+			Detail:   "The user was NOT dropped from MongoDB. Dropping the original admin user would lock out the cluster.",
+		},
 	}
-	defer func() { _ = client.Disconnect(ctx) }()
-
-	username, database, parseErr := resourceOriginalUserParseId(data.Id())
-	if parseErr != nil {
-		return diag.Errorf("%s", parseErr)
-	}
-
-	adminDB := client.Database(database)
-	result := adminDB.RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: username}})
-	if result.Err() != nil {
-		return diag.Errorf("error dropping user: %s", result.Err())
-	}
-
-	return nil
 }
 
 // resourceOriginalUserAdopt verifies the user already exists via auth and

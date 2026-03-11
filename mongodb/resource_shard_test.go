@@ -1,9 +1,12 @@
 package mongodb
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/pkg/errors"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // --- BuildShardConnectionString tests ---
@@ -43,7 +46,7 @@ func TestShardSchema_ShardName(t *testing.T) {
 	}
 }
 
-// CLUS-T04: Schema: hosts Required, TypeList, ForceNew
+// CLUS-T04: DANGER-016 — hosts Required, TypeList, immutable via CustomizeDiff (not ForceNew)
 func TestShardSchema_Hosts(t *testing.T) {
 	res := resourceShard()
 	field, ok := res.Schema["hosts"]
@@ -56,8 +59,8 @@ func TestShardSchema_Hosts(t *testing.T) {
 	if field.Type != schema.TypeList {
 		t.Errorf("hosts type: want TypeList, got %v", field.Type)
 	}
-	if !field.ForceNew {
-		t.Error("hosts should be ForceNew")
+	if field.ForceNew {
+		t.Error("hosts should not be ForceNew (DANGER-010); use CustomizeDiff instead")
 	}
 }
 
@@ -70,6 +73,49 @@ func TestShardSchema_State(t *testing.T) {
 	}
 	if !field.Computed {
 		t.Error("state should be Computed")
+	}
+}
+
+// --- IsReadPreferenceError tests ---
+
+// CLUS-T06a: IsReadPreferenceError true for FailedToSatisfyReadPreference (code 133)
+func TestIsReadPreferenceError_Code133(t *testing.T) {
+	err := mongo.CommandError{Code: MongoErrFailedReadPreference, Message: "Could not find host matching read preference"}
+	if !IsReadPreferenceError(err) {
+		t.Error("expected true for CommandError code 133")
+	}
+}
+
+// CLUS-T06b: IsReadPreferenceError false for unrelated code
+func TestIsReadPreferenceError_UnrelatedCode(t *testing.T) {
+	err := mongo.CommandError{Code: 99, Message: "other error"}
+	if IsReadPreferenceError(err) {
+		t.Error("expected false for CommandError code 99")
+	}
+}
+
+// CLUS-T06c: IsReadPreferenceError true for wrapped error
+func TestIsReadPreferenceError_Wrapped(t *testing.T) {
+	inner := mongo.CommandError{Code: MongoErrFailedReadPreference, Message: "Could not find host"}
+	wrapped := errors.Wrap(inner, "addShard")
+	if !IsReadPreferenceError(wrapped) {
+		t.Error("expected true for wrapped CommandError code 133")
+	}
+}
+
+// CLUS-T06d: IsReadPreferenceError true for string match (connection error)
+func TestIsReadPreferenceError_StringMatch(t *testing.T) {
+	err := fmt.Errorf("addShard failed: (FailedToSatisfyReadPreference) Could not find host matching read preference")
+	if !IsReadPreferenceError(err) {
+		t.Error("expected true for string containing FailedToSatisfyReadPreference")
+	}
+}
+
+// CLUS-T06e: IsReadPreferenceError false for plain error
+func TestIsReadPreferenceError_PlainError(t *testing.T) {
+	err := fmt.Errorf("network timeout")
+	if IsReadPreferenceError(err) {
+		t.Error("expected false for unrelated error")
 	}
 }
 

@@ -62,10 +62,50 @@ provider "mongodb" {
 * `direct` - (Optional) Force a direct connection (bypass replica set discovery). Default: `false`.
 * `retrywrites` - (Optional) Enable retryable writes. Default: `true`.
 * `proxy` - (Optional) SOCKS5 proxy URL (e.g., `socks5://myproxy:8080`). Can be sourced from `ALL_PROXY` or `all_proxy`.
+* `command_preview` - (Optional) When `true`, each resource populates a `planned_commands` attribute during `terraform plan` showing the exact MongoDB commands that will execute on apply. No MongoDB connection is made during plan. Passwords are shown as `[REDACTED]`. Can be sourced from `TERRAFORM_PROVIDER_MONGODB_COMMAND_PREVIEW`. Default: `false`.
+* `features_enabled` - (Optional) Set of experimental resource names to enable (e.g., `["mongodb_shard_config", "mongodb_shard"]`). Merged with the `TERRAFORM_PROVIDER_MONGODB_ENABLE` environment variable. Only recognized experimental resource names are accepted.
+
+## Command Preview
+
+Enable `command_preview` to see MongoDB commands in plan output:
+
+```hcl
+provider "mongodb" {
+  host            = "127.0.0.1"
+  port            = "27017"
+  username        = "admin"
+  password        = var.mongo_password
+  auth_database   = "admin"
+  command_preview = true
+}
+```
+
+Example plan output:
+
+```
+# mongodb_server_parameter.notablescan will be created
+  + resource "mongodb_server_parameter" "notablescan" {
+      + parameter        = "notablescan"
+      + planned_commands = "db.adminCommand({setParameter: 1, \"notablescan\": \"true\"})"
+      + value            = "true"
+    }
+```
 
 ## Experimental Resources
 
-The `mongodb_shard_config` and `mongodb_shard` resources are experimental and require opt-in:
+Several resources are classified as experimental and require opt-in via `features_enabled` in the provider block or the `TERRAFORM_PROVIDER_MONGODB_ENABLE` environment variable. Both sources are merged.
+
+```hcl
+provider "mongodb" {
+  # ...
+  features_enabled = [
+    "mongodb_shard_config",
+    "mongodb_shard",
+  ]
+}
+```
+
+Or via environment variable:
 
 ```bash
 export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard

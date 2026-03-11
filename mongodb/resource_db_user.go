@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
@@ -18,7 +19,12 @@ func resourceDatabaseUser() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
+		// PREVIEW-016, PREVIEW-017: command preview
+		CustomizeDiff: customdiff.All(
+			previewCommands(dbUserCommandPreview),
+		),
 		Schema: map[string]*schema.Schema{
+			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"auth_database": {
 				Type:     schema.TypeString,
 				Required: true,
@@ -77,6 +83,7 @@ func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, 
 	return nil
 }
 
+// DANGER-005: uses updateUser for in-place modification instead of drop+recreate
 func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
 	client, connectionError := MongoClientInit(ctx, config)
@@ -87,25 +94,15 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 	var database = data.Get("auth_database").(string)
 	var userPassword = data.Get("password").(string)
 
-	adminDB := client.Database(database)
-
-	result := adminDB.RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: userName}})
-	if result.Err() != nil {
-		return diag.Errorf("%s", result.Err())
-	}
 	var roleList []Role
-	var user = DbUser{
-		Name:     userName,
-		Password: userPassword,
-	}
 	roles := data.Get("role").(*schema.Set).List()
 	roleMapErr := mapstructure.Decode(roles, &roleList)
 	if roleMapErr != nil {
 		return diag.Errorf("Error decoding map : %s ", roleMapErr)
 	}
-	err2 := createUser(client, user, roleList, database)
-	if err2 != nil {
-		return diag.Errorf("Could not create the user : %s ", err2)
+
+	if err := updateUser(client, userName, userPassword, roleList, database); err != nil {
+		return diag.Errorf("Could not update the user : %s ", err)
 	}
 
 	data.SetId(formatResourceId(database, userName))

@@ -1,6 +1,6 @@
 # terraform-provider-mongodb — Implementation
 
-**Last Updated:** 2026-03-03
+**Last Updated:** 2026-03-10
 
 ---
 
@@ -13,6 +13,13 @@
 | `mongodb_original_user` | `mongodb/resource_original_user.go` | mature | Bootstrap the initial admin user |
 | `mongodb_shard_config` | `mongodb/resource_shard_config.go` | experimental | Configure replica set settings and initialize uninitialized RS |
 | `mongodb_shard` | `mongodb/resource_shard.go` | experimental | Add/remove shards from a mongos router |
+| `mongodb_profiler` | `mongodb/resource_profiler.go` | experimental | Manage per-database profiler configuration |
+| `mongodb_server_parameter` | `mongodb/resource_server_parameter.go` | experimental | Set/get MongoDB server parameters via setParameter |
+| `mongodb_balancer_config` | `mongodb/resource_balancer_config.go` | experimental | Manage global balancer settings (enable/disable, active window, chunk size) |
+| `mongodb_collection_balancing` | `mongodb/resource_collection_balancing.go` | experimental | Manage per-collection balancer enable/disable and chunk size override |
+| `mongodb_feature_compatibility_version` | `mongodb/resource_fcv.go` | experimental | Manage featureCompatibilityVersion with danger_mode safety gate |
+| `mongodb_shard_zone` | `mongodb/resource_shard_zone.go` | experimental | Map shards to zones via addShardToZone/removeShardFromZone |
+| `mongodb_zone_key_range` | `mongodb/resource_zone_key_range.go` | experimental | Assign shard key ranges to zones via updateZoneKeyRange |
 
 ### Resource Documentation
 
@@ -25,13 +32,44 @@ Resource documentation is maintained in `docs/resources/`:
 | `mongodb_original_user` | [`docs/resources/original_user.md`](resources/original_user.md) |
 | `mongodb_shard_config` | [`docs/resources/shard_config.md`](resources/shard_config.md) |
 | `mongodb_shard` | [`docs/resources/shard.md`](resources/shard.md) |
+| `mongodb_profiler` | [`docs/resources/profiler.md`](resources/profiler.md) |
+| `mongodb_server_parameter` | [`docs/resources/server_parameter.md`](resources/server_parameter.md) |
+| `mongodb_balancer_config` | [`docs/resources/balancer_config.md`](resources/balancer_config.md) |
+| `mongodb_collection_balancing` | [`docs/resources/collection_balancing.md`](resources/collection_balancing.md) |
+| `mongodb_feature_compatibility_version` | [`docs/resources/feature_compatibility_version.md`](resources/feature_compatibility_version.md) |
+| `mongodb_shard_zone` | [`docs/resources/shard_zone.md`](resources/shard_zone.md) |
+| `mongodb_zone_key_range` | [`docs/resources/zone_key_range.md`](resources/zone_key_range.md) |
+
+### Example Patterns (Terraform HCL)
+
+| Example | Path | Description |
+|---------|------|-------------|
+| Full Cluster Setup | [`examples/patterns/full-cluster-setup/`](../examples/patterns/full-cluster-setup/main.tf) | End-to-end: bootstrap users, configure 3-member RS shards, add shards, balancer, roles, users |
+| Sharded Cluster | [`examples/patterns/sharded-cluster/`](../examples/patterns/sharded-cluster/main.tf) | Shard config + roles + users (assumes credentials exist) |
+| Monitoring User | [`examples/patterns/monitoring-user/`](../examples/patterns/monitoring-user/main.tf) | Least-privilege monitoring role + exporter user |
+| Role Hierarchy | [`examples/patterns/role-hierarchy/`](../examples/patterns/role-hierarchy/main.tf) | 3-tier role inheritance |
+| Add Replicaset to Cluster | [`examples/patterns/add-replicaset-to-cluster/`](../examples/patterns/add-replicaset-to-cluster/main.tf) | Day-2 scale-out: bootstrap new RS from scratch and register as shard |
+
+### Example Patterns (cdktn Go)
+
+Go equivalents of the above using the `cdktn` construct library. See [`cdktn/examples/README.md`](../cdktn/examples/README.md) for a usage guide.
+
+| Example | Path | Construct | Description |
+|---------|------|-----------|-------------|
+| Full Cluster Setup | [`cdktn/examples/patterns/full-cluster-setup/`](../cdktn/examples/patterns/full-cluster-setup/main.go) | L3 `MongoShardedCluster` | Bootstrap, RS config, shard registration, balancer, zones, roles, users |
+| Sharded Cluster | [`cdktn/examples/patterns/sharded-cluster/`](../cdktn/examples/patterns/sharded-cluster/main.go) | L3 `MongoShardedCluster` | SSL/TLS + custom roles + users (assumes credentials exist) |
+| Monitoring User | [`cdktn/examples/patterns/monitoring-user/`](../cdktn/examples/patterns/monitoring-user/main.go) | L2 `MongoMongos` | Least-privilege monitoring role + exporter user |
+| Role Hierarchy | [`cdktn/examples/patterns/role-hierarchy/`](../cdktn/examples/patterns/role-hierarchy/main.go) | L2 `MongoMongos` | 3-tier role inheritance (viewer → editor → admin) |
+| Add Replicaset | [`cdktn/examples/patterns/add-replicaset-to-cluster/`](../cdktn/examples/patterns/add-replicaset-to-cluster/main.go) | L2 `MongoShard` | Day-2 scale-out: bootstrap new RS and configure membership |
+| Zone Sharding | [`cdktn/examples/patterns/zone-sharding/`](../cdktn/examples/patterns/zone-sharding/main.go) | L3 `MongoShardedCluster` | Shard-to-zone mapping, key range routing, multi-zone shards, compound keys |
+| Collection Balancing | [`cdktn/examples/patterns/collection-balancing/`](../cdktn/examples/patterns/collection-balancing/main.go) | L3 `MongoShardedCluster` | Per-collection balancing enable/disable, chunk size overrides |
 
 ### Resource Capability Gating
 
 Resources are classified as `mature` (always registered) or `experimental` (blocked by default). Experimental resources require opt-in via:
 
 ```bash
-export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
+export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard,mongodb_profiler,mongodb_server_parameter,mongodb_balancer_config,mongodb_collection_balancing,mongodb_feature_compatibility_version
 ```
 
 The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resource-gating-requirements.md` for the EARS spec (GATE-001 through GATE-010).
@@ -49,6 +87,15 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/shard_init.go` | RS initialization: `IsNotYetInitialized`, `IsAlreadyInitialized`, `BuildInitialMembers`, `InitiateReplicaSet`, `WaitForPrimary`, `WaitForMajorityHealthy`, `ConnectForInit` |
 | `mongodb/resource_shard.go` | `mongodb_shard` resource: `addShard`, `removeShard` with polling |
 | `mongodb/resource_shard_config.go` | `mongodb_shard_config` resource: RS config + initialization flow |
+| `mongodb/resource_profiler.go` | `mongodb_profiler` resource: per-database profiler CRUD |
+| `mongodb/resource_server_parameter.go` | `mongodb_server_parameter` resource: setParameter/getParameter with type coercion |
+| `mongodb/resource_balancer_config.go` | `mongodb_balancer_config` resource: global balancer CRUD via balancerStart/Stop + config.settings |
+| `mongodb/resource_collection_balancing.go` | `mongodb_collection_balancing` resource: per-collection balancing via configureCollectionBalancing / config.collections |
+| `mongodb/resource_fcv.go` | `mongodb_feature_compatibility_version` resource: FCV management with danger_mode safety gate |
+| `mongodb/mongos_helpers.go` | Shared `requireMongos` helper for mongos-only resources |
+| `mongodb/command_preview.go` | Command preview infrastructure: `commandPreviewSchema`, `commandPreviewEnabled`, `previewCommands` wrapper, per-resource builders |
+| `mongodb/resource_shard_zone.go` | `mongodb_shard_zone` resource: shard-to-zone mapping via addShardToZone/removeShardFromZone |
+| `mongodb/resource_zone_key_range.go` | `mongodb_zone_key_range` resource: zone key range assignment via updateZoneKeyRange |
 
 ## EARS Specifications
 
@@ -56,12 +103,22 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|------|----------|
 | Shard Config | `docs/specs/` (inline in code) | SHARD-001 through SHARD-011 |
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
-| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-024 |
-| Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-010 |
+| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-029 |
+| Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-014 |
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-023 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
 | ID Format | `docs/specs/id-format-requirements.md` | IDFORMAT-001 through IDFORMAT-005 |
+| Oplog Configuration | `docs/specs/oplog-config-requirements.md` | OPLOG-001 through OPLOG-008 |
+| CatchUp Timeout | `docs/specs/catchup-timeout-requirements.md` | CATCHUP-001 through CATCHUP-005 |
+| Profiler | `docs/specs/profiler-requirements.md` | PROF-001 through PROF-011 |
+| Server Parameter | `docs/specs/server-parameter-requirements.md` | PARAM-001 through PARAM-012 |
+| Balancer Config | `docs/specs/balancer-config-requirements.md` | BAL-001 through BAL-015 |
+| Collection Balancing | `docs/specs/collection-balancing-requirements.md` | CBAL-001 through CBAL-012 |
+| Feature Compatibility Version | `docs/specs/fcv-requirements.md` | FCV-001 through FCV-014 |
+| Dangerous Operations Safety | `docs/specs/dangerous-operations-requirements.md` | DANGER-001 through DANGER-020 |
+| Command Preview | `docs/specs/command-preview-requirements.md` | PREVIEW-001 through PREVIEW-024 |
+| Zone Sharding | `docs/specs/zone-sharding-requirements.md` | ZONE-001 through ZONE-030 |
 | Command Logging | (inline in code) | LOG-001 through LOG-004 |
 
 ## Test Files
@@ -70,7 +127,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|-------|-----------|
 | `mongodb/shard_init_test.go` | INIT-T01..T12 (12 tests) | none |
 | `mongodb/resource_shard_test.go` | CLUS-T01..T06 (6 tests) | none |
-| `mongodb/resource_shard_config_test.go` | SHARD-T01..T13 (15 tests) | none |
+| `mongodb/resource_shard_config_test.go` | SHARD-T01..T13, CATCHUP-T01 (16 tests) | none |
 | `mongodb/shard_discovery_test.go` | DISC tests | none |
 | `mongodb/replica_set_types_test.go` | RS type tests | none |
 | `mongodb/config_test.go` | Config tests | none |
@@ -78,6 +135,16 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_registry_test.go` | GATE-T01..T15 (15 tests) | none |
 | `mongodb/parse_id_test.go` | IDFORMAT parse/format tests | none |
 | `mongodb/command_recorder_test.go` | CommandRecorder tests | none |
+| `mongodb/resource_profiler_test.go` | PROF-T01..T06 (6 tests) | none |
+| `mongodb/resource_server_parameter_test.go` | PARAM-T01..T10 (10 tests) | none |
+| `mongodb/resource_balancer_config_test.go` | BAL-T01..T10 (10 tests) | none |
+| `mongodb/resource_collection_balancing_test.go` | CBAL-T01..T08 (8 tests) | none |
+| `mongodb/resource_fcv_test.go` | FCV-T01..T10 (10 tests) | none |
+| `mongodb/dangerous_operations_test.go` | DANGER-T01..T17 (17 tests) | none |
+| `mongodb/mongos_helpers_test.go` | Connection type classification tests (3 tests) | none |
+| `mongodb/command_preview_test.go` | PREVIEW-T01..T20 (22 tests) | none |
+| `mongodb/resource_shard_zone_test.go` | ZONE-T01..T07 (7 tests) | none |
+| `mongodb/resource_zone_key_range_test.go` | ZONE-T08..T19 (12 tests) | none |
 | `mongodb/sharded_integration_test.go` | SINTEG sharded cluster tests (10 tests) | integration |
 
 ---
@@ -126,12 +193,13 @@ terraform-provider-mongodb/
     mongos.go
     cluster.go
     *_test.go
-    testdata/                # golden JSON files for synthesis tests
-      cluster_minimal.json
-      cluster_full.json
-      shard_basic.json
-      config_server_basic.json
-      mongos_basic.json
+    testdata/                # golden files for synthesis tests (named by test function)
+      TestNewMongoShardedCluster_MinimalGolden.golden
+      TestNewMongoShardedCluster_FullGolden.golden
+      TestNewMongoShard_GoldenFile.golden
+      TestNewMongoShard_MemberOverrides_GoldenFile.golden
+      TestNewMongoConfigServer_GoldenFile.golden
+      TestNewMongoMongos_GoldenFile.golden
 ```
 
 ### Synthesis Engine
@@ -292,7 +360,7 @@ Pattern: `<component_type>_<replica_set_name>_<member_index>` for shards and con
 | CDKTN-040 | `auth_database = "admin"` default on all providers | Done | `provider_factory.go:BuildProviderConfig`, `constants.go:DefaultAuthDatabase` |
 | CDKTN-041 | Custom `auth_database` per member override | Not done | Not implemented in `MemberConfig` |
 | CDKTN-042 | `ProviderVersion` field in cluster props | Done | `types.go:MongoShardedClusterProps`, `cluster.go` |
-| CDKTN-043 | Unit tests with golden file comparisons | Done | `*_test.go`, `testdata/*.json` |
+| CDKTN-043 | Unit tests with golden file comparisons | Done | `*_test.go`, `testdata/*.golden` |
 | CDKTN-044 | Integration tests running `terraform validate` | Not done | See Future Work |
 | CDKTN-045 | E2E tests using `testcontainers-go` | Not done | See Future Work |
 | CDKTN-046 | Buildable via `make cdktn-build`, testable via `make cdktn-test` | Done | `Makefile` targets |
@@ -300,6 +368,22 @@ Pattern: `<component_type>_<replica_set_name>_<member_index>` for shards and con
 | CDKTN-048 | `go.mod` declares CDKTN + constructs-go dependencies | Not done | Intentional deferral — see Future Work |
 | CDKTN-049 | L1 bindings generated via `cdktn get` | Not done | Intentional deferral — see Future Work |
 | CDKTN-050 | L2 constructs use L1 binding types | Not done | Intentional deferral — see Future Work |
+
+---
+
+## Linters
+
+### noforceenew
+
+A custom `go/analysis` linter that detects `ForceNew: true` in `schema.Schema` composite literals at compile time. It enforces DANGER-010 through DANGER-012 by preventing accidental re-introduction of `ForceNew` fields. One allowlisted exception exists: `mongodb_shard.shard_name` (DANGER-017, DANGER-018).
+
+| Item | Location |
+|------|----------|
+| Linter source | `linters/noforceenew/` |
+| Makefile target | `make lint-noforceenew` |
+| Pre-commit hook | `noforceenew` |
+
+`make lint` runs `lint-noforceenew` first, then any additional linters.
 
 ---
 
@@ -319,7 +403,28 @@ All commands run from the repository root. Terraform is managed via [Hermit](htt
 | `make test-golden` | Run golden file tests against MongoDB container |
 | `make test-golden-update` | Regenerate provider golden files |
 | `make test` | Run all tests: unit + cdktn + terraform plan |
+| `make test-ci` | CI suite: unit + cdktn + integration matrix + sharded + golden |
+| `make test-all` | Every test suite (unit, cdktn, integration, sharded, golden, plan) |
+| `make lint` | Run all linters (runs `lint-noforceenew` first) |
+| `make lint-noforceenew` | Run the ForceNew static analysis linter |
 | `make help` | Show all Makefile targets |
+
+### Test Coverage Matrix
+
+Tests run at three gates: pre-commit (on `git commit`), pre-push (on `git push`), and CI (GitHub Actions on PR/push to main). Hooks are managed by prek (`.pre-commit-config.yaml`).
+
+| Test Suite | Pre-commit | Pre-push | CI |
+|------------|:----------:|:--------:|:--:|
+| go fmt / go vet / golangci-lint | Y | | Y |
+| noforceenew (DANGER-010) | Y | | Y |
+| go test (unit) | Y | | Y |
+| cdktn test | Y | Y | Y |
+| integration matrix (mongo 3.6 + 7) | | Y | Y |
+| sharded integration | | Y | Y |
+| golden file tests | | Y | Y |
+| terraform fmt | Y | | Y |
+
+Pre-commit hooks run only when matching files are staged (`files:` filter). Pre-push hooks run only when matching files are in the commits being pushed. CI (`prek run --all-files`) bypasses file filters and runs against the full repo, then runs Docker-dependent tests via `make` targets.
 
 To update golden files after an intentional synthesis change:
 
@@ -344,9 +449,19 @@ Tests live in `cdktn/*_test.go` (package `cdktn`, same package — white-box acc
 - Synthesized JSON structure via `SynthToMap()` assertions
 - Golden file comparisons via `goldenCompare()` in `testutil_test.go`
 
-**Golden files** (`testdata/*.json`) are committed JSON snapshots of known-good synthesis output. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
+**Golden files** (`testdata/<TestName>.golden`) are committed snapshots of known-good synthesis output. Filenames are derived automatically from `t.Name()`. The test helper reads the file, compares byte-for-byte, and on mismatch either fails (default) or overwrites the file when `UPDATE_GOLDEN=1` is set.
 
-**Integration and E2E tests are not yet implemented** (CDKTN-044, CDKTN-045).
+**Example pattern tests** (`example_patterns_test.go`) are end-to-end tests that reconstruct each usage pattern from `cdktn/examples/patterns/` and validate the synthesized Terraform JSON. Each test asserts construction succeeds, JSON is valid, output matches a golden file, and pattern-specific behavioral properties hold (resource counts, field values, dependency chains).
+
+| Test | Pattern | Construct | Key Assertions |
+|------|---------|-----------|----------------|
+| `TestExamplePattern_FullClusterSetup` | full-cluster-setup | L3 | 10 providers, 4 original users, shard registration, balancer window, zones, key ranges, member overrides |
+| `TestExamplePattern_ShardedCluster` | sharded-cluster | L3 | SSL on all providers, 2 roles, multi-role user, chaining_allowed=false |
+| `TestExamplePattern_MonitoringUser` | monitoring-user | L2 Mongos | 1 provider (direct=false), 3 privilege blocks, 2-role user, no shard_config |
+| `TestExamplePattern_RoleHierarchy` | role-hierarchy | L2 Mongos | 3 roles with inheritance chain, 3 users each depending on all roles |
+| `TestExamplePattern_AddReplicaset` | add-replicaset | L2 Shard | 3 providers (direct=true), original user, member overrides with tags |
+| `TestExamplePattern_ZoneSharding` | zone-sharding | L3 | 4 zone mappings (multi-zone shard), 3 key ranges, depends_on zones |
+| `TestExamplePattern_CollectionBalancing` | collection-balancing | L3 | Global balancer, 3 per-collection configs (disabled/large/small chunks) |
 
 ---
 
@@ -375,24 +490,24 @@ The provider includes a golden file testing engine that captures deterministic s
 
 ### Golden Files
 
-Each test captures commands for one example configuration's lifecycle and compares against a committed `.golden` file:
+Each test captures commands for one example configuration's lifecycle and compares against a committed `.golden` file. Filenames are derived automatically from `t.Name()` (e.g. `TestGolden_DbUser_Basic.golden`). One file per test case.
 
-- `db_user_basic.golden` — single user with one role (CRUD)
-- `db_user_custom_role.golden` — custom role + user (create + delete)
-- `db_user_multiple_roles.golden` — user with 4 roles (CRUD)
-- `db_user_import.golden` — import existing user
-- `db_role_basic.golden` — single privilege role (CRUD)
-- `db_role_cluster_privilege.golden` — cluster-level privilege
-- `db_role_composite.golden` — 3 roles with inheritance
-- `db_role_inherited.golden` — base + derived role
-- `shard_config_basic.golden` — replSetReconfig + read (normalized)
-- `shard_config_mongos_discovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
-- `shard_config_multi_shard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
-- `shard_add_remove.golden` — addShard + listShards + removeShard lifecycle (sharded normalization)
-- `shard_list_shards.golden` — listShards against existing cluster (sharded normalization)
-- `original_user.golden` — bootstrap admin user
-- `pattern_monitoring_user.golden` — monitoring role + exporter user
-- `pattern_role_hierarchy.golden` — 3-tier role hierarchy with 3 users
+- `TestGolden_DbUser_Basic.golden` — single user with one role (CRUD)
+- `TestGolden_DbUser_CustomRole.golden` — custom role + user (create + delete)
+- `TestGolden_DbUser_MultipleRoles.golden` — user with 4 roles (CRUD)
+- `TestGolden_DbUser_Import.golden` — import existing user
+- `TestGolden_DbRole_Basic.golden` — single privilege role (CRUD)
+- `TestGolden_DbRole_ClusterPrivilege.golden` — cluster-level privilege
+- `TestGolden_DbRole_Composite.golden` — 3 roles with inheritance
+- `TestGolden_DbRole_Inherited.golden` — base + derived role
+- `TestGolden_ShardConfig_Basic.golden` — replSetReconfig + read (normalized)
+- `TestGolden_ShardConfig_MongosDiscovery.golden` — mongos discovery + shard RS reconfig round-trip (sharded normalization)
+- `TestGolden_ShardConfig_MultiShard.golden` — mongos discovery + independent RS reads on both shards (sharded normalization)
+- `TestGolden_Shard_AddRemove.golden` — addShard + listShards + removeShard lifecycle (sharded normalization)
+- `TestGolden_Shard_ListShards.golden` — listShards against existing cluster (sharded normalization)
+- `TestGolden_OriginalUser.golden` — bootstrap admin user
+- `TestGolden_Pattern_MonitoringUser.golden` — monitoring role + exporter user
+- `TestGolden_Pattern_RoleHierarchy.golden` — 3-tier role hierarchy with 3 users
 
 ### Shard Config Normalization
 

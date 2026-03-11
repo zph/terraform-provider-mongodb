@@ -46,15 +46,18 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 
 	// Build config server L2 // CDKTN-009: cascade credentials, SSL, proxy
 	cs, err := NewMongoConfigServer(stack, fmt.Sprintf("%s-configsvr", id), &ConfigServerProps{
-		ReplicaSetName: props.ConfigServers.ReplicaSetName,
-		Members:        props.ConfigServers.Members,
-		Credentials:    props.Credentials,
-		SSL:            props.SSL,
-		Proxy:          props.Proxy,
-		Users:          props.ConfigServers.Users,
-		Roles:          mergeRoles(props.Roles, props.ConfigServers.Roles),
-		ShardConfig:    props.ConfigServers.ShardConfig,
-		OriginalUsers:  props.ConfigServers.OriginalUsers, // CDKTN-052
+		ReplicaSetName:   props.ConfigServers.ReplicaSetName,
+		Members:          props.ConfigServers.Members,
+		Credentials:      props.Credentials,
+		SSL:              props.SSL,
+		Proxy:            props.Proxy,
+		Users:            props.ConfigServers.Users,
+		Roles:            mergeRoles(props.Roles, props.ConfigServers.Roles),
+		ShardConfig:      props.ConfigServers.ShardConfig,
+		OriginalUsers:    props.ConfigServers.OriginalUsers, // CDKTN-052
+		Profilers:        props.Profilers,
+		ServerParameters: props.ServerParameters,
+		FCV:              props.FCV,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("config server: %w", err)
@@ -64,15 +67,18 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 	// Build shard L2s
 	for i, shardCfg := range props.Shards {
 		shard, err := NewMongoShard(stack, fmt.Sprintf("%s-shard-%d", id, i), &MongoShardProps{
-			ReplicaSetName: shardCfg.ReplicaSetName,
-			Members:        shardCfg.Members,
-			Credentials:    props.Credentials,
-			SSL:            props.SSL,
-			Proxy:          props.Proxy,
-			Users:          shardCfg.Users,
-			Roles:          mergeRoles(props.Roles, shardCfg.Roles),
-			ShardConfig:    shardCfg.ShardConfig,
-			OriginalUsers:  shardCfg.OriginalUsers, // CDKTN-052
+			ReplicaSetName:   shardCfg.ReplicaSetName,
+			Members:          shardCfg.Members,
+			Credentials:      props.Credentials,
+			SSL:              props.SSL,
+			Proxy:            props.Proxy,
+			Users:            shardCfg.Users,
+			Roles:            mergeRoles(props.Roles, shardCfg.Roles),
+			ShardConfig:      shardCfg.ShardConfig,
+			OriginalUsers:    shardCfg.OriginalUsers, // CDKTN-052
+			Profilers:        props.Profilers,
+			ServerParameters: props.ServerParameters,
+			FCV:              props.FCV,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("shard %q: %w", shardCfg.ReplicaSetName, err)
@@ -84,13 +90,15 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 	mongosOffset := 0
 	for i, mongosCfg := range props.Mongos {
 		mongos, err := NewMongoMongosWithOffset(stack, fmt.Sprintf("%s-mongos-%d", id, i), &MongosProps{
-			Members:       mongosCfg.Members,
-			Credentials:   props.Credentials,
-			SSL:           props.SSL,
-			Proxy:         props.Proxy,
-			Users:         mongosCfg.Users,
-			Roles:         mergeRoles(props.Roles, mongosCfg.Roles),
-			OriginalUsers: mongosCfg.OriginalUsers, // CDKTN-052
+			Members:          mongosCfg.Members,
+			Credentials:      props.Credentials,
+			SSL:              props.SSL,
+			Proxy:            props.Proxy,
+			Users:            mongosCfg.Users,
+			Roles:            mergeRoles(props.Roles, mongosCfg.Roles),
+			OriginalUsers:    mongosCfg.OriginalUsers, // CDKTN-052
+			Profilers:        props.Profilers,
+			ServerParameters: props.ServerParameters,
 		}, mongosOffset)
 		if err != nil {
 			return nil, fmt.Errorf("mongos %d: %w", i, err)
@@ -113,6 +121,47 @@ func NewMongoShardedCluster(id string, props *MongoShardedClusterProps) (*MongoS
 		for _, alias := range targets {
 			BuildOriginalUsers(stack, alias, props.OriginalUsers)
 		}
+	}
+
+	// --- Cluster-level resources (via first mongos alias) ---
+	mongosAlias := cluster.MongosL2s[0].Aliases[0]
+
+	// Register shards via mongos (opt-in)
+	var shardRefs []string
+	if props.RegisterShards {
+		entries := make([]shardRegistrationEntry, 0, len(props.Shards))
+		for _, shardCfg := range props.Shards {
+			hosts := make([]string, len(shardCfg.Members))
+			for j, m := range shardCfg.Members {
+				hosts[j] = m.HostPort()
+			}
+			entries = append(entries, shardRegistrationEntry{
+				RSName: shardCfg.ReplicaSetName,
+				Hosts:  hosts,
+			})
+		}
+		shardRefs = BuildShardRegistrations(stack, mongosAlias, entries, nil)
+	}
+
+	// Balancer config (depends on shard registrations if present)
+	if props.Balancer != nil {
+		BuildBalancerConfig(stack, mongosAlias, props.Balancer, shardRefs)
+	}
+
+	// Shard zones (depends on shard registrations if present)
+	var zoneRefs []string
+	if len(props.ShardZones) > 0 {
+		zoneRefs = BuildShardZones(stack, mongosAlias, props.ShardZones, shardRefs)
+	}
+
+	// Zone key ranges (depends on zone assignments)
+	if len(props.ZoneKeyRanges) > 0 {
+		BuildZoneKeyRanges(stack, mongosAlias, props.ZoneKeyRanges, zoneRefs)
+	}
+
+	// Collection balancing (depends on shard registrations if present)
+	if len(props.CollectionBalancing) > 0 {
+		BuildCollectionBalancing(stack, mongosAlias, props.CollectionBalancing, shardRefs)
 	}
 
 	return cluster, nil

@@ -28,8 +28,21 @@ const (
 	DefaultTerraformVersion = ">= 1.7.5"
 )
 
-// Resource type for original user bootstrap. // CDKTN-052
-const ResourceTypeOriginalUser = "mongodb_original_user"
+// Resource type constants for all provider resources.
+const (
+	ResourceTypeOriginalUser    = "mongodb_original_user"                 // CDKTN-052
+	ResourceTypeShard           = "mongodb_shard"                         // CLUS-001
+	ResourceTypeBalancerConfig  = "mongodb_balancer_config"               // BAL-001
+	ResourceTypeShardZone       = "mongodb_shard_zone"                    // ZONE-001
+	ResourceTypeZoneKeyRange    = "mongodb_zone_key_range"                // ZONE-014
+	ResourceTypeCollBalancing   = "mongodb_collection_balancing"          // CBAL-001
+	ResourceTypeProfiler        = "mongodb_profiler"                      // PROF-001
+	ResourceTypeServerParameter = "mongodb_server_parameter"              // PARAM-001
+	ResourceTypeFCV             = "mongodb_feature_compatibility_version" // FCV-001
+)
+
+// Default remove timeout for shard removal (matches provider default).
+const DefaultRemoveTimeoutSecs = 300
 
 // ComponentType identifies the role of a MongoDB node in a sharded cluster.
 type ComponentType int

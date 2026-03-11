@@ -134,6 +134,141 @@ func BuildOriginalUsers(stack *TerraformStack, prefix string, users []OriginalUs
 	}
 }
 
+// BuildShardRegistrations adds mongodb_shard resources via the mongos provider alias.
+// Each shard is registered with its RS name and member hosts. // CLUS-002
+func BuildShardRegistrations(stack *TerraformStack, mongosAlias string, shards []shardRegistrationEntry, deps []string) []string {
+	var refs []string
+	for _, s := range shards {
+		resName := fmt.Sprintf("shard_%s", sanitizeName(s.RSName))
+		hosts := make([]string, len(s.Hosts))
+		copy(hosts, s.Hosts)
+		config := map[string]interface{}{
+			"shard_name":          s.RSName,
+			"hosts":               hosts,
+			"remove_timeout_secs": DefaultRemoveTimeoutSecs,
+		}
+		ref := fmt.Sprintf("%s.%s", ResourceTypeShard, resName)
+		stack.AddResource(ResourceTypeShard, resName, config, ProviderRef(mongosAlias), deps)
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// shardRegistrationEntry holds the info needed to register a shard.
+type shardRegistrationEntry struct {
+	RSName string
+	Hosts  []string
+}
+
+// BuildBalancerConfig adds a mongodb_balancer_config resource via the mongos provider. // BAL-001
+func BuildBalancerConfig(stack *TerraformStack, mongosAlias string, cfg *BalancerConfig, deps []string) {
+	resName := "balancer"
+	config := map[string]interface{}{
+		"enabled": cfg.Enabled,
+	}
+	if cfg.ActiveWindowStart != "" {
+		config["active_window_start"] = cfg.ActiveWindowStart
+	}
+	if cfg.ActiveWindowStop != "" {
+		config["active_window_stop"] = cfg.ActiveWindowStop
+	}
+	if cfg.ChunkSizeMB > 0 {
+		config["chunk_size_mb"] = cfg.ChunkSizeMB
+	}
+	if cfg.SecondaryThrottle != "" {
+		config["secondary_throttle"] = cfg.SecondaryThrottle
+	}
+	if cfg.WaitForDelete != nil {
+		config["wait_for_delete"] = *cfg.WaitForDelete
+	}
+	stack.AddResource(ResourceTypeBalancerConfig, resName, config, ProviderRef(mongosAlias), deps)
+}
+
+// BuildShardZones adds mongodb_shard_zone resources via the mongos provider. // ZONE-002
+func BuildShardZones(stack *TerraformStack, mongosAlias string, zones []ShardZoneConfig, deps []string) []string {
+	var refs []string
+	for _, z := range zones {
+		resName := fmt.Sprintf("%s_%s", sanitizeName(z.ShardName), sanitizeName(z.Zone))
+		config := map[string]interface{}{
+			"shard_name": z.ShardName,
+			"zone":       z.Zone,
+		}
+		ref := fmt.Sprintf("%s.%s", ResourceTypeShardZone, resName)
+		stack.AddResource(ResourceTypeShardZone, resName, config, ProviderRef(mongosAlias), deps)
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// BuildZoneKeyRanges adds mongodb_zone_key_range resources via the mongos provider. // ZONE-017
+func BuildZoneKeyRanges(stack *TerraformStack, mongosAlias string, ranges []ZoneKeyRangeConfig, deps []string) {
+	for i, r := range ranges {
+		resName := fmt.Sprintf("%s_%s_%d", sanitizeName(r.Namespace), sanitizeName(r.Zone), i)
+		config := map[string]interface{}{
+			"namespace": r.Namespace,
+			"zone":      r.Zone,
+			"min":       r.Min,
+			"max":       r.Max,
+		}
+		stack.AddResource(ResourceTypeZoneKeyRange, resName, config, ProviderRef(mongosAlias), deps)
+	}
+}
+
+// BuildCollectionBalancing adds mongodb_collection_balancing resources via the mongos provider. // CBAL-001
+func BuildCollectionBalancing(stack *TerraformStack, mongosAlias string, configs []CollectionBalancingConfig, deps []string) {
+	for _, c := range configs {
+		resName := fmt.Sprintf("colbal_%s", sanitizeName(c.Namespace))
+		config := map[string]interface{}{
+			"namespace": c.Namespace,
+			"enabled":   c.Enabled,
+		}
+		if c.ChunkSizeMB > 0 {
+			config["chunk_size_mb"] = c.ChunkSizeMB
+		}
+		stack.AddResource(ResourceTypeCollBalancing, resName, config, ProviderRef(mongosAlias), deps)
+	}
+}
+
+// BuildProfilers adds mongodb_profiler resources for each database on each alias. // PROF-001
+func BuildProfilers(stack *TerraformStack, aliases []string, profilers []ProfilerConfig) {
+	for _, alias := range aliases {
+		for _, p := range profilers {
+			resName := fmt.Sprintf("%s_profiler_%s", alias, sanitizeName(p.Database))
+			config := map[string]interface{}{
+				"database":  p.Database,
+				"level":     p.Level,
+				"slowms":    p.SlowMs,
+				"ratelimit": p.RateLimit,
+			}
+			stack.AddResource(ResourceTypeProfiler, resName, config, ProviderRef(alias), nil)
+		}
+	}
+}
+
+// BuildServerParameters adds mongodb_server_parameter resources for each param on each alias. // PARAM-001
+func BuildServerParameters(stack *TerraformStack, aliases []string, params []ServerParameterConfig) {
+	for _, alias := range aliases {
+		for _, p := range params {
+			resName := fmt.Sprintf("%s_param_%s", alias, sanitizeName(p.Parameter))
+			config := map[string]interface{}{
+				"parameter": p.Parameter,
+				"value":     p.Value,
+			}
+			stack.AddResource(ResourceTypeServerParameter, resName, config, ProviderRef(alias), nil)
+		}
+	}
+}
+
+// BuildFCV adds a mongodb_feature_compatibility_version resource on the given alias. // FCV-001
+func BuildFCV(stack *TerraformStack, alias string, fcv *FCVConfig) {
+	resName := fmt.Sprintf("%s_fcv", alias)
+	config := map[string]interface{}{
+		"version":     fcv.Version,
+		"danger_mode": fcv.DangerMode,
+	}
+	stack.AddResource(ResourceTypeFCV, resName, config, ProviderRef(alias), nil)
+}
+
 func buildRoleConfig(role RoleConfig) map[string]interface{} {
 	config := map[string]interface{}{
 		"name":     role.Name,

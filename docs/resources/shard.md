@@ -6,7 +6,7 @@
 
 ~> **IMPORTANT:** The provider must be connected to a **mongos** router for this resource to work. It will not function against a direct replica set connection.
 
-~> **IMPORTANT:** Both `shard_name` and `hosts` are ForceNew. Changing either attribute forces replacement (remove + re-add).
+~> **IMPORTANT:** Both `shard_name` and `hosts` are immutable. Attempting to change either attribute is blocked at plan time. `shard_name` additionally uses `ForceNew` as a defense-in-depth safeguard.
 
 ## Example Usage
 
@@ -58,8 +58,8 @@ resource "mongodb_shard" "shard03" {
 
 ## Argument Reference
 
-* `shard_name` - (Required, ForceNew) The replica set name of the shard to add.
-* `hosts` - (Required, ForceNew) List of `host:port` addresses for the shard replica set members.
+* `shard_name` - (Required) The replica set name of the shard to add. This field is immutable (changes blocked at plan time). Also uses `ForceNew` as a defense-in-depth safeguard.
+* `hosts` - (Required) List of `host:port` addresses for the shard replica set members. This field is immutable (changes blocked at plan time).
 * `remove_timeout_secs` - (Optional) Timeout in seconds for shard removal (draining). Default: `300`.
 
 ## Attribute Reference
@@ -86,7 +86,7 @@ The `addShard` command registers the replica set with the sharded cluster. The s
 
 ### Update
 
-Not supported. Both `shard_name` and `hosts` are ForceNew, so any change triggers a destroy + create cycle.
+Changes to `shard_name` and `hosts` are blocked at plan time by `CustomizeDiff`. The `remove_timeout_secs` field can be updated freely — it is a client-side-only value that requires no MongoDB operation.
 
 ### Delete (`removeShard`)
 
@@ -110,7 +110,7 @@ Import runs `listShards` to read back the shard state. The shard must already ex
 
 ## Known Limitations
 
-* **No update support:** Both `shard_name` and `hosts` are ForceNew. Any change destroys and re-creates the shard registration.
+* **Immutable identity fields:** `shard_name` and `hosts` cannot be changed after creation. Attempts to change either are blocked at plan time. To re-register a shard under a different name or with different hosts, destroy and re-create the resource.
 * **Draining can be slow:** The `removeShard` operation drains data from the shard, which can take a long time for large datasets. Adjust `remove_timeout_secs` accordingly.
 * **Replica set must be pre-initialized:** The shard's replica set must already be initialized before using this resource. Use [`mongodb_shard_config`](shard_config.md) with `member` blocks to initialize replica sets, or initialize them manually before running `terraform apply`.
 * **Single mongos connection:** The provider connects to a single mongos instance. If that mongos is unavailable, all shard operations will fail.

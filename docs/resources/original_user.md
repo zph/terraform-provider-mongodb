@@ -87,7 +87,6 @@ resource "mongodb_original_user" "shard02_admin" {
 * `certificate` - (Optional, Sensitive) PEM-encoded certificate content for TLS.
 * `insecure_skip_verify` - (Optional) Skip certificate verification. Default: `false`.
 * `replica_set` - (Optional, Computed) Replica set name. Auto-discovered from the server via `isMaster` if not set. When present, the driver uses discovery mode to route writes to the primary.
-
 ### Role
 
 Each role block assigns a role to the user. If no roles are specified, the user is granted the `root` role on `admin` by default.
@@ -112,11 +111,12 @@ Each role block assigns a role to the user. If no roles are specified, the user 
 
 ### Update
 
-1. Connects with authentication.
-2. Drops the existing user.
-3. Recreates the user with updated credentials and roles.
+~> **BLOCKED:** Updates are unconditionally refused. The original implementation authenticated as the user it was about to drop, risking cluster lockout. Destroy and recreate the resource if you need to change credentials (Delete only removes state — see below).
 
 ### Delete
 
-1. Connects with authentication.
-2. Drops the user.
+~> **State-only removal.** Delete removes the resource from Terraform state but does **not** drop the user from MongoDB. Dropping the original admin user would lock out the cluster. A warning is emitted to confirm this behavior.
+
+## Limitations
+
+* **Localhost exception required.** This resource relies on MongoDB's [localhost exception](https://www.mongodb.com/docs/manual/core/localhost-exception/): when `--auth` is enabled but no users exist, MongoDB permits unauthenticated connections from the loopback interface to create the first user. The Terraform provider (or its proxy) must be able to reach MongoDB via `localhost`/`127.0.0.1` for the bootstrap connection to succeed. Remote bootstrap without an existing user is not supported by MongoDB.
