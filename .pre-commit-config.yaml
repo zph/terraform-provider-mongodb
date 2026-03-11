@@ -4,7 +4,7 @@ default_stages: [pre-commit]
 fail_fast: false
 
 repos:
-  # Built-in hooks (Rust-native, fast, zero-setup)
+  # ── Linting ────────────────────────────────────────────────────────────
   - repo: builtin
     hooks:
       - id: trailing-whitespace
@@ -21,7 +21,6 @@ repos:
       - id: mixed-line-ending
         args: ['--fix=lf']
 
-  # Go: formatting, vetting, linting, testing
   - repo: local
     hooks:
       - id: go-fmt
@@ -59,6 +58,16 @@ repos:
         files: '(\.go$|go\.mod$|go\.sum$)'
         pass_filenames: false
 
+      - id: terraform-fmt
+        name: terraform fmt
+        language: system
+        entry: terraform fmt -recursive
+        files: '\.tf$'
+        pass_filenames: false
+
+  # ── Unit tests ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
       - id: go-test
         name: go test
         language: system
@@ -74,7 +83,9 @@ repos:
         pass_filenames: false
         stages: [pre-commit, pre-push]
 
-      # Integration tests (require Docker via testcontainers)
+  # ── Integration tests (require Docker via testcontainers) ──────────────
+  - repo: local
+    hooks:
       - id: integration-test-matrix
         name: integration test matrix (mongo 3.6 + 7)
         language: system
@@ -98,13 +109,3 @@ repos:
         files: '^mongodb/.*\.go$'
         pass_filenames: false
         stages: [pre-push]
-
-  # Terraform: formatting
-  - repo: local
-    hooks:
-      - id: terraform-fmt
-        name: terraform fmt
-        language: system
-        entry: terraform fmt -recursive
-        files: '\.tf$'
-        pass_filenames: false

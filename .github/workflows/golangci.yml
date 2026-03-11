@@ -8,8 +8,8 @@ on:
   pull_request:
 
 jobs:
-  lint-and-unit:
-    name: lint + unit tests
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -21,10 +21,26 @@ jobs:
       - name: Run prek (pre-commit hooks)
         run: prek run --all-files
 
+  unit-tests:
+    name: unit tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Init Hermit
+        run: |
+          eval "$(.hermit/bin/hermit env --raw)"
+          echo "$PATH" >> "$GITHUB_PATH"
+          .hermit/bin/hermit env --raw >> "$GITHUB_ENV"
+      - name: Go unit tests
+        run: make test-unit
+      - name: CDKTN tests
+        run: make cdktn-test
+
   integration:
     name: integration tests
     runs-on: ubuntu-latest
-    needs: lint-and-unit
+    needs: unit-tests
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Init Hermit
