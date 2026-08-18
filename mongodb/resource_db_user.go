@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -153,9 +154,19 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	if decodeError != nil {
 		return diag.Errorf("Error decoding user : %s ", decodeError)
 	}
-	// DANGER-024: a user dropped out-of-band clears from state instead of
-	// wedging every refresh with an error; the next plan proposes recreation.
+	// DANGER-024: a user dropped out-of-band clears from state (with a
+	// warning) instead of wedging every refresh; the next plan proposes
+	// recreation. During the create read-back the same miss is an
+	// inconsistency, not drift — fail loudly rather than orphan the
+	// just-created user out of state.
 	if len(result.Users) == 0 {
+		if data.IsNewResource() {
+			return diag.Errorf("user %s not found in database %s during post-create read-back", username, database)
+		}
+		tflog.Warn(ctx, "user not found in MongoDB; removing from state", map[string]interface{}{
+			"user":     username,
+			"database": database,
+		})
 		data.SetId("")
 		return nil
 	}

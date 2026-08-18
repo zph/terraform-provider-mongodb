@@ -930,3 +930,34 @@ func TestIntegration_Update_UnchangedPasswordNotSent(t *testing.T) {
 	}
 	assertUserAuthenticates(t, "integnochg", "keep-me")
 }
+
+// DANGER-024: Read clears a vanished user from state on refresh, but fails
+// loudly during the create read-back
+func TestIntegration_Read_VanishedUser(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createUser(client, DbUser{Name: "integvanish", Password: "pass123"}, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	dropUserSafe(client, "integvanish", testAdminDB)
+
+	// Refresh path: the vanished user clears from state without error.
+	data := resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanish"),
+	})
+	if diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("refresh Read must not error on a vanished user: %+v", diags)
+	}
+	if data.Id() != "" {
+		t.Errorf("expected empty ID after refresh of vanished user, got %q", data.Id())
+	}
+
+	// Create read-back path: the same miss is an inconsistency and must error.
+	data = resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanish"),
+	})
+	data.MarkNewResource()
+	if diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig()); !diags.HasError() {
+		t.Error("create read-back Read must error when the user is missing")
+	}
+}

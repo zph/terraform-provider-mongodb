@@ -134,6 +134,9 @@ return an error rather than silently omitting `pwd`.
 > Rationale: silently skipping an empty planned password would record a
 > rotation in state that never happened on the server.
 
-DANGER-024: WHEN Read finds the user absent from MongoDB, it SHALL remove the
-resource from state and return no error, so an out-of-band `dropUser` does not
-wedge refresh; the following plan proposes recreation.
+DANGER-024: WHEN Read finds the user absent from MongoDB during refresh or
+import, it SHALL log a warning, remove the resource from state, and return no
+error, so an out-of-band `dropUser` does not wedge refresh; the following plan
+proposes recreation. WHEN the same miss occurs during the create read-back
+(`IsNewResource`), Read SHALL return an error so the apply fails loudly
+instead of orphaning the just-created user.
