@@ -101,7 +101,11 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("Error decoding map : %s ", roleMapErr)
 	}
 
-	if err := updateUser(client, userName, userPassword, roleList, database); err != nil {
+	// DANGER-021: send pwd only when the password changed to a non-empty
+	// value. Imported users hold an empty password in state; sending it
+	// would reset or break the live credential.
+	includePassword := data.HasChange("password") && userPassword != ""
+	if err := updateUser(client, userName, userPassword, roleList, database, includePassword); err != nil {
 		return diag.Errorf("Could not update the user : %s ", err)
 	}
 
@@ -142,6 +146,12 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	dataSetError = data.Set("auth_database", database)
 	if dataSetError != nil {
 		return diag.Errorf("error setting auth_db : %s ", dataSetError)
+	}
+	// DANGER-022: set name so import-created state is complete and a matching
+	// configuration plans no changes.
+	dataSetError = data.Set("name", username)
+	if dataSetError != nil {
+		return diag.Errorf("error setting name : %s ", dataSetError)
 	}
 	dataSetError = data.Set("password", data.Get("password"))
 	if dataSetError != nil {

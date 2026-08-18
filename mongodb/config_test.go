@@ -396,3 +396,53 @@ func TestMongoClientNoAuth_WithCertificate(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 }
+
+// DANGER-021: pwd included only when includePassword is true
+func TestBuildUpdateUserCmd_IncludePassword(t *testing.T) {
+	cmd := buildUpdateUserCmd("alice", "s3cret", true, []Role{{Role: "read", Db: "app"}})
+	keys := make([]string, len(cmd))
+	for i, e := range cmd {
+		keys[i] = e.Key
+	}
+	want := []string{"updateUser", "pwd", "roles"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected keys %v, got %v", want, keys)
+	}
+	if cmd[1].Value != "s3cret" {
+		t.Errorf("expected pwd value 's3cret', got %v", cmd[1].Value)
+	}
+}
+
+// DANGER-021: pwd omitted when includePassword is false
+func TestBuildUpdateUserCmd_OmitPassword(t *testing.T) {
+	cmd := buildUpdateUserCmd("alice", "", false, []Role{{Role: "read", Db: "app"}})
+	keys := make([]string, len(cmd))
+	for i, e := range cmd {
+		keys[i] = e.Key
+	}
+	want := []string{"updateUser", "roles"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected keys %v, got %v", want, keys)
+	}
+	for _, e := range cmd {
+		if e.Key == "pwd" {
+			t.Error("pwd must not be present when includePassword is false")
+		}
+	}
+}
+
+// DANGER-021: empty role list renders as empty array, with and without pwd
+func TestBuildUpdateUserCmd_EmptyRoles(t *testing.T) {
+	cmd := buildUpdateUserCmd("alice", "", false, nil)
+	last := cmd[len(cmd)-1]
+	if last.Key != "roles" {
+		t.Fatalf("expected final key 'roles', got %q", last.Key)
+	}
+	roles, ok := last.Value.([]bson.M)
+	if !ok {
+		t.Fatalf("expected roles value type []bson.M, got %T", last.Value)
+	}
+	if len(roles) != 0 {
+		t.Errorf("expected empty roles array, got %v", roles)
+	}
+}

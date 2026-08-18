@@ -107,3 +107,17 @@ since it is a client-side-only value.
 
 DANGER-020: The `noforceenew` linter SHALL be integrated into the pre-commit
 hook pipeline and `make lint` target.
+
+DANGER-021: WHEN `mongodb_db_user` Update runs, the `updateUser` command SHALL
+include the `pwd` field only if the `password` attribute has changed AND the
+new value is not empty. An update caused by any other attribute change SHALL
+NOT modify the user's password.
+
+> Rationale: import-created state holds an empty password. Before this
+> requirement, any update on an imported user sent `pwd: ""`, which either
+> fails the apply or resets the live credential.
+
+DANGER-022: WHEN `resourceDatabaseUserRead` runs, it SHALL set the `name`
+attribute in state from the resource ID, so that a resource created by
+`terraform import` has complete state and a configuration that matches the
+live user plans no changes.

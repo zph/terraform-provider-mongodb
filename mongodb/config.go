@@ -250,20 +250,29 @@ func createUser(client *mongo.Client, user DbUser, roles []Role, database string
 	return nil
 }
 
-// updateUser modifies an existing user in-place via the MongoDB updateUser command.
-// DANGER-005
-func updateUser(client *mongo.Client, username, password string, roles []Role, database string) error {
+// buildUpdateUserCmd builds the updateUser command document. The pwd field is
+// included only when includePassword is true, so updates triggered by
+// non-password changes (role edits, state completion after import) never
+// touch the user's existing password. // DANGER-021
+func buildUpdateUserCmd(username, password string, includePassword bool, roles []Role) bson.D {
 	var rolesValue any
 	if len(roles) != 0 {
 		rolesValue = roles
 	} else {
 		rolesValue = []bson.M{}
 	}
-	result := client.Database(database).RunCommand(context.Background(), bson.D{
-		{Key: "updateUser", Value: username},
-		{Key: "pwd", Value: password},
-		{Key: "roles", Value: rolesValue},
-	})
+	cmd := bson.D{{Key: "updateUser", Value: username}}
+	if includePassword {
+		cmd = append(cmd, bson.E{Key: "pwd", Value: password})
+	}
+	cmd = append(cmd, bson.E{Key: "roles", Value: rolesValue})
+	return cmd
+}
+
+// updateUser modifies an existing user in-place via the MongoDB updateUser command.
+// DANGER-005, DANGER-021
+func updateUser(client *mongo.Client, username, password string, roles []Role, database string, includePassword bool) error {
+	result := client.Database(database).RunCommand(context.Background(), buildUpdateUserCmd(username, password, includePassword, roles))
 	if result.Err() != nil {
 		return result.Err()
 	}

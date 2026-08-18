@@ -16,6 +16,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	texec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -823,3 +825,71 @@ func TestIntegration_SetOplogConfig_RoundTrip(t *testing.T) {
 
 // Ensure testcontainers import is used (compile guard).
 var _ testcontainers.Container = (*testcontainers.DockerContainer)(nil)
+
+// DANGER-021: a role-only update must not change the user's password
+func TestIntegration_UpdateUser_RoleOnlyPreservesPassword(t *testing.T) {
+	client := newTestClient(t)
+
+	user := DbUser{Name: "integpwdkeep", Password: "orig-password"}
+	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+
+	// Simulate an update where the password did not change: empty password,
+	// includePassword=false (what Update computes for imported users).
+	err := updateUser(client, "integpwdkeep", "", []Role{{Role: "readWrite", Db: "testdb"}}, testAdminDB, false)
+	if err != nil {
+		t.Fatalf("role-only updateUser failed: %v", err)
+	}
+
+	result, err := getUser(client, "integpwdkeep", testAdminDB)
+	if err != nil {
+		t.Fatalf("getUser failed: %v", err)
+	}
+	if len(result.Users) != 1 || len(result.Users[0].Roles) != 1 || result.Users[0].Roles[0].Role != "readWrite" {
+		t.Fatalf("expected role updated to readWrite, got %+v", result.Users)
+	}
+
+	// The original password must still authenticate.
+	conf := &MongoDatabaseConfiguration{
+		Config: &ClientConfig{
+			Host:        testMongoContainer.host,
+			Port:        testMongoContainer.port,
+			Username:    "integpwdkeep",
+			Password:    "orig-password",
+			DB:          testAdminDB,
+			Direct:      true,
+			RetryWrites: false,
+		},
+		MaxConnLifetime: 10,
+	}
+	if _, err := MongoClientInit(context.Background(), conf); err != nil {
+		t.Errorf("original password no longer authenticates after role-only update: %v", err)
+	}
+}
+
+// DANGER-022: Read must populate name for import-created state
+func TestIntegration_Read_SetsNameForImportedState(t *testing.T) {
+	client := newTestClient(t)
+
+	user := DbUser{Name: "integimportname", Password: "pass123"}
+	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+
+	// Simulate ImportStatePassthroughContext: state holds only the ID.
+	data := resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integimportname"),
+	})
+
+	diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig())
+	if diags.HasError() {
+		t.Fatalf("Read returned error: %+v", diags)
+	}
+	if got := data.Get("name").(string); got != "integimportname" {
+		t.Errorf("expected name %q in state after Read, got %q", "integimportname", got)
+	}
+	if got := data.Get("auth_database").(string); got != testAdminDB {
+		t.Errorf("expected auth_database %q, got %q", testAdminDB, got)
+	}
+}
