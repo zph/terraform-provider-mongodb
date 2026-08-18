@@ -277,6 +277,10 @@ func dbUserCommandPreview(d *schema.ResourceDiff) string {
 		if !d.NewValueKnown("password") {
 			includePwd = true
 		} else if inc, err := includePasswordForUpdate(d, d.Get("password").(string)); err != nil {
+			// Defense-in-depth: unreachable while the StringIsNotEmpty
+			// validation holds (known-empty fails validation, unknown is
+			// handled above). Over-reporting a send is the safe direction
+			// if a future refactor ever exposes this arm.
 			includePwd = true
 		} else {
 			includePwd = inc

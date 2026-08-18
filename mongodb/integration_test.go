@@ -211,6 +211,38 @@ func newTestConfig() *MongoDatabaseConfiguration {
 	}
 }
 
+// cleanupUser drops a test user at test end so repeat runs start clean.
+func cleanupUser(t *testing.T, client *mongo.Client, name string) {
+	t.Cleanup(func() { dropUserSafe(client, name, testAdminDB) })
+}
+
+// assertUserAuthenticates fails the test if username/password cannot log in.
+func assertUserAuthenticates(t *testing.T, username, password string) {
+	t.Helper()
+	conf := newTestConfig()
+	conf.Config.Username = username
+	conf.Config.Password = password
+	probe, err := MongoClientInit(context.Background(), conf)
+	if err != nil {
+		t.Errorf("user %s failed to authenticate: %v", username, err)
+		return
+	}
+	_ = probe.Disconnect(context.Background())
+}
+
+// assertUserCannotAuthenticate fails the test if username/password still logs in.
+func assertUserCannotAuthenticate(t *testing.T, username, password string) {
+	t.Helper()
+	conf := newTestConfig()
+	conf.Config.Username = username
+	conf.Config.Password = password
+	probe, err := MongoClientInit(context.Background(), conf)
+	if err == nil {
+		_ = probe.Disconnect(context.Background())
+		t.Errorf("user %s still authenticates with the old password", username)
+	}
+}
+
 // newTestClient creates a connected mongo.Client using the provider's MongoClientInit.
 func newTestClient(t *testing.T) *mongo.Client {
 	t.Helper()
@@ -824,9 +856,6 @@ func TestIntegration_SetOplogConfig_RoundTrip(t *testing.T) {
 	}
 }
 
-// Ensure testcontainers import is used (compile guard).
-var _ testcontainers.Container = (*testcontainers.DockerContainer)(nil)
-
 // DANGER-021: a role-only update must not change the user's password
 func TestIntegration_UpdateUser_RoleOnlyPreservesPassword(t *testing.T) {
 	client := newTestClient(t)
@@ -883,25 +912,6 @@ func TestIntegration_Read_SetsNameForImportedState(t *testing.T) {
 	if got := data.Get("auth_database").(string); got != testAdminDB {
 		t.Errorf("expected auth_database %q, got %q", testAdminDB, got)
 	}
-}
-
-// cleanupUser drops a test user at test end so repeat runs start clean.
-func cleanupUser(t *testing.T, client *mongo.Client, name string) {
-	t.Cleanup(func() { dropUserSafe(client, name, testAdminDB) })
-}
-
-// assertUserAuthenticates fails the test if username/password cannot log in.
-func assertUserAuthenticates(t *testing.T, username, password string) {
-	t.Helper()
-	conf := newTestConfig()
-	conf.Config.Username = username
-	conf.Config.Password = password
-	probe, err := MongoClientInit(context.Background(), conf)
-	if err != nil {
-		t.Errorf("user %s failed to authenticate: %v", username, err)
-		return
-	}
-	_ = probe.Disconnect(context.Background())
 }
 
 // DANGER-021: Update computes includePassword=false when the planned
@@ -964,19 +974,6 @@ func TestIntegration_Read_VanishedUser(t *testing.T) {
 	data.MarkNewResource()
 	if diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig()); !diags.HasError() {
 		t.Error("create read-back Read must error when the user is missing")
-	}
-}
-
-// assertUserCannotAuthenticate fails the test if username/password still logs in.
-func assertUserCannotAuthenticate(t *testing.T, username, password string) {
-	t.Helper()
-	conf := newTestConfig()
-	conf.Config.Username = username
-	conf.Config.Password = password
-	probe, err := MongoClientInit(context.Background(), conf)
-	if err == nil {
-		_ = probe.Disconnect(context.Background())
-		t.Errorf("user %s still authenticates with the old password", username)
 	}
 }
 
@@ -1044,3 +1041,6 @@ func TestIntegration_Read_VanishedRole(t *testing.T) {
 		t.Error("create read-back Read must error when the role is missing")
 	}
 }
+
+// Ensure testcontainers import is used (compile guard).
+var _ testcontainers.Container = (*testcontainers.DockerContainer)(nil)
