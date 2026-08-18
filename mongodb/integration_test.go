@@ -17,7 +17,9 @@ import (
 	texec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -834,9 +836,12 @@ func TestIntegration_UpdateUser_RoleOnlyPreservesPassword(t *testing.T) {
 	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
 		t.Fatalf("createUser failed: %v", err)
 	}
+	cleanupUser(t, client, "integpwdkeep")
 
-	// Simulate an update where the password did not change: empty password,
-	// includePassword=false (what Update computes for imported users).
+	// Simulate an update where the planned password did not change: empty
+	// password, includePassword=false — what Update computes when
+	// HasChange("password") is false (for example imported users with
+	// lifecycle ignore_changes = [password]).
 	err := updateUser(client, "integpwdkeep", "", []Role{{Role: "readWrite", Db: "testdb"}}, testAdminDB, false)
 	if err != nil {
 		t.Fatalf("role-only updateUser failed: %v", err)
@@ -851,21 +856,7 @@ func TestIntegration_UpdateUser_RoleOnlyPreservesPassword(t *testing.T) {
 	}
 
 	// The original password must still authenticate.
-	conf := &MongoDatabaseConfiguration{
-		Config: &ClientConfig{
-			Host:        testMongoContainer.host,
-			Port:        testMongoContainer.port,
-			Username:    "integpwdkeep",
-			Password:    "orig-password",
-			DB:          testAdminDB,
-			Direct:      true,
-			RetryWrites: false,
-		},
-		MaxConnLifetime: 10,
-	}
-	if _, err := MongoClientInit(context.Background(), conf); err != nil {
-		t.Errorf("original password no longer authenticates after role-only update: %v", err)
-	}
+	assertUserAuthenticates(t, "integpwdkeep", "orig-password")
 }
 
 // DANGER-022: Read must populate name for import-created state
@@ -876,6 +867,7 @@ func TestIntegration_Read_SetsNameForImportedState(t *testing.T) {
 	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
 		t.Fatalf("createUser failed: %v", err)
 	}
+	cleanupUser(t, client, "integimportname")
 
 	// Simulate ImportStatePassthroughContext: state holds only the ID.
 	data := resourceDatabaseUser().Data(&terraform.InstanceState{
@@ -892,4 +884,49 @@ func TestIntegration_Read_SetsNameForImportedState(t *testing.T) {
 	if got := data.Get("auth_database").(string); got != testAdminDB {
 		t.Errorf("expected auth_database %q, got %q", testAdminDB, got)
 	}
+}
+
+// cleanupUser drops a test user at test end so repeat runs start clean.
+func cleanupUser(t *testing.T, client *mongo.Client, name string) {
+	t.Cleanup(func() {
+		_ = client.Database(testAdminDB).RunCommand(context.Background(), bson.D{{Key: "dropUser", Value: name}}).Err()
+	})
+}
+
+// assertUserAuthenticates fails the test if username/password cannot log in.
+func assertUserAuthenticates(t *testing.T, username, password string) {
+	t.Helper()
+	conf := newTestConfig()
+	conf.Config.Username = username
+	conf.Config.Password = password
+	probe, err := MongoClientInit(context.Background(), conf)
+	if err != nil {
+		t.Errorf("user %s failed to authenticate: %v", username, err)
+		return
+	}
+	_ = probe.Disconnect(context.Background())
+}
+
+// DANGER-021: Update computes includePassword=false when the planned
+// password is unchanged, and the live credential survives the update
+func TestIntegration_Update_UnchangedPasswordNotSent(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createUser(client, DbUser{Name: "integnochg", Password: "keep-me"}, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	cleanupUser(t, client, "integnochg")
+
+	data := schema.TestResourceDataRaw(t, resourceDatabaseUser().Schema, map[string]interface{}{
+		"name":          "integnochg",
+		"auth_database": testAdminDB,
+		"password":      "keep-me",
+		"role":          []interface{}{map[string]interface{}{"role": "readWrite", "db": "testdb"}},
+	})
+	data.SetId(formatResourceId(testAdminDB, "integnochg"))
+
+	if diags := resourceDatabaseUserUpdate(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("Update returned error: %+v", diags)
+	}
+	assertUserAuthenticates(t, "integnochg", "keep-me")
 }

@@ -117,15 +117,20 @@ func buildFCVPreview(version string) string {
 	return fmt.Sprintf("db.adminCommand({setFeatureCompatibilityVersion: %q})", version)
 }
 
-// buildDbUserPreview builds the createUser/updateUser command string.
-// PREVIEW-016, PREVIEW-017
-func buildDbUserPreview(database, name string, roles []previewRole, isCreate bool) string {
+// buildDbUserPreview builds the createUser/updateUser command string. The
+// pwd field is rendered only when the apply will send it: always on create,
+// only on a password change for update. // PREVIEW-016, PREVIEW-017, DANGER-021
+func buildDbUserPreview(database, name string, roles []previewRole, isCreate, includePwd bool) string {
 	cmd := "updateUser"
 	if isCreate {
 		cmd = "createUser"
 	}
-	return fmt.Sprintf("db.getSiblingDB(%q).runCommand({%s: %q, pwd: [REDACTED], roles: %s})",
-		database, cmd, name, formatPreviewRoles(roles))
+	pwd := ""
+	if includePwd {
+		pwd = "pwd: [REDACTED], "
+	}
+	return fmt.Sprintf("db.getSiblingDB(%q).runCommand({%s: %q, %sroles: %s})",
+		database, cmd, name, pwd, formatPreviewRoles(roles))
 }
 
 // buildDbRolePreview builds the createRole/updateRole command string.
@@ -263,7 +268,11 @@ func dbUserCommandPreview(d *schema.ResourceDiff) string {
 	database := d.Get("auth_database").(string)
 	name := d.Get("name").(string)
 	roles := extractPreviewRoles(d.Get("role").(*schema.Set).List())
-	return buildDbUserPreview(database, name, roles, d.Id() == "")
+	isCreate := d.Id() == ""
+	// DANGER-021: the preview must match what the apply sends — pwd is
+	// omitted on updates unless the password changed.
+	includePwd := isCreate || d.HasChange("password")
+	return buildDbUserPreview(database, name, roles, isCreate, includePwd)
 }
 
 // dbRoleCommandPreview extracts fields from ResourceDiff and delegates.

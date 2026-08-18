@@ -3,6 +3,7 @@ package mongodb
 import (
 	"testing"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
@@ -189,3 +190,49 @@ func TestDangerousOps_ShardSchemaValid(t *testing.T) {
 		t.Errorf("shard schema validation failed: %v", err)
 	}
 }
+
+// DANGER-T18: DANGER-023 — db_user password schema rejects empty values
+func TestDangerousOps_DbUserPasswordNotEmpty(t *testing.T) {
+	s := resourceDatabaseUser().Schema["password"]
+	if s.ValidateDiagFunc == nil {
+		t.Fatal("password must have a ValidateDiagFunc")
+	}
+	if diags := s.ValidateDiagFunc("", cty.Path{}); !diags.HasError() {
+		t.Error("empty password must fail validation")
+	}
+	if diags := s.ValidateDiagFunc("nonempty", cty.Path{}); diags.HasError() {
+		t.Errorf("non-empty password must pass validation: %+v", diags)
+	}
+}
+
+// DANGER-T19: DANGER-021, DANGER-023 — Update sends pwd only on a real,
+// non-empty password change
+func TestDangerousOps_IncludePasswordForUpdate(t *testing.T) {
+	cases := []struct {
+		name      string
+		hasChange bool
+		password  string
+		want      bool
+		wantErr   bool
+	}{
+		{"unchanged non-empty", false, "keep", false, false},
+		{"unchanged empty (imported)", false, "", false, false},
+		{"changed non-empty (rotation)", true, "newpass", true, false},
+		{"changed to empty (must error)", true, "", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := includePasswordForUpdate(fakeChangeChecker{tc.hasChange}, tc.password)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("includePassword = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+type fakeChangeChecker struct{ changed bool }
+
+func (f fakeChangeChecker) HasChange(string) bool { return f.changed }

@@ -250,27 +250,30 @@ func createUser(client *mongo.Client, user DbUser, roles []Role, database string
 	return nil
 }
 
+// rolesOrEmpty renders a role list for a user/role command, normalizing an
+// empty list to an explicit empty array.
+func rolesOrEmpty(roles []Role) any {
+	if len(roles) != 0 {
+		return roles
+	}
+	return []bson.M{}
+}
+
 // buildUpdateUserCmd builds the updateUser command document. The pwd field is
 // included only when includePassword is true, so updates triggered by
 // non-password changes (role edits, state completion after import) never
 // touch the user's existing password. // DANGER-021
 func buildUpdateUserCmd(username, password string, includePassword bool, roles []Role) bson.D {
-	var rolesValue any
-	if len(roles) != 0 {
-		rolesValue = roles
-	} else {
-		rolesValue = []bson.M{}
-	}
 	cmd := bson.D{{Key: "updateUser", Value: username}}
 	if includePassword {
 		cmd = append(cmd, bson.E{Key: "pwd", Value: password})
 	}
-	cmd = append(cmd, bson.E{Key: "roles", Value: rolesValue})
+	cmd = append(cmd, bson.E{Key: "roles", Value: rolesOrEmpty(roles)})
 	return cmd
 }
 
 // updateUser modifies an existing user in-place via the MongoDB updateUser command.
-// DANGER-005, DANGER-021
+// DANGER-001, DANGER-021
 func updateUser(client *mongo.Client, username, password string, roles []Role, database string, includePassword bool) error {
 	result := client.Database(database).RunCommand(context.Background(), buildUpdateUserCmd(username, password, includePassword, roles))
 	if result.Err() != nil {
@@ -343,12 +346,7 @@ func createRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	if err != nil {
 		return err
 	}
-	var rolesValue any
-	if len(roles) != 0 {
-		rolesValue = roles
-	} else {
-		rolesValue = []bson.M{}
-	}
+	rolesValue := rolesOrEmpty(roles)
 	privValue := any(privDocs)
 	if len(privDocs) == 0 {
 		privValue = []bson.M{}
@@ -370,12 +368,7 @@ func updateRole(client *mongo.Client, role string, roles []Role, privilege []Pri
 	if err != nil {
 		return err
 	}
-	var rolesValue any
-	if len(roles) != 0 {
-		rolesValue = roles
-	} else {
-		rolesValue = []bson.M{}
-	}
+	rolesValue := rolesOrEmpty(roles)
 	privValue := any(privDocs)
 	if len(privDocs) == 0 {
 		privValue = []bson.M{}

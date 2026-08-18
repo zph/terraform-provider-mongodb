@@ -81,7 +81,9 @@ PREVIEW-016: WHEN `mongodb_db_user` is previewed for Create, the
 `planned_commands` SHALL show `createUser` with `pwd: [REDACTED]`.
 
 PREVIEW-017: WHEN `mongodb_db_user` is previewed for Update, the
-`planned_commands` SHALL show `updateUser` with `pwd: [REDACTED]`.
+`planned_commands` SHALL show `updateUser` with `pwd: [REDACTED]` only when
+the password attribute has changed; otherwise the preview SHALL omit `pwd`,
+matching the command the apply sends (DANGER-021).
 
 PREVIEW-018: WHEN `mongodb_db_role` is previewed for Create, the
 `planned_commands` SHALL show `createRole` with privileges and inherited roles.

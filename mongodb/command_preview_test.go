@@ -115,7 +115,7 @@ func TestFCVPreviewBuild(t *testing.T) {
 // PREVIEW-T13: PREVIEW-016 — db_user create preview (password redacted)
 func TestDbUserPreviewBuild_Create(t *testing.T) {
 	roles := []previewRole{{Role: "readWrite", DB: "mydb"}}
-	got := buildDbUserPreview("admin", "appuser", roles, true)
+	got := buildDbUserPreview("admin", "appuser", roles, true, true)
 	if !strings.Contains(got, "createUser") {
 		t.Errorf("create preview should use createUser, got: %s", got)
 	}
@@ -127,12 +127,22 @@ func TestDbUserPreviewBuild_Create(t *testing.T) {
 	}
 }
 
-// PREVIEW-T14: PREVIEW-017 — db_user update preview
+// PREVIEW-T14: PREVIEW-017, DANGER-021 — db_user update preview shows pwd
+// only when the password changed
 func TestDbUserPreviewBuild_Update(t *testing.T) {
 	roles := []previewRole{{Role: "readWrite", DB: "mydb"}}
-	got := buildDbUserPreview("admin", "appuser", roles, false)
+
+	got := buildDbUserPreview("admin", "appuser", roles, false, true)
 	if !strings.Contains(got, "updateUser") {
 		t.Errorf("update preview should use updateUser, got: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("password-change preview should show redacted pwd, got: %s", got)
+	}
+
+	got = buildDbUserPreview("admin", "appuser", roles, false, false)
+	if strings.Contains(got, "pwd") {
+		t.Errorf("role-only update preview must omit pwd, got: %s", got)
 	}
 }
 

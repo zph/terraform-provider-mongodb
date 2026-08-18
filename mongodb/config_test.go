@@ -424,14 +424,9 @@ func TestBuildUpdateUserCmd_OmitPassword(t *testing.T) {
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected keys %v, got %v", want, keys)
 	}
-	for _, e := range cmd {
-		if e.Key == "pwd" {
-			t.Error("pwd must not be present when includePassword is false")
-		}
-	}
 }
 
-// DANGER-021: empty role list renders as empty array, with and without pwd
+// DANGER-021: empty role list renders as an explicit empty array
 func TestBuildUpdateUserCmd_EmptyRoles(t *testing.T) {
 	cmd := buildUpdateUserCmd("alice", "", false, nil)
 	last := cmd[len(cmd)-1]
@@ -444,5 +439,16 @@ func TestBuildUpdateUserCmd_EmptyRoles(t *testing.T) {
 	}
 	if len(roles) != 0 {
 		t.Errorf("expected empty roles array, got %v", roles)
+	}
+}
+
+// DANGER-021: a non-empty password is still omitted when includePassword is
+// false — kills the "send whenever password is non-empty" mutant
+func TestBuildUpdateUserCmd_OmitPasswordNonEmpty(t *testing.T) {
+	cmd := buildUpdateUserCmd("alice", "still-secret", false, []Role{{Role: "read", Db: "app"}})
+	for _, e := range cmd {
+		if e.Key == "pwd" {
+			t.Fatalf("pwd must not be present when includePassword is false, got %v", cmd)
+		}
 	}
 }

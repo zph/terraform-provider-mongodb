@@ -2,10 +2,12 @@ package mongodb
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/mitchellh/mapstructure"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -37,6 +39,9 @@ func resourceDatabaseUser() *schema.Resource {
 				Type:      schema.TypeString,
 				Required:  true,
 				Sensitive: true,
+				// DANGER-023: an empty password is never valid and must fail
+				// at plan time, not be silently skipped at apply time.
+				ValidateDiagFunc: validateDiagFunc(validation.StringIsNotEmpty),
 			},
 			"role": {
 				Type:     schema.TypeSet,
@@ -83,7 +88,27 @@ func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, 
 	return nil
 }
 
-// DANGER-005: uses updateUser for in-place modification instead of drop+recreate
+// resourceChangeChecker is the slice of ResourceData needed to decide
+// whether an update carries a password.
+type resourceChangeChecker interface {
+	HasChange(string) bool
+}
+
+// includePasswordForUpdate reports whether the updateUser command should
+// carry pwd: only when the planned password changed to a non-empty value.
+// A change to an empty value is an error, never a silent skip.
+// DANGER-021, DANGER-023
+func includePasswordForUpdate(d resourceChangeChecker, password string) (bool, error) {
+	if !d.HasChange("password") {
+		return false, nil
+	}
+	if password == "" {
+		return false, fmt.Errorf("password cannot be changed to an empty value")
+	}
+	return true, nil
+}
+
+// DANGER-001: uses updateUser for in-place modification instead of drop+recreate
 func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	var config = i.(*MongoDatabaseConfiguration)
 	client, connectionError := MongoClientInit(ctx, config)
@@ -101,10 +126,10 @@ func resourceDatabaseUserUpdate(ctx context.Context, data *schema.ResourceData, 
 		return diag.Errorf("Error decoding map : %s ", roleMapErr)
 	}
 
-	// DANGER-021: send pwd only when the password changed to a non-empty
-	// value. Imported users hold an empty password in state; sending it
-	// would reset or break the live credential.
-	includePassword := data.HasChange("password") && userPassword != ""
+	includePassword, pwdErr := includePasswordForUpdate(data, userPassword)
+	if pwdErr != nil {
+		return diag.FromErr(pwdErr)
+	}
 	if err := updateUser(client, userName, userPassword, roleList, database, includePassword); err != nil {
 		return diag.Errorf("Could not update the user : %s ", err)
 	}
@@ -119,7 +144,7 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	stateID := data.State().ID
+	stateID := data.Id()
 	username, database, err := resourceDatabaseUserParseId(stateID)
 	if err != nil {
 		return diag.Errorf("%s", err)
@@ -128,8 +153,11 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	if decodeError != nil {
 		return diag.Errorf("Error decoding user : %s ", decodeError)
 	}
+	// DANGER-024: a user dropped out-of-band clears from state instead of
+	// wedging every refresh with an error; the next plan proposes recreation.
 	if len(result.Users) == 0 {
-		return diag.Errorf("user does not exist")
+		data.SetId("")
+		return nil
 	}
 	roles := make([]interface{}, len(result.Users[0].Roles))
 
