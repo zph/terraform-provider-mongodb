@@ -71,7 +71,7 @@ func resourceDatabaseUserDelete(ctx context.Context, data *schema.ResourceData, 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	var stateId = data.State().ID
+	var stateId = data.Id()
 	var database = data.Get("auth_database").(string)
 
 	userName, _, err := parseResourceId(stateId)
@@ -191,10 +191,6 @@ func resourceDatabaseUserRead(ctx context.Context, data *schema.ResourceData, i 
 	dataSetError = data.Set("name", username)
 	if dataSetError != nil {
 		return diag.Errorf("error setting name : %s ", dataSetError)
-	}
-	dataSetError = data.Set("password", data.Get("password"))
-	if dataSetError != nil {
-		return diag.Errorf("error setting password : %s ", dataSetError)
 	}
 	data.SetId(stateID)
 	return nil

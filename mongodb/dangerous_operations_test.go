@@ -222,7 +222,7 @@ func TestDangerousOps_IncludePasswordForUpdate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := includePasswordForUpdate(fakeChangeChecker{tc.hasChange}, tc.password)
+			got, err := includePasswordForUpdate(fakeChangeChecker{t: t, changed: tc.hasChange}, tc.password)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, wantErr = %v", err, tc.wantErr)
 			}
@@ -233,6 +233,14 @@ func TestDangerousOps_IncludePasswordForUpdate(t *testing.T) {
 	}
 }
 
-type fakeChangeChecker struct{ changed bool }
+type fakeChangeChecker struct {
+	t       *testing.T
+	changed bool
+}
 
-func (f fakeChangeChecker) HasChange(string) bool { return f.changed }
+func (f fakeChangeChecker) HasChange(key string) bool {
+	if key != "password" {
+		f.t.Fatalf("HasChange called with unexpected key %q", key)
+	}
+	return f.changed
+}

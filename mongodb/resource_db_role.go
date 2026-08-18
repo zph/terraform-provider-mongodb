@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -121,7 +122,7 @@ func resourceDatabaseRoleDelete(ctx context.Context, data *schema.ResourceData, 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	var stateId = data.State().ID
+	var stateId = data.Id()
 	roleName, database, err := resourceDatabaseRoleParseId(stateId)
 
 	if err != nil {
@@ -145,7 +146,7 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	var stateId = data.State().ID
+	var stateId = data.Id()
 	roleName, database, err := resourceDatabaseRoleParseId(stateId)
 	if err != nil {
 		return diag.Errorf("%s", err)
@@ -181,7 +182,7 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 	if connectionError != nil {
 		return diag.Errorf("Error connecting to database : %s ", connectionError)
 	}
-	stateID := data.State().ID
+	stateID := data.Id()
 	roleName, database, err := resourceDatabaseRoleParseId(stateID)
 	if err != nil {
 		return diag.Errorf("%s", err)
@@ -190,8 +191,18 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 	if decodeError != nil {
 		return diag.Errorf("Error decoding role : %s ", decodeError)
 	}
+	// DANGER-025: mirror DANGER-024 — a role dropped out-of-band clears from
+	// state with a warning; a create read-back miss fails loudly.
 	if len(result.Roles) == 0 {
-		return diag.Errorf("Role does not exist")
+		if data.IsNewResource() {
+			return diag.Errorf("role %s not found in database %s during post-create read-back", roleName, database)
+		}
+		tflog.Warn(ctx, "role not found in MongoDB; removing from state", map[string]interface{}{
+			"role":     roleName,
+			"database": database,
+		})
+		data.SetId("")
+		return nil
 	}
 	inheritedRoles := make([]interface{}, len(result.Roles[0].InheritedRoles))
 

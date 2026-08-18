@@ -235,14 +235,8 @@ func (resource Resource) String() string {
 }
 
 func createUser(client *mongo.Client, user DbUser, roles []Role, database string) error {
-	var result *mongo.SingleResult
-	if len(roles) != 0 {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createUser", Value: user.Name},
-			{Key: "pwd", Value: user.Password}, {Key: "roles", Value: roles}})
-	} else {
-		result = client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createUser", Value: user.Name},
-			{Key: "pwd", Value: user.Password}, {Key: "roles", Value: []bson.M{}}})
-	}
+	result := client.Database(database).RunCommand(context.Background(), bson.D{{Key: "createUser", Value: user.Name},
+		{Key: "pwd", Value: user.Password}, {Key: "roles", Value: rolesOrEmpty(roles)}})
 
 	if result.Err() != nil {
 		return result.Err()

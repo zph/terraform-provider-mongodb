@@ -93,11 +93,17 @@ Imported users have no password recorded in state. Either keep
 credential, or set `password` to the user's real current value — the first
 apply then re-asserts it.
 
+~> **Upgrade note:** `password = ""` is no longer accepted, even together
+with `ignore_changes = [password]`, because validation runs on the raw
+configuration. Use any non-empty placeholder value instead.
+
 ## Password handling
 
 The provider sends the password to MongoDB only when it changes: on create,
 and on an update whose plan includes a password change. Role-only updates
 never touch the credential. A password changed outside Terraform is invisible
 to `terraform plan` (MongoDB does not expose credentials); to converge, rotate
-by changing `password` to a new value. An empty `password` is rejected at
-validation time.
+by changing `password` to a new value. The provider never re-sends an
+unchanged password, so an update performs no credential write the plan did
+not show — by design, same-value re-assertion does not exist. An empty
+`password` is rejected at validation time.

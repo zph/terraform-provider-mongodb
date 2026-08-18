@@ -269,9 +269,19 @@ func dbUserCommandPreview(d *schema.ResourceDiff) string {
 	name := d.Get("name").(string)
 	roles := extractPreviewRoles(d.Get("role").(*schema.Set).List())
 	isCreate := d.Id() == ""
-	// DANGER-021: the preview must match what the apply sends — pwd is
-	// omitted on updates unless the password changed.
-	includePwd := isCreate || d.HasChange("password")
+	includePwd := isCreate
+	if !isCreate {
+		// DANGER-021: the same decision function as Update, so preview and
+		// apply cannot diverge. A password unknown at plan time renders as
+		// a send, because the apply may send it.
+		if !d.NewValueKnown("password") {
+			includePwd = true
+		} else if inc, err := includePasswordForUpdate(d, d.Get("password").(string)); err != nil {
+			includePwd = true
+		} else {
+			includePwd = inc
+		}
+	}
 	return buildDbUserPreview(database, name, roles, isCreate, includePwd)
 }
 
