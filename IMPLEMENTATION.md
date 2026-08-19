@@ -163,7 +163,7 @@ Exhaustive standalone examples organized by capability. See [examples/README.md]
 | `resources/db_user/basic` | auth_database, name, password, role (single) |
 | `resources/db_user/multiple-roles` | role (multiple, cross-database) |
 | `resources/db_user/custom-role` | role referencing mongodb_db_role, depends_on |
-| `resources/db_user/import` | Import workflow (base64 ID) |
+| `resources/db_user/import` | Import workflow (plaintext database.name ID) |
 | `resources/db_role/basic` | name, database, privilege (db/collection/actions) |
 | `resources/db_role/cluster-privilege` | privilege with cluster=true |
 | `resources/db_role/inherited` | inherited_role |

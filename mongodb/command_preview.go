@@ -117,15 +117,20 @@ func buildFCVPreview(version string) string {
 	return fmt.Sprintf("db.adminCommand({setFeatureCompatibilityVersion: %q})", version)
 }
 
-// buildDbUserPreview builds the createUser/updateUser command string.
-// PREVIEW-016, PREVIEW-017
-func buildDbUserPreview(database, name string, roles []previewRole, isCreate bool) string {
+// buildDbUserPreview builds the createUser/updateUser command string. The
+// pwd field is rendered only when the apply will send it: always on create,
+// only on a password change for update. // PREVIEW-016, PREVIEW-017, DANGER-021
+func buildDbUserPreview(database, name string, roles []previewRole, isCreate, includePwd bool) string {
 	cmd := "updateUser"
 	if isCreate {
 		cmd = "createUser"
 	}
-	return fmt.Sprintf("db.getSiblingDB(%q).runCommand({%s: %q, pwd: [REDACTED], roles: %s})",
-		database, cmd, name, formatPreviewRoles(roles))
+	pwd := ""
+	if includePwd {
+		pwd = "pwd: [REDACTED], "
+	}
+	return fmt.Sprintf("db.getSiblingDB(%q).runCommand({%s: %q, %sroles: %s})",
+		database, cmd, name, pwd, formatPreviewRoles(roles))
 }
 
 // buildDbRolePreview builds the createRole/updateRole command string.
@@ -263,7 +268,25 @@ func dbUserCommandPreview(d *schema.ResourceDiff) string {
 	database := d.Get("auth_database").(string)
 	name := d.Get("name").(string)
 	roles := extractPreviewRoles(d.Get("role").(*schema.Set).List())
-	return buildDbUserPreview(database, name, roles, d.Id() == "")
+	isCreate := d.Id() == ""
+	includePwd := isCreate
+	if !isCreate {
+		// DANGER-021: the same decision function as Update, so preview and
+		// apply cannot diverge. A password unknown at plan time renders as
+		// a send, because the apply may send it.
+		if !d.NewValueKnown("password") {
+			includePwd = true
+		} else if inc, err := includePasswordForUpdate(d, d.Get("password").(string)); err != nil {
+			// Defense-in-depth: unreachable while the StringIsNotEmpty
+			// validation holds (known-empty fails validation, unknown is
+			// handled above). Over-reporting a send is the safe direction
+			// if a future refactor ever exposes this arm.
+			includePwd = true
+		} else {
+			includePwd = inc
+		}
+	}
+	return buildDbUserPreview(database, name, roles, isCreate, includePwd)
 }
 
 // dbRoleCommandPreview extracts fields from ResourceDiff and delegates.

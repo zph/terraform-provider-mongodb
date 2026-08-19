@@ -107,3 +107,42 @@ since it is a client-side-only value.
 
 DANGER-020: The `noforceenew` linter SHALL be integrated into the pre-commit
 hook pipeline and `make lint` target.
+
+## db_user Import and Password Safety
+
+DANGER-021: WHEN `mongodb_db_user` Update runs, the `updateUser` command SHALL
+include the `pwd` field only if the planned `password` value has changed. An
+update caused by any other attribute change SHALL NOT modify the user's
+password.
+
+> Rationale: the planned password equals the prior state value whenever
+> `lifecycle.ignore_changes = [password]` pins it (import-created state holds
+> an empty password), and the configuration value otherwise. Before this
+> requirement every update sent the planned password verbatim — for pinned
+> imported users that meant `pwd: ""`, which fails the apply or resets the
+> live credential.
+
+DANGER-022: WHEN `resourceDatabaseUserRead` runs, it SHALL set the `name`
+attribute in state from the resource ID, so that a resource created by
+`terraform import` has complete state and a matching configuration plans no
+changes apart from attributes the configuration intentionally ignores.
+
+DANGER-023: The `password` attribute SHALL reject empty values at validation
+time, AND WHEN Update detects a password change to an empty value it SHALL
+return an error rather than silently omitting `pwd`.
+
+> Rationale: silently skipping an empty planned password would record a
+> rotation in state that never happened on the server.
+
+DANGER-024: WHEN Read finds the user absent from MongoDB during refresh, it
+SHALL log a warning, remove the resource from state, and return no error, so
+an out-of-band `dropUser` does not wedge refresh; the following plan proposes
+recreation. WHEN the user is absent during import, the import SHALL fail
+cleanly (Terraform reports a non-existent remote object; there is no state to
+remove). WHEN the miss occurs during the create read-back (`IsNewResource`),
+Read SHALL return an error so the apply fails loudly instead of orphaning the
+just-created user.
+
+DANGER-025: `mongodb_db_role` Read SHALL apply the same vanished-entity
+behavior as DANGER-024 to roles, so composite user+role stacks recover from
+out-of-band drops without manual state surgery.

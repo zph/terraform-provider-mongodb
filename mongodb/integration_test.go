@@ -16,6 +16,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	texec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -205,6 +208,38 @@ func newTestConfig() *MongoDatabaseConfiguration {
 			RetryWrites: false,
 		},
 		MaxConnLifetime: 10,
+	}
+}
+
+// cleanupUser drops a test user at test end so repeat runs start clean.
+func cleanupUser(t *testing.T, client *mongo.Client, name string) {
+	t.Cleanup(func() { dropUserSafe(client, name, testAdminDB) })
+}
+
+// assertUserAuthenticates fails the test if username/password cannot log in.
+func assertUserAuthenticates(t *testing.T, username, password string) {
+	t.Helper()
+	conf := newTestConfig()
+	conf.Config.Username = username
+	conf.Config.Password = password
+	probe, err := MongoClientInit(context.Background(), conf)
+	if err != nil {
+		t.Errorf("user %s failed to authenticate: %v", username, err)
+		return
+	}
+	_ = probe.Disconnect(context.Background())
+}
+
+// assertUserCannotAuthenticate fails the test if username/password still logs in.
+func assertUserCannotAuthenticate(t *testing.T, username, password string) {
+	t.Helper()
+	conf := newTestConfig()
+	conf.Config.Username = username
+	conf.Config.Password = password
+	probe, err := MongoClientInit(context.Background(), conf)
+	if err == nil {
+		_ = probe.Disconnect(context.Background())
+		t.Errorf("user %s still authenticates with the old password", username)
 	}
 }
 
@@ -818,6 +853,192 @@ func TestIntegration_SetOplogConfig_RoundTrip(t *testing.T) {
 	}
 	if readBack.SizeMB != targetSize {
 		t.Errorf("round-trip mismatch: set %v, got %v", targetSize, readBack.SizeMB)
+	}
+}
+
+// DANGER-021: a role-only update must not change the user's password
+func TestIntegration_UpdateUser_RoleOnlyPreservesPassword(t *testing.T) {
+	client := newTestClient(t)
+
+	user := DbUser{Name: "integpwdkeep", Password: "orig-password"}
+	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	cleanupUser(t, client, "integpwdkeep")
+
+	// Simulate an update where the planned password did not change: empty
+	// password, includePassword=false — what Update computes when
+	// HasChange("password") is false (for example imported users with
+	// lifecycle ignore_changes = [password]).
+	err := updateUser(client, "integpwdkeep", "", []Role{{Role: "readWrite", Db: "testdb"}}, testAdminDB, false)
+	if err != nil {
+		t.Fatalf("role-only updateUser failed: %v", err)
+	}
+
+	result, err := getUser(client, "integpwdkeep", testAdminDB)
+	if err != nil {
+		t.Fatalf("getUser failed: %v", err)
+	}
+	if len(result.Users) != 1 || len(result.Users[0].Roles) != 1 || result.Users[0].Roles[0].Role != "readWrite" {
+		t.Fatalf("expected role updated to readWrite, got %+v", result.Users)
+	}
+
+	// The original password must still authenticate.
+	assertUserAuthenticates(t, "integpwdkeep", "orig-password")
+}
+
+// DANGER-022: Read must populate name for import-created state
+func TestIntegration_Read_SetsNameForImportedState(t *testing.T) {
+	client := newTestClient(t)
+
+	user := DbUser{Name: "integimportname", Password: "pass123"}
+	if err := createUser(client, user, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	cleanupUser(t, client, "integimportname")
+
+	// Simulate ImportStatePassthroughContext: state holds only the ID.
+	data := resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integimportname"),
+	})
+
+	diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig())
+	if diags.HasError() {
+		t.Fatalf("Read returned error: %+v", diags)
+	}
+	if got := data.Get("name").(string); got != "integimportname" {
+		t.Errorf("expected name %q in state after Read, got %q", "integimportname", got)
+	}
+	if got := data.Get("auth_database").(string); got != testAdminDB {
+		t.Errorf("expected auth_database %q, got %q", testAdminDB, got)
+	}
+}
+
+// DANGER-021: Update computes includePassword=false when the planned
+// password is unchanged, and the live credential survives the update.
+// The ResourceData is rebuilt from serialized prior state because
+// TestResourceDataRaw alone diffs against nil state, which would register
+// every attribute as changed and exercise the wrong branch.
+func TestIntegration_Update_UnchangedPasswordNotSent(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createUser(client, DbUser{Name: "integnochg", Password: "keep-me"}, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	cleanupUser(t, client, "integnochg")
+
+	seed := schema.TestResourceDataRaw(t, resourceDatabaseUser().Schema, map[string]interface{}{
+		"name":          "integnochg",
+		"auth_database": testAdminDB,
+		"password":      "keep-me",
+		"role":          []interface{}{map[string]interface{}{"role": "readWrite", "db": "testdb"}},
+	})
+	seed.SetId(formatResourceId(testAdminDB, "integnochg"))
+
+	data := resourceDatabaseUser().Data(seed.State())
+	if data.HasChange("password") {
+		t.Fatal("precondition failed: password must register as unchanged")
+	}
+
+	if diags := resourceDatabaseUserUpdate(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("Update returned error: %+v", diags)
+	}
+	assertUserAuthenticates(t, "integnochg", "keep-me")
+}
+
+// DANGER-024: Read clears a vanished user from state on refresh, but fails
+// loudly during the create read-back
+func TestIntegration_Read_VanishedUser(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createUser(client, DbUser{Name: "integvanish", Password: "pass123"}, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	dropUserSafe(client, "integvanish", testAdminDB)
+
+	// Refresh path: the vanished user clears from state without error.
+	data := resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanish"),
+	})
+	if diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("refresh Read must not error on a vanished user: %+v", diags)
+	}
+	if data.Id() != "" {
+		t.Errorf("expected empty ID after refresh of vanished user, got %q", data.Id())
+	}
+
+	// Create read-back path: the same miss is an inconsistency and must error.
+	data = resourceDatabaseUser().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanish"),
+	})
+	data.MarkNewResource()
+	if diags := resourceDatabaseUserRead(context.Background(), data, newTestConfig()); !diags.HasError() {
+		t.Error("create read-back Read must error when the user is missing")
+	}
+}
+
+// DANGER-021: a genuine password change is sent and takes effect — the old
+// credential stops working. The diff is hand-built so HasChange is honestly
+// true against real prior state.
+func TestIntegration_Update_RotationTakesEffect(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createUser(client, DbUser{Name: "integrotate", Password: "old-pass"}, []Role{{Role: "read", Db: "testdb"}}, testAdminDB); err != nil {
+		t.Fatalf("createUser failed: %v", err)
+	}
+	cleanupUser(t, client, "integrotate")
+
+	seed := schema.TestResourceDataRaw(t, resourceDatabaseUser().Schema, map[string]interface{}{
+		"name":          "integrotate",
+		"auth_database": testAdminDB,
+		"password":      "old-pass",
+		"role":          []interface{}{map[string]interface{}{"role": "read", "db": "testdb"}},
+	})
+	seed.SetId(formatResourceId(testAdminDB, "integrotate"))
+
+	diff := &terraform.InstanceDiff{Attributes: map[string]*terraform.ResourceAttrDiff{
+		"password": {Old: "old-pass", New: "new-pass"},
+	}}
+	data, err := schema.InternalMap(resourceDatabaseUser().Schema).Data(seed.State(), diff)
+	if err != nil {
+		t.Fatalf("building ResourceData with diff: %v", err)
+	}
+	if !data.HasChange("password") {
+		t.Fatal("precondition failed: password must register as changed")
+	}
+
+	if diags := resourceDatabaseUserUpdate(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("Update returned error: %+v", diags)
+	}
+	assertUserAuthenticates(t, "integrotate", "new-pass")
+	assertUserCannotAuthenticate(t, "integrotate", "old-pass")
+}
+
+// DANGER-025: db_role Read mirrors the vanished-entity behavior of db_user
+func TestIntegration_Read_VanishedRole(t *testing.T) {
+	client := newTestClient(t)
+
+	if err := createRole(client, "integvanishrole", []Role{{Role: "read", Db: "testdb"}}, nil, testAdminDB); err != nil {
+		t.Fatalf("createRole failed: %v", err)
+	}
+	dropRoleSafe(client, "integvanishrole", testAdminDB)
+
+	data := resourceDatabaseRole().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanishrole"),
+	})
+	if diags := resourceDatabaseRoleRead(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("refresh Read must not error on a vanished role: %+v", diags)
+	}
+	if data.Id() != "" {
+		t.Errorf("expected empty ID after refresh of vanished role, got %q", data.Id())
+	}
+
+	data = resourceDatabaseRole().Data(&terraform.InstanceState{
+		ID: formatResourceId(testAdminDB, "integvanishrole"),
+	})
+	data.MarkNewResource()
+	if diags := resourceDatabaseRoleRead(context.Background(), data, newTestConfig()); !diags.HasError() {
+		t.Error("create read-back Read must error when the role is missing")
 	}
 }
 
