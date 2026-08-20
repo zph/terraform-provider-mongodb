@@ -57,7 +57,7 @@ provider "mongodb" {
 * `auth_database` - (Optional) Authentication database. Default: `"admin"`.
 * `ssl` - (Optional) Enable TLS/SSL. Default: `false`.
 * `certificate` - (Optional) PEM-encoded CA certificate content for TLS. Can be sourced from `MONGODB_CERT`.
-* `insecure_skip_verify` - (Optional) Skip TLS certificate hostname verification. Default: `false`.
+* `insecure_skip_verify` - (Optional) Skip TLS certificate verification (chain and hostname). Only meaningful when TLS is enabled via `ssl = true` or `certificate`. Default: `false`.
 * `replica_set` - (Optional) Replica set name. When set, the driver uses discovery mode.
 * `direct` - (Optional) Force a direct connection (bypass replica set discovery). Default: `false`.
 * `retrywrites` - (Optional) Enable retryable writes. Default: `true`.

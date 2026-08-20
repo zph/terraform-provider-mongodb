@@ -321,6 +321,70 @@ func TestMongoClientOptions_DirectMode(t *testing.T) {
 	}
 }
 
+// TEST-067: ssl=true + insecure_skip_verify=true without a certificate applies
+// a TLS config that skips verification. Regression test: the flag was
+// previously honored only when a custom CA certificate was also provided, so
+// the driver's default TLS config verified (and rejected) certificates the
+// user had opted out of verifying, e.g. legacy CN-only certificates.
+func TestMongoClientOptions_InsecureSkipVerifyWithoutCertificate(t *testing.T) {
+	c := &ClientConfig{
+		Host:               "myhost",
+		Port:               "27017",
+		Ssl:                true,
+		InsecureSkipVerify: true,
+	}
+	opts, err := c.mongoClientOptions(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.TLSConfig == nil {
+		t.Fatal("expected TLS config to be set")
+	}
+	if !opts.TLSConfig.InsecureSkipVerify {
+		t.Error("expected InsecureSkipVerify=true on client TLS config")
+	}
+}
+
+// TEST-068: insecure_skip_verify without ssl or certificate does not enable TLS
+func TestMongoClientOptions_InsecureSkipVerifyWithoutSsl(t *testing.T) {
+	c := &ClientConfig{
+		Host:               "myhost",
+		Port:               "27017",
+		InsecureSkipVerify: true,
+	}
+	opts, err := c.mongoClientOptions(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.TLSConfig != nil {
+		t.Error("expected no TLS config when ssl=false and no certificate is set")
+	}
+}
+
+// TEST-069: certificate + insecure_skip_verify sets both RootCAs and the skip flag
+func TestMongoClientOptions_CertificateWithInsecureSkipVerify(t *testing.T) {
+	c := &ClientConfig{
+		Host:               "myhost",
+		Port:               "27017",
+		Ssl:                true,
+		InsecureSkipVerify: true,
+		Certificate:        string(generateTestPEM(t)),
+	}
+	opts, err := c.mongoClientOptions(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.TLSConfig == nil {
+		t.Fatal("expected TLS config to be set")
+	}
+	if !opts.TLSConfig.InsecureSkipVerify {
+		t.Error("expected InsecureSkipVerify=true on client TLS config")
+	}
+	if opts.TLSConfig.RootCAs == nil {
+		t.Error("expected RootCAs to be populated from certificate")
+	}
+}
+
 // TEST-043: MongoClientNoAuth returns client without auth credentials
 func TestMongoClientNoAuth_NoError(t *testing.T) {
 	c := &ClientConfig{

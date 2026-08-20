@@ -63,7 +63,7 @@ func Provider() *schema.Provider {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     false,
-				Description: "ignore hostname verification",
+				Description: "skip TLS certificate verification (chain and hostname)",
 			},
 			"ssl": {
 				Type:        schema.TypeBool,
