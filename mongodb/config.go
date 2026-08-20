@@ -165,12 +165,16 @@ func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientO
 	opts := options.Client().ApplyURI(uri).SetDialer(dialer).SetMonitor(commandMonitor(ctx))
 
 	if c.Certificate != "" {
-		verify := c.InsecureSkipVerify
-		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), verify)
+		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), c.InsecureSkipVerify)
 		if err != nil {
 			return nil, err
 		}
 		opts.SetTLSConfig(tlsConfig)
+	} else if c.Ssl && c.InsecureSkipVerify {
+		// Without a custom CA the driver would otherwise use its default TLS
+		// config, which verifies certificates — silently ignoring
+		// insecure_skip_verify (e.g. failing on legacy CN-only certificates).
+		opts.SetTLSConfig(&tls.Config{InsecureSkipVerify: true})
 	}
 
 	return opts, nil
