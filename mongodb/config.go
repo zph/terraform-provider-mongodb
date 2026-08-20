@@ -164,6 +164,13 @@ func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientO
 
 	opts := options.Client().ApplyURI(uri).SetDialer(dialer).SetMonitor(commandMonitor(ctx))
 
+	if c.InsecureSkipVerify && (c.Certificate != "" || c.Ssl) {
+		tflog.Warn(ctx, "TLS certificate verification disabled (insecure_skip_verify=true)",
+			map[string]interface{}{
+				"host": c.Host,
+			})
+	}
+
 	if c.Certificate != "" {
 		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), c.InsecureSkipVerify)
 		if err != nil {

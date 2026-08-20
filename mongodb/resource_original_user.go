@@ -106,9 +106,10 @@ func resourceOriginalUser() *schema.Resource {
 				Sensitive: true,
 			},
 			"insecure_skip_verify": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Default:  false,
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "skip TLS certificate verification (chain and hostname)",
 			},
 		},
 	}
