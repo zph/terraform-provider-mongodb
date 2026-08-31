@@ -26,8 +26,8 @@ the Update method SHALL NOT execute `replSetResizeOplog`.
 
 **OPLOG-005** (Event Driven): WHEN the Read method runs and `oplog_size_mb`
 exists in Terraform state, it SHALL read the current oplog size via `collStats`
-on `local.oplog.rs` and convert the `maxSize` field from bytes to megabytes by
-dividing by 1048576.
+on `local.oplog.rs` on every data-bearing member and convert the `maxSize`
+field from bytes to megabytes by dividing by 1048576.
 
 ## Initialization
 
@@ -43,3 +43,31 @@ error message.
 
 **OPLOG-008** (Unwanted Behaviour): IF `collStats` on `local.oplog.rs` returns
 an error during Read, THEN the resource SHALL return a diagnostic error.
+
+## Member Fan-Out
+
+The oplog is not part of the replica set's shared configuration document:
+`local.oplog.rs` is a capped collection each member owns independently, and
+`replSetResizeOplog` only resizes the member it is issued against. A resize
+must therefore reach every member individually.
+
+**OPLOG-009** (Ubiquitous): WHEN `oplog_size_mb` is configured, the resize
+SHALL be applied to every data-bearing member of the replica set via a direct
+connection to each member, not only the member the provider is connected to.
+
+**OPLOG-010** (Ubiquitous): The resize SHALL be applied to secondaries first
+and the primary last, matching the documented procedure for changing the
+oplog size of a replica set. IF no primary is identifiable, THEN members
+SHALL be resized in configuration order.
+
+**OPLOG-011** (Ubiquitous): Arbiter members SHALL be excluded from both the
+resize and the read-back, as arbiters carry no oplog.
+
+**OPLOG-012** (Unwanted Behaviour): IF the resize fails on any member, THEN
+the resource SHALL return a diagnostic error identifying that member's host.
+Members already resized keep their new size; `replSetResizeOplog` is
+idempotent, so a subsequent apply converges the remaining members.
+
+**OPLOG-013** (Event Driven): WHEN reading the oplog size back into state,
+the resource SHALL store the minimum size across all data-bearing members,
+so that any undersized member surfaces as a diff in the next plan.

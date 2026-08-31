@@ -39,10 +39,10 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	switch {
 	case err == nil:
 		// INIT-002: Already configured, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client)
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
 	case IsAlreadyInitialized(err):
 		// INIT-015: Already initialized, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client)
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
 	case IsNotYetInitialized(err):
 		// INIT-001: Enter initialization flow
 		return r.initializeReplicaSet(ctx, data, i, client)
@@ -91,9 +91,9 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 			// initClient if auth fails.
 			if authClient, authCleanup, authErr := r.getShardClient(ctx, data, i); authErr == nil {
 				defer authCleanup()
-				return r.updateWithClient(ctx, data, authClient)
+				return r.updateWithClient(ctx, data, authClient, providerConf)
 			}
-			return r.updateWithClient(ctx, data, initClient)
+			return r.updateWithClient(ctx, data, initClient, providerConf)
 		}
 		return diag.FromErr(err)
 	}
@@ -167,12 +167,12 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 	}
 
 	// OPLOG-006: Apply oplog settings after RS is initialized and stable
-	if err := applyOplogConfig(ctx, initClient, data); err != nil {
+	if err := applyOplogConfig(ctx, initClient, data, finalConfig.Members, providerConf); err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog config
-	if err := readOplogConfig(ctx, initClient, data); err != nil {
+	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -409,26 +409,70 @@ func oplogConfigured(data *schema.ResourceData) bool {
 }
 
 // applyOplogConfig applies oplog size via replSetResizeOplog if configured.
-// OPLOG-003, OPLOG-004, OPLOG-006
-func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
+// replSetResizeOplog only resizes the member it is issued against, so the
+// command is fanned out to every data-bearing member over a direct
+// connection, secondaries first and the primary last.
+// OPLOG-003, OPLOG-004, OPLOG-006, OPLOG-009, OPLOG-010, OPLOG-012
+func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration) error {
 	if !oplogConfigured(data) {
 		return nil
 	}
 	sizeMB := data.Get("oplog_size_mb").(float64)
-	return SetOplogConfig(ctx, client, sizeMB)
-}
 
-// readOplogConfig reads oplog size from MongoDB into Terraform state if configured.
-// OPLOG-005, OPLOG-008
-func readOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
-	if !oplogConfigured(data) {
-		return nil
-	}
-	cfg, err := GetOplogConfig(ctx, client)
+	status, err := GetReplSetStatus(ctx, client)
 	if err != nil {
 		return err
 	}
-	return data.Set("oplog_size_mb", cfg.SizeMB)
+	primaryHost := ""
+	if p := status.Primary(); p != nil {
+		primaryHost = p.Name
+	}
+
+	return ResizeOplogAcrossMembers(ctx, members, primaryHost, func(ctx context.Context, host string) error {
+		memberClient, cleanup, err := connectToMember(ctx, providerConf, host)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		return SetOplogConfig(ctx, memberClient, sizeMB)
+	})
+}
+
+// readOplogConfig reads the oplog size of every data-bearing member and
+// stores the minimum into Terraform state, so a member with a smaller oplog
+// surfaces as drift in the next plan.
+// OPLOG-005, OPLOG-008, OPLOG-011, OPLOG-013
+func readOplogConfig(ctx context.Context, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration) error {
+	if !oplogConfigured(data) {
+		return nil
+	}
+	minSize, err := MinOplogSizeAcrossMembers(ctx, members, func(ctx context.Context, host string) (float64, error) {
+		memberClient, cleanup, err := connectToMember(ctx, providerConf, host)
+		if err != nil {
+			return 0, err
+		}
+		defer cleanup()
+		cfg, err := GetOplogConfig(ctx, memberClient)
+		if err != nil {
+			return 0, err
+		}
+		return cfg.SizeMB, nil
+	})
+	if err != nil {
+		return err
+	}
+	return data.Set("oplog_size_mb", minSize)
+}
+
+// connectToMember opens a direct connection to a single replica set member
+// for node-local commands, inheriting the provider's credentials, TLS, and
+// proxy settings (with no-auth fallback for fresh instances).
+func connectToMember(ctx context.Context, providerConf *MongoDatabaseConfiguration, hostPort string) (*mongo.Client, func(), error) {
+	host, port, err := SplitHostPort(hostPort)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("invalid member host %q: %w", hostPort, err)
+	}
+	return ConnectForInit(ctx, providerConf.Config, host, port, providerConf.MaxConnLifetime)
 }
 
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
@@ -437,14 +481,14 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 		return errD
 	}
 	defer cleanup()
-	return r.updateWithClient(ctx, data, client)
+	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
 }
 
 // updateWithClient performs the Update logic using a pre-established client.
 // This allows both Update (which creates its own authenticated connection) and
 // initializeReplicaSet (which may only have a no-auth connection) to share
 // the same reconfig logic. // INIT-030
-func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client) diag.Diagnostics {
+func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration) diag.Diagnostics {
 	var m ShardModel
 
 	m.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
@@ -508,7 +552,7 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	}
 
 	// OPLOG-003: Apply oplog configuration after replSetReconfig
-	if err := applyOplogConfig(ctx, client, data); err != nil {
+	if err := applyOplogConfig(ctx, client, data, config.Members, providerConf); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -541,7 +585,7 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	}
 
 	// OPLOG-005: Read back oplog state for drift detection
-	if err := readOplogConfig(ctx, client, data); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, providerConf); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -594,7 +638,7 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	}
 
 	// OPLOG-005: Read back oplog config for drift detection
-	if err := readOplogConfig(ctx, client, data); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, i.(*MongoDatabaseConfiguration)); err != nil {
 		return diag.FromErr(err)
 	}
 

@@ -1,7 +1,10 @@
 package mongodb
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -407,5 +410,136 @@ func TestShardConfigSchema_CatchUpTimeoutMillis(t *testing.T) {
 func TestBytesPerMB(t *testing.T) {
 	if BytesPerMB != 1048576 {
 		t.Errorf("BytesPerMB should be 1048576, got %d", BytesPerMB)
+	}
+}
+
+// --- Oplog member fan-out tests ---
+
+// OPLOG-T03: OPLOG-009/010 — resize reaches every data-bearing member,
+// secondaries first and the primary last. Regression: previously only the
+// single member the provider was connected to was resized.
+func TestResizeOplogAcrossMembers_AllMembersPrimaryLast(t *testing.T) {
+	rs := threeNodeRS()
+	var resized []string
+	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) error {
+		resized = append(resized, host)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"mongo2:27017", "mongo3:27017", "mongo1:27017"}
+	if len(resized) != len(want) {
+		t.Fatalf("expected %d members resized, got %d: %v", len(want), len(resized), resized)
+	}
+	for i := range want {
+		if resized[i] != want[i] {
+			t.Errorf("resize order[%d]: want %s, got %s", i, want[i], resized[i])
+		}
+	}
+}
+
+// OPLOG-T04: OPLOG-011 — arbiters carry no oplog and are skipped
+func TestOplogMemberHosts_SkipsArbiters(t *testing.T) {
+	rs := threeNodeRS()
+	rs[2].ArbiterOnly = boolPtr(true)
+	hosts := OplogMemberHosts(rs, "mongo1:27017")
+	want := []string{"mongo2:27017", "mongo1:27017"}
+	if len(hosts) != len(want) {
+		t.Fatalf("expected %d hosts, got %d: %v", len(want), len(hosts), hosts)
+	}
+	for i := range want {
+		if hosts[i] != want[i] {
+			t.Errorf("hosts[%d]: want %s, got %s", i, want[i], hosts[i])
+		}
+	}
+}
+
+// OPLOG-T05: OPLOG-010 — unknown or empty primary host keeps config order
+func TestOplogMemberHosts_UnknownPrimary(t *testing.T) {
+	rs := threeNodeRS()
+	for _, primaryHost := range []string{"", "other:27017"} {
+		hosts := OplogMemberHosts(rs, primaryHost)
+		want := []string{"mongo1:27017", "mongo2:27017", "mongo3:27017"}
+		if len(hosts) != len(want) {
+			t.Fatalf("primary %q: expected %d hosts, got %v", primaryHost, len(want), hosts)
+		}
+		for i := range want {
+			if hosts[i] != want[i] {
+				t.Errorf("primary %q: hosts[%d]: want %s, got %s", primaryHost, i, want[i], hosts[i])
+			}
+		}
+	}
+}
+
+// OPLOG-T06: OPLOG-012 — a failing member stops the fan-out with an error
+// naming that member
+func TestResizeOplogAcrossMembers_ErrorNamesMember(t *testing.T) {
+	rs := threeNodeRS()
+	var resized []string
+	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) error {
+		if host == "mongo3:27017" {
+			return fmt.Errorf("connection refused")
+		}
+		resized = append(resized, host)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mongo3:27017") {
+		t.Errorf("error should name the failing member, got: %v", err)
+	}
+	if len(resized) != 1 || resized[0] != "mongo2:27017" {
+		t.Errorf("expected only mongo2 resized before the failure, got %v", resized)
+	}
+}
+
+// OPLOG-T07: OPLOG-013 — read reports the minimum size across members
+func TestMinOplogSizeAcrossMembers_ReturnsMinimum(t *testing.T) {
+	rs := threeNodeRS()
+	sizes := map[string]float64{
+		"mongo1:27017": 51200,
+		"mongo2:27017": 990,
+		"mongo3:27017": 51200,
+	}
+	minSize, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		return sizes[host], nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if minSize != 990 {
+		t.Errorf("expected minimum 990, got %v", minSize)
+	}
+}
+
+// OPLOG-T08: OPLOG-008 — a member read failure propagates naming the member
+func TestMinOplogSizeAcrossMembers_ErrorNamesMember(t *testing.T) {
+	rs := threeNodeRS()
+	_, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		if host == "mongo2:27017" {
+			return 0, fmt.Errorf("connection refused")
+		}
+		return 1024, nil
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mongo2:27017") {
+		t.Errorf("error should name the failing member, got: %v", err)
+	}
+}
+
+// OPLOG-T09: A replica set with no data-bearing members is an error
+func TestMinOplogSizeAcrossMembers_NoDataBearingMembers(t *testing.T) {
+	rs := ConfigMembers{
+		{ID: 0, Host: "arbiter:27017", ArbiterOnly: boolPtr(true)},
+	}
+	_, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, _ string) (float64, error) {
+		return 1024, nil
+	})
+	if err == nil {
+		t.Fatal("expected error for arbiter-only membership, got nil")
 	}
 }
