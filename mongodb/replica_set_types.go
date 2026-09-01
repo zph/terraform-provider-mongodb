@@ -407,34 +407,63 @@ func OplogMemberHosts(members ConfigMembers, primaryHost string) []string {
 // the member it runs on, so each member must be resized individually.
 // OPLOG-009, OPLOG-010, OPLOG-012
 func ResizeOplogAcrossMembers(ctx context.Context, members ConfigMembers, primaryHost string, resize func(ctx context.Context, host string) error) error {
-	for _, host := range OplogMemberHosts(members, primaryHost) {
+	hosts := OplogMemberHosts(members, primaryHost)
+	if len(hosts) == 0 {
+		return errors.New("replica set has no data-bearing members")
+	}
+	for _, host := range hosts {
 		if err := resize(ctx, host); err != nil {
-			return errors.Wrapf(err, "replSetResizeOplog on member %s", host)
+			return errors.Wrapf(err, "resizing oplog on member %s", host)
 		}
 	}
 	return nil
 }
 
-// MinOplogSizeAcrossMembers reads the oplog size of every data-bearing
-// member and returns the smallest, so any undersized member surfaces as
-// drift rather than being masked by the largest.
-// OPLOG-013
-func MinOplogSizeAcrossMembers(ctx context.Context, members ConfigMembers, read func(ctx context.Context, host string) (float64, error)) (float64, error) {
+// OplogSizeMismatch is stored in state when data-bearing members report
+// different oplog sizes, so that both undersized and oversized members (e.g.
+// the residue of a partially failed shrink) surface as a diff in the next
+// plan. It is never a valid configured size (the schema rejects values <= 0).
+const OplogSizeMismatch = -1.0
+
+// OplogSizeAcrossMembers reads the oplog size of every data-bearing member
+// and returns the common size when all readable members agree, or
+// OplogSizeMismatch when they disagree. Members that cannot be read are
+// skipped via onSkip so a single down member does not fail refresh; an error
+// is returned only when no member could be read. A non-positive reported
+// size is treated as a read failure so 0 can never reach state, where GetOk
+// would treat it as unset and silently disable oplog management.
+// OPLOG-008, OPLOG-013
+func OplogSizeAcrossMembers(ctx context.Context, members ConfigMembers, read func(ctx context.Context, host string) (float64, error), onSkip func(host string, err error)) (float64, error) {
 	hosts := OplogMemberHosts(members, "")
 	if len(hosts) == 0 {
 		return 0, errors.New("replica set has no data-bearing members")
 	}
-	minSize := 0.0
-	for i, host := range hosts {
-		size, err := read(ctx, host)
-		if err != nil {
-			return 0, errors.Wrapf(err, "reading oplog size on member %s", host)
+	size := 0.0
+	readCount := 0
+	var lastErr error
+	for _, host := range hosts {
+		s, err := read(ctx, host)
+		if err == nil && s <= 0 {
+			err = errors.Errorf("member reported non-positive oplog size %v", s)
 		}
-		if i == 0 || size < minSize {
-			minSize = size
+		if err != nil {
+			lastErr = errors.Wrapf(err, "reading oplog size on member %s", host)
+			if onSkip != nil {
+				onSkip(host, err)
+			}
+			continue
+		}
+		readCount++
+		if readCount == 1 {
+			size = s
+		} else if s != size {
+			size = OplogSizeMismatch
 		}
 	}
-	return minSize, nil
+	if readCount == 0 {
+		return 0, lastErr
+	}
+	return size, nil
 }
 
 // SetOplogConfig applies oplog size via replSetResizeOplog.

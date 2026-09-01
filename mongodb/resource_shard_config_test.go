@@ -495,51 +495,165 @@ func TestResizeOplogAcrossMembers_ErrorNamesMember(t *testing.T) {
 	}
 }
 
-// OPLOG-T07: OPLOG-013 — read reports the minimum size across members
-func TestMinOplogSizeAcrossMembers_ReturnsMinimum(t *testing.T) {
+// OPLOG-T07: OPLOG-013 — read reports the common size when members agree and
+// OplogSizeMismatch when they disagree, so oversized members (e.g. after a
+// partially failed shrink) surface as drift too
+func TestOplogSizeAcrossMembers_MismatchSurfaces(t *testing.T) {
 	rs := threeNodeRS()
-	sizes := map[string]float64{
+	agreeing := map[string]float64{
 		"mongo1:27017": 51200,
-		"mongo2:27017": 990,
+		"mongo2:27017": 51200,
 		"mongo3:27017": 51200,
 	}
-	minSize, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
-		return sizes[host], nil
-	})
+	size, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		return agreeing[host], nil
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if minSize != 990 {
-		t.Errorf("expected minimum 990, got %v", minSize)
+	if size != 51200 {
+		t.Errorf("expected common size 51200, got %v", size)
+	}
+
+	// A failed shrink leaves some members large: min() would report 2048 and
+	// mask them; the mismatch marker must be stored instead.
+	diverged := map[string]float64{
+		"mongo1:27017": 51200,
+		"mongo2:27017": 2048,
+		"mongo3:27017": 51200,
+	}
+	size, err = OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		return diverged[host], nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if size != OplogSizeMismatch {
+		t.Errorf("expected OplogSizeMismatch (%v), got %v", OplogSizeMismatch, size)
 	}
 }
 
-// OPLOG-T08: OPLOG-008 — a member read failure propagates naming the member
-func TestMinOplogSizeAcrossMembers_ErrorNamesMember(t *testing.T) {
+// OPLOG-T08: OPLOG-008 — an unreadable member is skipped (reported via
+// onSkip) rather than failing the read; the size comes from the rest
+func TestOplogSizeAcrossMembers_SkipsUnreadableMember(t *testing.T) {
 	rs := threeNodeRS()
-	_, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+	var skipped []string
+	size, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
 		if host == "mongo2:27017" {
 			return 0, fmt.Errorf("connection refused")
 		}
 		return 1024, nil
+	}, func(host string, _ error) {
+		skipped = append(skipped, host)
 	})
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "mongo2:27017") {
-		t.Errorf("error should name the failing member, got: %v", err)
+	if size != 1024 {
+		t.Errorf("expected size 1024 from remaining members, got %v", size)
+	}
+	if len(skipped) != 1 || skipped[0] != "mongo2:27017" {
+		t.Errorf("expected mongo2 skipped, got %v", skipped)
 	}
 }
 
-// OPLOG-T09: A replica set with no data-bearing members is an error
-func TestMinOplogSizeAcrossMembers_NoDataBearingMembers(t *testing.T) {
+// OPLOG-T09: A replica set with no data-bearing members is an error for both
+// the read and the resize fan-out (previously the resize silently no-opped)
+func TestOplogFanOut_NoDataBearingMembers(t *testing.T) {
 	rs := ConfigMembers{
 		{ID: 0, Host: "arbiter:27017", ArbiterOnly: boolPtr(true)},
 	}
-	_, err := MinOplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, _ string) (float64, error) {
+	_, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, _ string) (float64, error) {
 		return 1024, nil
+	}, nil)
+	if err == nil {
+		t.Fatal("expected read error for arbiter-only membership, got nil")
+	}
+	err = ResizeOplogAcrossMembers(context.Background(), rs, "", func(_ context.Context, _ string) error {
+		return nil
 	})
 	if err == nil {
-		t.Fatal("expected error for arbiter-only membership, got nil")
+		t.Fatal("expected resize error for arbiter-only membership, got nil")
+	}
+}
+
+// OPLOG-T10: OPLOG-008 — when no member can be read, the error propagates
+// and names a member
+func TestOplogSizeAcrossMembers_AllUnreadable(t *testing.T) {
+	rs := threeNodeRS()
+	_, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		return 0, fmt.Errorf("connection refused")
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error when no member is readable, got nil")
+	}
+	if !strings.Contains(err.Error(), ":27017") {
+		t.Errorf("error should name a member, got: %v", err)
+	}
+}
+
+// OPLOG-T11: a member reporting a non-positive size is treated as unreadable
+// so 0 can never reach state, where GetOk would treat oplog_size_mb as unset
+// and silently disable oplog management
+func TestOplogSizeAcrossMembers_ZeroSizeTreatedAsError(t *testing.T) {
+	rs := threeNodeRS()
+	sizes := map[string]float64{
+		"mongo1:27017": 1024,
+		"mongo2:27017": 0,
+		"mongo3:27017": 1024,
+	}
+	size, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, host string) (float64, error) {
+		return sizes[host], nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if size != 1024 {
+		t.Errorf("expected 1024 with the zero-reporting member skipped, got %v", size)
+	}
+}
+
+// OPLOG-T12: OPLOG-011/010 — an arbiter positioned before the primary keeps
+// the skip and primary-last ordering consistent
+func TestOplogMemberHosts_ArbiterBeforePrimary(t *testing.T) {
+	rs := threeNodeRS()
+	rs[0].ArbiterOnly = boolPtr(true)
+	hosts := OplogMemberHosts(rs, "mongo3:27017")
+	want := []string{"mongo2:27017", "mongo3:27017"}
+	if len(hosts) != len(want) {
+		t.Fatalf("expected %d hosts, got %d: %v", len(want), len(hosts), hosts)
+	}
+	for i := range want {
+		if hosts[i] != want[i] {
+			t.Errorf("hosts[%d]: want %s, got %s", i, want[i], hosts[i])
+		}
+	}
+}
+
+// OPLOG-T13: OPLOG-004/014 — applyOplogConfig touches no connection when
+// oplog_size_mb is unset or unchanged (nil client/providerConf would panic
+// if the gates were broken)
+func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
+	unset := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name": "shard01",
+	})
+	if err := applyOplogConfig(context.Background(), nil, unset, threeNodeRS(), nil, false); err != nil {
+		t.Fatalf("unexpected error with oplog_size_mb unset: %v", err)
+	}
+
+	// Rebuild from serialized prior state (TestResourceDataRaw alone diffs
+	// against nil state and would register the attribute as changed), so
+	// HasChange is false and the OPLOG-014 gate must skip the fan-out.
+	seed := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name":    "shard01",
+		"oplog_size_mb": 51200.0,
+	})
+	seed.SetId("shard01")
+	unchanged := resourceShardConfig().Data(seed.State())
+	if unchanged.HasChange("oplog_size_mb") {
+		t.Fatal("precondition failed: oplog_size_mb must register as unchanged")
+	}
+	if err := applyOplogConfig(context.Background(), nil, unchanged, threeNodeRS(), nil, false); err != nil {
+		t.Fatalf("unexpected error with oplog_size_mb unchanged: %v", err)
 	}
 }

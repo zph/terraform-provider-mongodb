@@ -41,8 +41,11 @@ field from bytes to megabytes by dividing by 1048576.
 THEN the resource SHALL return a diagnostic error including the command name and
 error message.
 
-**OPLOG-008** (Unwanted Behaviour): IF `collStats` on `local.oplog.rs` returns
-an error during Read, THEN the resource SHALL return a diagnostic error.
+**OPLOG-008** (Unwanted Behaviour): IF a data-bearing member cannot be read
+during Read, THEN it SHALL be skipped with a warning and the size computed
+from the remaining members. IF no member can be read, THEN the value already
+in state SHALL be kept (with a warning), so a down member does not block
+refresh of the resource.
 
 ## Member Fan-Out
 
@@ -69,5 +72,23 @@ Members already resized keep their new size; `replSetResizeOplog` is
 idempotent, so a subsequent apply converges the remaining members.
 
 **OPLOG-013** (Event Driven): WHEN reading the oplog size back into state,
-the resource SHALL store the minimum size across all data-bearing members,
-so that any undersized member surfaces as a diff in the next plan.
+the resource SHALL store the common size when all readable data-bearing
+members agree, and `-1` when they disagree, so that any divergent member
+(undersized or oversized, e.g. after a partially failed shrink) surfaces as
+a diff in the next plan. A non-positive reported size SHALL be treated as a
+read failure so `0` never reaches state, where it would read as unset.
+
+**OPLOG-014** (Event Driven): WHEN `oplog_size_mb` is set but unchanged and
+the resource is not being created, the Update method SHALL NOT execute the
+resize fan-out.
+
+**OPLOG-015** (Ubiquitous): The `oplog_size_mb` field SHALL conflict with
+`host_override` at plan time, because the per-member connections dial the
+member hostnames from the replica set configuration and cannot honor an
+override.
+
+**OPLOG-016** (Unwanted Behaviour): IF a member is not in PRIMARY or
+SECONDARY state when the resize runs, THEN that member SHALL be skipped with
+a warning; its size surfaces as drift on the next plan. IF `replSetGetStatus`
+fails or reports no primary, THEN the resize SHALL proceed in configuration
+order with a warning rather than fail.
