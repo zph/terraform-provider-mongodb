@@ -78,6 +78,8 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
+~> **NOTE:** `oplog_size_mb` conflicts with `host_override`. This is enforced at validation time, so a configuration that sets both fails `terraform plan` after upgrading — remove one of the two (keep `host_override` and manage the oplog size outside Terraform, or drop `host_override` if the member hostnames are reachable). The per-member `replSetResizeOplog` and read-back connections use the member hostnames from the replica set configuration, which must be reachable from the Terraform runner — and, when TLS is enabled, the server certificates must be valid for those member hostnames. The resize applies to **every** data-bearing member, including members not listed in `member` blocks. Members that are not PRIMARY or SECONDARY are skipped during the resize, and unreachable members are skipped during the read-back (with a warning), so they surface as drift on a later plan instead of failing the run. If *every* member is skipped, the apply fails rather than reporting success for a resize that changed nothing; and if a resize ran but no member could be read back, `-1` is stored so the next plan re-applies it.
+
 ## Argument Reference
 
 * `shard_name` - (Required) The name of the replica set (shard) to configure.
@@ -86,7 +88,7 @@ resource "mongodb_shard_config" "shard01" {
 * `heartbeat_timeout_secs` - (Optional) Number of seconds that the replica set members wait for a successful heartbeat before marking a member as unreachable. Default: `10`.
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
 * `catch_up_timeout_millis` - (Optional) Time in milliseconds that a newly elected primary waits for secondaries to catch up before accepting writes. `-1` means infinite (MongoDB default). Default: `-1`.
-* `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. Configures the oplog capped collection size via `replSetResizeOplog`. When not set, the oplog size is left at its current value (MongoDB default).
+* `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. The oplog is node-local storage, so the size is applied via `replSetResizeOplog` on **every data-bearing member** of the replica set over a direct connection to each member (secondaries first, primary last; arbiters are skipped). When reading state back, the common size across members is reported; if members disagree (for example after a partially failed resize), `-1` is stored so the divergence shows up as drift in the next plan. Requires the Terraform runner to be able to reach every member host listed in the replica set configuration. Conflicts with `host_override`. When not set, oplog sizes are left at their current values (MongoDB default).
 * `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election and majority health). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
 

@@ -39,10 +39,10 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	switch {
 	case err == nil:
 		// INIT-002: Already configured, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client)
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 	case IsAlreadyInitialized(err):
 		// INIT-015: Already initialized, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client)
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 	case IsNotYetInitialized(err):
 		// INIT-001: Enter initialization flow
 		return r.initializeReplicaSet(ctx, data, i, client)
@@ -91,9 +91,12 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 			// initClient if auth fails.
 			if authClient, authCleanup, authErr := r.getShardClient(ctx, data, i); authErr == nil {
 				defer authCleanup()
-				return r.updateWithClient(ctx, data, authClient)
+				return r.updateWithClient(ctx, data, authClient, providerConf, false)
 			}
-			return r.updateWithClient(ctx, data, initClient)
+			// initClient may be a no-auth connection (INIT-018): the replica
+			// set can exist before any users do, so the per-member oplog
+			// connections need the same fallback. OPLOG-017
+			return r.updateWithClient(ctx, data, initClient, providerConf, true)
 		}
 		return diag.FromErr(err)
 	}
@@ -166,13 +169,16 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(err)
 	}
 
-	// OPLOG-006: Apply oplog settings after RS is initialized and stable
-	if err := applyOplogConfig(ctx, initClient, data); err != nil {
+	// OPLOG-006: Apply oplog settings after RS is initialized and stable.
+	// The no-auth fallback is allowed here: members of a freshly initialized
+	// replica set may not have users yet (INIT-018).
+	resizeAttempted, err := applyOplogConfig(ctx, initClient, data, finalConfig.Members, providerConf, true)
+	if err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog config
-	if err := readOplogConfig(ctx, initClient, data); err != nil {
+	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, true, resizeAttempted); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -408,27 +414,180 @@ func oplogConfigured(data *schema.ResourceData) bool {
 	return ok
 }
 
-// applyOplogConfig applies oplog size via replSetResizeOplog if configured.
-// OPLOG-003, OPLOG-004, OPLOG-006
-func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
+// oplogResizeMemberTimeout bounds each per-member connect+resize so one wedged
+// member (e.g. fsyncLock, stalled storage) cannot hang an apply indefinitely.
+const oplogResizeMemberTimeout = 60 * time.Second
+
+// oplogReadMemberTimeout bounds each per-member connect+collStats during the
+// read-back. Deliberately shorter than the resize timeout: the read-back runs
+// on every refresh, so an unreachable member should cost seconds, not the
+// better part of a minute. OPLOG-018
+const oplogReadMemberTimeout = 20 * time.Second
+
+// applyOplogConfig applies oplog size via replSetResizeOplog if configured
+// and changed. replSetResizeOplog only resizes the member it is issued
+// against, so the command is fanned out to every data-bearing member over a
+// direct connection, secondaries first and the primary last. Members that
+// are not PRIMARY or SECONDARY (e.g. still in initial sync) are skipped;
+// their size surfaces as drift on the next plan. It reports whether the
+// fan-out ran, so the caller can tell an untouched oplog from a resized one
+// when the read-back cannot reach any member.
+// OPLOG-003, OPLOG-004, OPLOG-006, OPLOG-009, OPLOG-010, OPLOG-012,
+// OPLOG-014, OPLOG-016, OPLOG-019
+func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) (bool, error) {
 	if !oplogConfigured(data) {
-		return nil
+		return false, nil
+	}
+	// OPLOG-014: the resize is idempotent but not free (one direct connection
+	// per member); skip the fan-out when the configured size cannot have
+	// changed. Pending convergence always shows as a change because the
+	// read-back stores OplogSizeMismatch or a divergent size.
+	if !data.IsNewResource() && !data.HasChange("oplog_size_mb") {
+		return false, nil
 	}
 	sizeMB := data.Get("oplog_size_mb").(float64)
-	return SetOplogConfig(ctx, client, sizeMB)
+
+	primaryHost := ""
+	var resizableHosts map[string]bool
+	status, err := GetReplSetStatus(ctx, client)
+	if err != nil {
+		// OPLOG-010/016: ordering and health checks are best-effort; fall
+		// back to configuration order rather than failing a resize that
+		// would succeed.
+		tflog.Warn(ctx, "replSetGetStatus failed; resizing in configuration order without member health checks", map[string]interface{}{
+			"error": err.Error(),
+		})
+	} else {
+		if p := status.Primary(); p != nil {
+			primaryHost = p.Name
+			found := false
+			for _, m := range members {
+				if m.Host == primaryHost {
+					found = true
+					break
+				}
+			}
+			if !found {
+				tflog.Warn(ctx, "primary from replSetGetStatus does not match any configured member; resizing in configuration order", map[string]interface{}{
+					"primary": primaryHost,
+				})
+			}
+		} else {
+			tflog.Warn(ctx, "no PRIMARY identified; resizing in configuration order")
+		}
+		resizableHosts = make(map[string]bool)
+		for _, m := range status.GetMembersByState(MemberStatePrimary, 0) {
+			resizableHosts[m.Name] = true
+		}
+		for _, m := range status.GetMembersByState(MemberStateSecondary, 0) {
+			resizableHosts[m.Name] = true
+		}
+	}
+
+	err = ResizeOplogAcrossMembers(ctx, members, primaryHost, func(ctx context.Context, host string) (bool, error) {
+		// OPLOG-016: a member still syncing has no resizable oplog yet; skip
+		// it instead of failing the apply. It surfaces as drift later.
+		if resizableHosts != nil && !resizableHosts[host] {
+			tflog.Warn(ctx, "skipping oplog resize on member that is not PRIMARY or SECONDARY", map[string]interface{}{
+				"host": host,
+			})
+			return false, nil
+		}
+		memberCtx, cancel := context.WithTimeout(ctx, oplogResizeMemberTimeout)
+		defer cancel()
+		memberClient, cleanup, err := connectToMember(memberCtx, providerConf, host, allowNoAuthFallback)
+		if err != nil {
+			return false, err
+		}
+		defer cleanup()
+		if err := SetOplogConfig(memberCtx, memberClient, sizeMB); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
+	return true, err
 }
 
-// readOplogConfig reads oplog size from MongoDB into Terraform state if configured.
-// OPLOG-005, OPLOG-008
-func readOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData) error {
+// readOplogConfig reads the oplog size of every data-bearing member and
+// stores the common size into Terraform state, or OplogSizeMismatch when
+// members disagree, so both undersized and oversized members surface as
+// drift in the next plan. Unreachable members are skipped with a warning so
+// a single down member does not fail refresh; when no member can be read,
+// the value already in state is kept — unless a resize was just attempted,
+// in which case OplogSizeMismatch is stored so an apply whose outcome could
+// not be confirmed surfaces as drift instead of recording the configured
+// size as achieved.
+// OPLOG-005, OPLOG-008, OPLOG-011, OPLOG-013, OPLOG-020
+func readOplogConfig(ctx context.Context, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool, resizeAttempted bool) error {
 	if !oplogConfigured(data) {
 		return nil
 	}
-	cfg, err := GetOplogConfig(ctx, client)
+	size, err := OplogSizeAcrossMembers(ctx, members, func(ctx context.Context, host string) (float64, error) {
+		memberCtx, cancel := context.WithTimeout(ctx, oplogReadMemberTimeout)
+		defer cancel()
+		memberClient, cleanup, err := connectToMember(memberCtx, providerConf, host, allowNoAuthFallback)
+		if err != nil {
+			return 0, err
+		}
+		defer cleanup()
+		cfg, err := GetOplogConfig(memberCtx, memberClient)
+		if err != nil {
+			return 0, err
+		}
+		return cfg.SizeMB, nil
+	}, func(host string, err error) {
+		tflog.Warn(ctx, "skipping unreadable member during oplog size read", map[string]interface{}{
+			"host":  host,
+			"error": err.Error(),
+		})
+	})
 	if err != nil {
-		return err
+		// OPLOG-020: a resize just ran and no member could confirm it. Keeping
+		// the configured value would record the apply as achieved; store the
+		// mismatch sentinel so the next plan re-applies it.
+		if resizeAttempted {
+			tflog.Warn(ctx, "could not read oplog size from any member after a resize; recording a mismatch so the next plan re-applies", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return data.Set("oplog_size_mb", OplogSizeMismatch)
+		}
+		// OPLOG-008: failing here would block every plan of the resource
+		// (including the one that fixes the problem); keep the last known
+		// value instead.
+		tflog.Warn(ctx, "could not read oplog size from any member; keeping value from state", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil
 	}
-	return data.Set("oplog_size_mb", cfg.SizeMB)
+	return data.Set("oplog_size_mb", size)
+}
+
+// connectToMember opens a direct connection to a single replica set member
+// for node-local commands, inheriting the provider's credentials, TLS, and
+// proxy settings. host_override does not apply here; the schema rejects it
+// in combination with oplog_size_mb (OPLOG-015). The no-auth fallback
+// (INIT-018) is only allowed on paths reached from replica set
+// initialization — including the already-initialized delegation into
+// updateWithClient — where the replica set may exist before any users do;
+// on steady-state paths an authentication failure must surface as one.
+// OPLOG-017
+func connectToMember(ctx context.Context, providerConf *MongoDatabaseConfiguration, hostPort string, allowNoAuthFallback bool) (*mongo.Client, func(), error) {
+	host, port, err := SplitHostPort(hostPort)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("invalid member host %q: %w", hostPort, err)
+	}
+	if allowNoAuthFallback {
+		return ConnectForInit(ctx, providerConf.Config, host, port, providerConf.MaxConnLifetime)
+	}
+	memberConf := &MongoDatabaseConfiguration{
+		Config:          BuildShardClientConfig(providerConf.Config, host, port, ""),
+		MaxConnLifetime: providerConf.MaxConnLifetime,
+	}
+	client, err := MongoClientInit(ctx, memberConf)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("failed to connect to member %s: %w", hostPort, err)
+	}
+	return client, func() { _ = client.Disconnect(ctx) }, nil
 }
 
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
@@ -437,14 +596,17 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 		return errD
 	}
 	defer cleanup()
-	return r.updateWithClient(ctx, data, client)
+	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 }
 
 // updateWithClient performs the Update logic using a pre-established client.
 // This allows both Update (which creates its own authenticated connection) and
 // initializeReplicaSet (which may only have a no-auth connection) to share
-// the same reconfig logic. // INIT-030
-func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client) diag.Diagnostics {
+// the same reconfig logic. allowNoAuthFallback carries that distinction into
+// the per-member oplog connections: initialization paths that can run before
+// users exist pass true (INIT-018, OPLOG-017); steady-state paths pass false
+// so an authentication failure surfaces as one. // INIT-030
+func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) diag.Diagnostics {
 	var m ShardModel
 
 	m.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
@@ -507,11 +669,6 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
-	// OPLOG-003: Apply oplog configuration after replSetReconfig
-	if err := applyOplogConfig(ctx, client, data); err != nil {
-		return diag.FromErr(err)
-	}
-
 	data.SetId(config.ID)
 	if err := data.Set("shard_name", config.ID); err != nil {
 		return diag.FromErr(err)
@@ -540,8 +697,17 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
+	// OPLOG-003: Apply oplog configuration after replSetReconfig. This runs
+	// after SetId and the state writes above so a fan-out failure cannot
+	// leave an applied replSetReconfig unrecorded (Create delegates here on
+	// the already-initialized paths).
+	resizeAttempted, err := applyOplogConfig(ctx, client, data, config.Members, providerConf, allowNoAuthFallback)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
 	// OPLOG-005: Read back oplog state for drift detection
-	if err := readOplogConfig(ctx, client, data); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, providerConf, allowNoAuthFallback, resizeAttempted); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -594,7 +760,7 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	}
 
 	// OPLOG-005: Read back oplog config for drift detection
-	if err := readOplogConfig(ctx, client, data); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, i.(*MongoDatabaseConfiguration), false, false); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -794,6 +960,11 @@ func resourceShardConfig() *schema.Resource {
 			"oplog_size_mb": {
 				Type:     schema.TypeFloat,
 				Optional: true,
+				// OPLOG-015: the per-member resize/read connections dial the
+				// member hostnames from the replica set configuration, which
+				// host_override exists to avoid; reject the combination at
+				// plan time instead of failing every apply and refresh.
+				ConflictsWith: []string{"host_override"},
 				ValidateFunc: func(val interface{}, key string) ([]string, []error) {
 					v := val.(float64)
 					if v <= 0 {
@@ -801,7 +972,7 @@ func resourceShardConfig() *schema.Resource {
 					}
 					return nil, nil
 				},
-				Description: "Maximum oplog size in megabytes. Applied via replSetResizeOplog.",
+				Description: "Maximum oplog size in megabytes. Applied via replSetResizeOplog on every data-bearing member. Conflicts with host_override.",
 			},
 			// DISC-008: Override the shard host discovered via listShards
 			"host_override": {

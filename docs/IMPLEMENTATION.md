@@ -109,7 +109,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
 | Resource Gating | `docs/specs/resource-gating-requirements.md` | GATE-001 through GATE-010 |
 | ID Format | `docs/specs/id-format-requirements.md` | IDFORMAT-001 through IDFORMAT-005 |
-| Oplog Configuration | `docs/specs/oplog-config-requirements.md` | OPLOG-001 through OPLOG-008 |
+| Oplog Configuration | `docs/specs/oplog-config-requirements.md` | OPLOG-001 through OPLOG-020 |
 | CatchUp Timeout | `docs/specs/catchup-timeout-requirements.md` | CATCHUP-001 through CATCHUP-005 |
 | Profiler | `docs/specs/profiler-requirements.md` | PROF-001 through PROF-011 |
 | Server Parameter | `docs/specs/server-parameter-requirements.md` | PARAM-001 through PARAM-012 |

@@ -415,6 +415,10 @@ func connectAndPing(ctx context.Context, client *mongo.Client, maxConnLifetime t
 		return nil, err
 	}
 	if err := client.Ping(ctx, nil); err != nil {
+		// Disconnect the already-connected client so its topology monitor
+		// goroutines do not outlive the failed attempt. Use a fresh context:
+		// the deadline above may already have expired.
+		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
 	return client, nil

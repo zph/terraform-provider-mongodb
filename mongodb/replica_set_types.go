@@ -21,6 +21,8 @@ package mongodb
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -379,6 +381,119 @@ func GetFCV(ctx context.Context, client *mongo.Client) (string, error) {
 		return "", errors.Errorf("getParameter featureCompatibilityVersion: %s", resp.Errmsg)
 	}
 	return resp.FCV.Version, nil
+}
+
+// OplogMemberHosts returns the hosts of data-bearing members (arbiters carry
+// no oplog), ordered secondaries first and the primary last, matching the
+// documented procedure for resizing a replica set's oplog. An empty
+// primaryHost leaves the config order unchanged.
+// OPLOG-010, OPLOG-011
+func OplogMemberHosts(members ConfigMembers, primaryHost string) []string {
+	hosts := make([]string, 0, len(members))
+	primary := make([]string, 0, 1)
+	for _, m := range members {
+		if derefBool(m.ArbiterOnly) {
+			continue
+		}
+		if primaryHost != "" && m.Host == primaryHost {
+			primary = append(primary, m.Host)
+			continue
+		}
+		hosts = append(hosts, m.Host)
+	}
+	return append(hosts, primary...)
+}
+
+// ResizeOplogAcrossMembers runs resize against every data-bearing member,
+// secondaries first and the primary last. replSetResizeOplog only affects
+// the member it runs on, so each member must be resized individually. resize
+// reports whether it actually resized the member; a fan-out that skipped
+// every member (for example when no member is in a state that accepts the
+// resize) is an error, so an apply that changed nothing cannot look like a
+// successful one.
+// OPLOG-009, OPLOG-010, OPLOG-012, OPLOG-019
+func ResizeOplogAcrossMembers(ctx context.Context, members ConfigMembers, primaryHost string, resize func(ctx context.Context, host string) (bool, error)) error {
+	hosts := OplogMemberHosts(members, primaryHost)
+	if len(hosts) == 0 {
+		return errors.New("replica set has no data-bearing members")
+	}
+	resized := 0
+	for _, host := range hosts {
+		ok, err := resize(ctx, host)
+		if err != nil {
+			return errors.Wrapf(err, "resizing oplog on member %s", host)
+		}
+		if ok {
+			resized++
+		}
+	}
+	if resized == 0 {
+		return errors.Errorf("oplog resize skipped every data-bearing member (%s); no member is PRIMARY or SECONDARY", strings.Join(hosts, ", "))
+	}
+	return nil
+}
+
+// OplogSizeMismatch is stored in state when data-bearing members report
+// different oplog sizes, so that both undersized and oversized members (e.g.
+// the residue of a partially failed shrink) surface as a diff in the next
+// plan. It is never a valid configured size (the schema rejects values <= 0).
+const OplogSizeMismatch = -1.0
+
+// OplogSizeAcrossMembers reads the oplog size of every data-bearing member
+// and returns the common size when all readable members agree, or
+// OplogSizeMismatch when they disagree. Members that cannot be read are
+// skipped via onSkip so a single down member does not fail refresh; an error
+// is returned only when no member could be read. A non-positive reported
+// size is treated as a read failure so 0 can never reach state, where GetOk
+// would treat it as unset and silently disable oplog management.
+// OPLOG-008, OPLOG-013, OPLOG-018
+func OplogSizeAcrossMembers(ctx context.Context, members ConfigMembers, read func(ctx context.Context, host string) (float64, error), onSkip func(host string, err error)) (float64, error) {
+	hosts := OplogMemberHosts(members, "")
+	if len(hosts) == 0 {
+		return 0, errors.New("replica set has no data-bearing members")
+	}
+	// The reads are independent, so they run concurrently: refresh latency is
+	// bounded by the slowest member rather than the sum across members.
+	// Aggregation stays sequential in host order so results (and onSkip
+	// calls) are deterministic. OPLOG-018
+	sizes := make([]float64, len(hosts))
+	readErrs := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func(i int, host string) {
+			defer wg.Done()
+			s, err := read(ctx, host)
+			if err == nil && s <= 0 {
+				err = errors.Errorf("member reported non-positive oplog size %v", s)
+			}
+			sizes[i], readErrs[i] = s, err
+		}(i, host)
+	}
+	wg.Wait()
+
+	size := 0.0
+	readCount := 0
+	var lastErr error
+	for i, host := range hosts {
+		if err := readErrs[i]; err != nil {
+			lastErr = errors.Wrapf(err, "reading oplog size on member %s", host)
+			if onSkip != nil {
+				onSkip(host, err)
+			}
+			continue
+		}
+		readCount++
+		if readCount == 1 {
+			size = sizes[i]
+		} else if sizes[i] != size {
+			size = OplogSizeMismatch
+		}
+	}
+	if readCount == 0 {
+		return 0, lastErr
+	}
+	return size, nil
 }
 
 // SetOplogConfig applies oplog size via replSetResizeOplog.
