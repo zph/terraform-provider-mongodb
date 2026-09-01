@@ -422,9 +422,9 @@ func TestBytesPerMB(t *testing.T) {
 func TestResizeOplogAcrossMembers_AllMembersPrimaryLast(t *testing.T) {
 	rs := threeNodeRS()
 	var resized []string
-	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) error {
+	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) (bool, error) {
 		resized = append(resized, host)
-		return nil
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -437,6 +437,30 @@ func TestResizeOplogAcrossMembers_AllMembersPrimaryLast(t *testing.T) {
 		if resized[i] != want[i] {
 			t.Errorf("resize order[%d]: want %s, got %s", i, want[i], resized[i])
 		}
+	}
+}
+
+// OPLOG-T14: OPLOG-019 — a fan-out in which every member was skipped (no
+// member PRIMARY or SECONDARY) is an error. Regression: it returned nil, so
+// an apply that resized nothing was indistinguishable from a successful one.
+func TestResizeOplogAcrossMembers_AllMembersSkipped(t *testing.T) {
+	rs := threeNodeRS()
+	err := ResizeOplogAcrossMembers(context.Background(), rs, "", func(_ context.Context, _ string) (bool, error) {
+		return false, nil
+	})
+	if err == nil {
+		t.Fatal("expected error when every member was skipped, got nil")
+	}
+	if !strings.Contains(err.Error(), "mongo1:27017") {
+		t.Errorf("error should name the skipped members, got: %v", err)
+	}
+
+	// A single resized member is still a resize.
+	err = ResizeOplogAcrossMembers(context.Background(), rs, "", func(_ context.Context, host string) (bool, error) {
+		return host == "mongo2:27017", nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error when one member was resized: %v", err)
 	}
 }
 
@@ -478,12 +502,12 @@ func TestOplogMemberHosts_UnknownPrimary(t *testing.T) {
 func TestResizeOplogAcrossMembers_ErrorNamesMember(t *testing.T) {
 	rs := threeNodeRS()
 	var resized []string
-	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) error {
+	err := ResizeOplogAcrossMembers(context.Background(), rs, "mongo1:27017", func(_ context.Context, host string) (bool, error) {
 		if host == "mongo3:27017" {
-			return fmt.Errorf("connection refused")
+			return false, fmt.Errorf("connection refused")
 		}
 		resized = append(resized, host)
-		return nil
+		return true, nil
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -570,8 +594,8 @@ func TestOplogFanOut_NoDataBearingMembers(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected read error for arbiter-only membership, got nil")
 	}
-	err = ResizeOplogAcrossMembers(context.Background(), rs, "", func(_ context.Context, _ string) error {
-		return nil
+	err = ResizeOplogAcrossMembers(context.Background(), rs, "", func(_ context.Context, _ string) (bool, error) {
+		return true, nil
 	})
 	if err == nil {
 		t.Fatal("expected resize error for arbiter-only membership, got nil")
@@ -669,8 +693,12 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 	unset := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
 		"shard_name": "shard01",
 	})
-	if err := applyOplogConfig(context.Background(), nil, unset, threeNodeRS(), nil, false); err != nil {
+	attempted, err := applyOplogConfig(context.Background(), nil, unset, threeNodeRS(), nil, false)
+	if err != nil {
 		t.Fatalf("unexpected error with oplog_size_mb unset: %v", err)
+	}
+	if attempted {
+		t.Error("fan-out must not run with oplog_size_mb unset")
 	}
 
 	// Rebuild from serialized prior state (TestResourceDataRaw alone diffs
@@ -685,7 +713,11 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 	if unchanged.HasChange("oplog_size_mb") {
 		t.Fatal("precondition failed: oplog_size_mb must register as unchanged")
 	}
-	if err := applyOplogConfig(context.Background(), nil, unchanged, threeNodeRS(), nil, false); err != nil {
+	attempted, err = applyOplogConfig(context.Background(), nil, unchanged, threeNodeRS(), nil, false)
+	if err != nil {
 		t.Fatalf("unexpected error with oplog_size_mb unchanged: %v", err)
+	}
+	if attempted {
+		t.Error("fan-out must not run with oplog_size_mb unchanged")
 	}
 }

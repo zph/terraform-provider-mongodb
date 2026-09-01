@@ -21,6 +21,7 @@ package mongodb
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -405,17 +406,29 @@ func OplogMemberHosts(members ConfigMembers, primaryHost string) []string {
 
 // ResizeOplogAcrossMembers runs resize against every data-bearing member,
 // secondaries first and the primary last. replSetResizeOplog only affects
-// the member it runs on, so each member must be resized individually.
-// OPLOG-009, OPLOG-010, OPLOG-012
-func ResizeOplogAcrossMembers(ctx context.Context, members ConfigMembers, primaryHost string, resize func(ctx context.Context, host string) error) error {
+// the member it runs on, so each member must be resized individually. resize
+// reports whether it actually resized the member; a fan-out that skipped
+// every member (for example when no member is in a state that accepts the
+// resize) is an error, so an apply that changed nothing cannot look like a
+// successful one.
+// OPLOG-009, OPLOG-010, OPLOG-012, OPLOG-019
+func ResizeOplogAcrossMembers(ctx context.Context, members ConfigMembers, primaryHost string, resize func(ctx context.Context, host string) (bool, error)) error {
 	hosts := OplogMemberHosts(members, primaryHost)
 	if len(hosts) == 0 {
 		return errors.New("replica set has no data-bearing members")
 	}
+	resized := 0
 	for _, host := range hosts {
-		if err := resize(ctx, host); err != nil {
+		ok, err := resize(ctx, host)
+		if err != nil {
 			return errors.Wrapf(err, "resizing oplog on member %s", host)
 		}
+		if ok {
+			resized++
+		}
+	}
+	if resized == 0 {
+		return errors.Errorf("oplog resize skipped every data-bearing member (%s); no member is PRIMARY or SECONDARY", strings.Join(hosts, ", "))
 	}
 	return nil
 }

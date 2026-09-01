@@ -105,3 +105,15 @@ established concurrently, each bounded by a per-member timeout shorter than
 the resize timeout, so refresh latency is bounded by the slowest member
 rather than the sum across members. The resize fan-out remains sequential to
 preserve the OPLOG-010 ordering.
+
+**OPLOG-019** (Unwanted Behaviour): IF the resize fan-out skipped every
+data-bearing member (OPLOG-016), THEN the apply SHALL fail, because no
+member's oplog was changed and recording success would leave state claiming
+a size that no member has.
+
+**OPLOG-020** (Unwanted Behaviour): IF no member can be read during the
+read-back and a resize was attempted in the same apply, THEN
+`oplog_size_mb` SHALL be stored as `OplogSizeMismatch` rather than left at
+the configured value, so an unconfirmed resize surfaces as drift on the next
+plan. On refresh, where no resize was attempted, the value in state is kept
+(OPLOG-008).

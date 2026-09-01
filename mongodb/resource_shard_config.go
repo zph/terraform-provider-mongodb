@@ -172,12 +172,13 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 	// OPLOG-006: Apply oplog settings after RS is initialized and stable.
 	// The no-auth fallback is allowed here: members of a freshly initialized
 	// replica set may not have users yet (INIT-018).
-	if err := applyOplogConfig(ctx, initClient, data, finalConfig.Members, providerConf, true); err != nil {
+	resizeAttempted, err := applyOplogConfig(ctx, initClient, data, finalConfig.Members, providerConf, true)
+	if err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog config
-	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, true); err != nil {
+	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, true, resizeAttempted); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -428,19 +429,21 @@ const oplogReadMemberTimeout = 20 * time.Second
 // against, so the command is fanned out to every data-bearing member over a
 // direct connection, secondaries first and the primary last. Members that
 // are not PRIMARY or SECONDARY (e.g. still in initial sync) are skipped;
-// their size surfaces as drift on the next plan.
+// their size surfaces as drift on the next plan. It reports whether the
+// fan-out ran, so the caller can tell an untouched oplog from a resized one
+// when the read-back cannot reach any member.
 // OPLOG-003, OPLOG-004, OPLOG-006, OPLOG-009, OPLOG-010, OPLOG-012,
-// OPLOG-014, OPLOG-016
-func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) error {
+// OPLOG-014, OPLOG-016, OPLOG-019
+func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) (bool, error) {
 	if !oplogConfigured(data) {
-		return nil
+		return false, nil
 	}
 	// OPLOG-014: the resize is idempotent but not free (one direct connection
 	// per member); skip the fan-out when the configured size cannot have
 	// changed. Pending convergence always shows as a change because the
 	// read-back stores OplogSizeMismatch or a divergent size.
 	if !data.IsNewResource() && !data.HasChange("oplog_size_mb") {
-		return nil
+		return false, nil
 	}
 	sizeMB := data.Get("oplog_size_mb").(float64)
 
@@ -481,24 +484,28 @@ func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.Re
 		}
 	}
 
-	return ResizeOplogAcrossMembers(ctx, members, primaryHost, func(ctx context.Context, host string) error {
+	err = ResizeOplogAcrossMembers(ctx, members, primaryHost, func(ctx context.Context, host string) (bool, error) {
 		// OPLOG-016: a member still syncing has no resizable oplog yet; skip
 		// it instead of failing the apply. It surfaces as drift later.
 		if resizableHosts != nil && !resizableHosts[host] {
 			tflog.Warn(ctx, "skipping oplog resize on member that is not PRIMARY or SECONDARY", map[string]interface{}{
 				"host": host,
 			})
-			return nil
+			return false, nil
 		}
 		memberCtx, cancel := context.WithTimeout(ctx, oplogResizeMemberTimeout)
 		defer cancel()
 		memberClient, cleanup, err := connectToMember(memberCtx, providerConf, host, allowNoAuthFallback)
 		if err != nil {
-			return err
+			return false, err
 		}
 		defer cleanup()
-		return SetOplogConfig(memberCtx, memberClient, sizeMB)
+		if err := SetOplogConfig(memberCtx, memberClient, sizeMB); err != nil {
+			return false, err
+		}
+		return true, nil
 	})
+	return true, err
 }
 
 // readOplogConfig reads the oplog size of every data-bearing member and
@@ -506,9 +513,12 @@ func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.Re
 // members disagree, so both undersized and oversized members surface as
 // drift in the next plan. Unreachable members are skipped with a warning so
 // a single down member does not fail refresh; when no member can be read,
-// the value already in state is kept.
-// OPLOG-005, OPLOG-008, OPLOG-011, OPLOG-013
-func readOplogConfig(ctx context.Context, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) error {
+// the value already in state is kept — unless a resize was just attempted,
+// in which case OplogSizeMismatch is stored so an apply whose outcome could
+// not be confirmed surfaces as drift instead of recording the configured
+// size as achieved.
+// OPLOG-005, OPLOG-008, OPLOG-011, OPLOG-013, OPLOG-020
+func readOplogConfig(ctx context.Context, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool, resizeAttempted bool) error {
 	if !oplogConfigured(data) {
 		return nil
 	}
@@ -532,6 +542,15 @@ func readOplogConfig(ctx context.Context, data *schema.ResourceData, members Con
 		})
 	})
 	if err != nil {
+		// OPLOG-020: a resize just ran and no member could confirm it. Keeping
+		// the configured value would record the apply as achieved; store the
+		// mismatch sentinel so the next plan re-applies it.
+		if resizeAttempted {
+			tflog.Warn(ctx, "could not read oplog size from any member after a resize; recording a mismatch so the next plan re-applies", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return data.Set("oplog_size_mb", OplogSizeMismatch)
+		}
 		// OPLOG-008: failing here would block every plan of the resource
 		// (including the one that fixes the problem); keep the last known
 		// value instead.
@@ -682,12 +701,13 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// after SetId and the state writes above so a fan-out failure cannot
 	// leave an applied replSetReconfig unrecorded (Create delegates here on
 	// the already-initialized paths).
-	if err := applyOplogConfig(ctx, client, data, config.Members, providerConf, allowNoAuthFallback); err != nil {
+	resizeAttempted, err := applyOplogConfig(ctx, client, data, config.Members, providerConf, allowNoAuthFallback)
+	if err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog state for drift detection
-	if err := readOplogConfig(ctx, data, config.Members, providerConf, allowNoAuthFallback); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, providerConf, allowNoAuthFallback, resizeAttempted); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -740,7 +760,7 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	}
 
 	// OPLOG-005: Read back oplog config for drift detection
-	if err := readOplogConfig(ctx, data, config.Members, i.(*MongoDatabaseConfiguration), false); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, i.(*MongoDatabaseConfiguration), false, false); err != nil {
 		return diag.FromErr(err)
 	}
 
