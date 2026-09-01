@@ -39,10 +39,10 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	switch {
 	case err == nil:
 		// INIT-002: Already configured, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 	case IsAlreadyInitialized(err):
 		// INIT-015: Already initialized, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
+		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 	case IsNotYetInitialized(err):
 		// INIT-001: Enter initialization flow
 		return r.initializeReplicaSet(ctx, data, i, client)
@@ -91,9 +91,12 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 			// initClient if auth fails.
 			if authClient, authCleanup, authErr := r.getShardClient(ctx, data, i); authErr == nil {
 				defer authCleanup()
-				return r.updateWithClient(ctx, data, authClient, providerConf)
+				return r.updateWithClient(ctx, data, authClient, providerConf, false)
 			}
-			return r.updateWithClient(ctx, data, initClient, providerConf)
+			// initClient may be a no-auth connection (INIT-018): the replica
+			// set can exist before any users do, so the per-member oplog
+			// connections need the same fallback. OPLOG-017
+			return r.updateWithClient(ctx, data, initClient, providerConf, true)
 		}
 		return diag.FromErr(err)
 	}
@@ -410,9 +413,15 @@ func oplogConfigured(data *schema.ResourceData) bool {
 	return ok
 }
 
-// oplogMemberTimeout bounds each per-member connect+command so one wedged
+// oplogResizeMemberTimeout bounds each per-member connect+resize so one wedged
 // member (e.g. fsyncLock, stalled storage) cannot hang an apply indefinitely.
-const oplogMemberTimeout = 60 * time.Second
+const oplogResizeMemberTimeout = 60 * time.Second
+
+// oplogReadMemberTimeout bounds each per-member connect+collStats during the
+// read-back. Deliberately shorter than the resize timeout: the read-back runs
+// on every refresh, so an unreachable member should cost seconds, not the
+// better part of a minute. OPLOG-018
+const oplogReadMemberTimeout = 20 * time.Second
 
 // applyOplogConfig applies oplog size via replSetResizeOplog if configured
 // and changed. replSetResizeOplog only resizes the member it is issued
@@ -481,7 +490,7 @@ func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.Re
 			})
 			return nil
 		}
-		memberCtx, cancel := context.WithTimeout(ctx, oplogMemberTimeout)
+		memberCtx, cancel := context.WithTimeout(ctx, oplogResizeMemberTimeout)
 		defer cancel()
 		memberClient, cleanup, err := connectToMember(memberCtx, providerConf, host, allowNoAuthFallback)
 		if err != nil {
@@ -504,7 +513,7 @@ func readOplogConfig(ctx context.Context, data *schema.ResourceData, members Con
 		return nil
 	}
 	size, err := OplogSizeAcrossMembers(ctx, members, func(ctx context.Context, host string) (float64, error) {
-		memberCtx, cancel := context.WithTimeout(ctx, oplogMemberTimeout)
+		memberCtx, cancel := context.WithTimeout(ctx, oplogReadMemberTimeout)
 		defer cancel()
 		memberClient, cleanup, err := connectToMember(memberCtx, providerConf, host, allowNoAuthFallback)
 		if err != nil {
@@ -538,9 +547,11 @@ func readOplogConfig(ctx context.Context, data *schema.ResourceData, members Con
 // for node-local commands, inheriting the provider's credentials, TLS, and
 // proxy settings. host_override does not apply here; the schema rejects it
 // in combination with oplog_size_mb (OPLOG-015). The no-auth fallback
-// (INIT-018) is only allowed during replica set initialization, where
-// members may not have users yet; on steady-state paths an authentication
-// failure must surface as one.
+// (INIT-018) is only allowed on paths reached from replica set
+// initialization — including the already-initialized delegation into
+// updateWithClient — where the replica set may exist before any users do;
+// on steady-state paths an authentication failure must surface as one.
+// OPLOG-017
 func connectToMember(ctx context.Context, providerConf *MongoDatabaseConfiguration, hostPort string, allowNoAuthFallback bool) (*mongo.Client, func(), error) {
 	host, port, err := SplitHostPort(hostPort)
 	if err != nil {
@@ -566,14 +577,17 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 		return errD
 	}
 	defer cleanup()
-	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration))
+	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 }
 
 // updateWithClient performs the Update logic using a pre-established client.
 // This allows both Update (which creates its own authenticated connection) and
 // initializeReplicaSet (which may only have a no-auth connection) to share
-// the same reconfig logic. // INIT-030
-func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration) diag.Diagnostics {
+// the same reconfig logic. allowNoAuthFallback carries that distinction into
+// the per-member oplog connections: initialization paths that can run before
+// users exist pass true (INIT-018, OPLOG-017); steady-state paths pass false
+// so an authentication failure surfaces as one. // INIT-030
+func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) diag.Diagnostics {
 	var m ShardModel
 
 	m.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
@@ -668,12 +682,12 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// after SetId and the state writes above so a fan-out failure cannot
 	// leave an applied replSetReconfig unrecorded (Create delegates here on
 	// the already-initialized paths).
-	if err := applyOplogConfig(ctx, client, data, config.Members, providerConf, false); err != nil {
+	if err := applyOplogConfig(ctx, client, data, config.Members, providerConf, allowNoAuthFallback); err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog state for drift detection
-	if err := readOplogConfig(ctx, data, config.Members, providerConf, false); err != nil {
+	if err := readOplogConfig(ctx, data, config.Members, providerConf, allowNoAuthFallback); err != nil {
 		return diag.FromErr(err)
 	}
 

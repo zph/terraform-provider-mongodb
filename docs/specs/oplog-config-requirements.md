@@ -92,3 +92,16 @@ SECONDARY state when the resize runs, THEN that member SHALL be skipped with
 a warning; its size surfaces as drift on the next plan. IF `replSetGetStatus`
 fails or reports no primary, THEN the resize SHALL proceed in configuration
 order with a warning rather than fail.
+
+**OPLOG-017** (Ubiquitous): Per-member connections SHALL authenticate with
+the provider's credentials. The no-auth fallback (INIT-018) SHALL apply only
+on paths reached from the replica set initialization flow — including the
+already-initialized delegation into the update logic (INIT-015, INIT-030),
+where the replica set may exist before any users do. On steady-state Update
+and Read paths, an authentication failure SHALL surface as an error.
+
+**OPLOG-018** (Ubiquitous): The per-member read-back connections SHALL be
+established concurrently, each bounded by a per-member timeout shorter than
+the resize timeout, so refresh latency is bounded by the slowest member
+rather than the sum across members. The resize fan-out remains sequential to
+preserve the OPLOG-010 ordering.

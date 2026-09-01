@@ -78,7 +78,7 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
-~> **NOTE:** `oplog_size_mb` conflicts with `host_override`. The per-member `replSetResizeOplog` and read-back connections use the member hostnames from the replica set configuration, which must be reachable from the Terraform runner — and, when TLS is enabled, the server certificates must be valid for those member hostnames. The resize applies to **every** data-bearing member, including members not listed in `member` blocks. Members that are not PRIMARY or SECONDARY are skipped during the resize, and unreachable members are skipped during the read-back (with a warning), so they surface as drift on a later plan instead of failing the run.
+~> **NOTE:** `oplog_size_mb` conflicts with `host_override`. This is enforced at validation time, so a configuration that sets both fails `terraform plan` after upgrading — remove one of the two (keep `host_override` and manage the oplog size outside Terraform, or drop `host_override` if the member hostnames are reachable). The per-member `replSetResizeOplog` and read-back connections use the member hostnames from the replica set configuration, which must be reachable from the Terraform runner — and, when TLS is enabled, the server certificates must be valid for those member hostnames. The resize applies to **every** data-bearing member, including members not listed in `member` blocks. Members that are not PRIMARY or SECONDARY are skipped during the resize, and unreachable members are skipped during the read-back (with a warning), so they surface as drift on a later plan instead of failing the run.
 
 ## Argument Reference
 

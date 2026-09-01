@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
@@ -610,6 +611,37 @@ func TestOplogSizeAcrossMembers_ZeroSizeTreatedAsError(t *testing.T) {
 	}
 	if size != 1024 {
 		t.Errorf("expected 1024 with the zero-reporting member skipped, got %v", size)
+	}
+}
+
+// OPLOG-T14: OPLOG-018 — member reads run concurrently so refresh latency is
+// bounded by the slowest member, not the sum across members. Every read
+// blocks until all of them have started; a sequential implementation would
+// hit the per-read timeout and fail.
+func TestOplogSizeAcrossMembers_ReadsConcurrently(t *testing.T) {
+	rs := threeNodeRS()
+	started := make(chan struct{}, len(rs))
+	release := make(chan struct{})
+	go func() {
+		for i := 0; i < len(rs); i++ {
+			<-started
+		}
+		close(release)
+	}()
+	size, err := OplogSizeAcrossMembers(context.Background(), rs, func(_ context.Context, _ string) (float64, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			return 1024, nil
+		case <-time.After(5 * time.Second):
+			return 0, fmt.Errorf("read did not overlap with the other members")
+		}
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if size != 1024 {
+		t.Errorf("expected 1024, got %v", size)
 	}
 }
 

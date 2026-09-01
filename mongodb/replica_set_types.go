@@ -21,6 +21,7 @@ package mongodb
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -432,21 +433,37 @@ const OplogSizeMismatch = -1.0
 // is returned only when no member could be read. A non-positive reported
 // size is treated as a read failure so 0 can never reach state, where GetOk
 // would treat it as unset and silently disable oplog management.
-// OPLOG-008, OPLOG-013
+// OPLOG-008, OPLOG-013, OPLOG-018
 func OplogSizeAcrossMembers(ctx context.Context, members ConfigMembers, read func(ctx context.Context, host string) (float64, error), onSkip func(host string, err error)) (float64, error) {
 	hosts := OplogMemberHosts(members, "")
 	if len(hosts) == 0 {
 		return 0, errors.New("replica set has no data-bearing members")
 	}
+	// The reads are independent, so they run concurrently: refresh latency is
+	// bounded by the slowest member rather than the sum across members.
+	// Aggregation stays sequential in host order so results (and onSkip
+	// calls) are deterministic. OPLOG-018
+	sizes := make([]float64, len(hosts))
+	readErrs := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func(i int, host string) {
+			defer wg.Done()
+			s, err := read(ctx, host)
+			if err == nil && s <= 0 {
+				err = errors.Errorf("member reported non-positive oplog size %v", s)
+			}
+			sizes[i], readErrs[i] = s, err
+		}(i, host)
+	}
+	wg.Wait()
+
 	size := 0.0
 	readCount := 0
 	var lastErr error
-	for _, host := range hosts {
-		s, err := read(ctx, host)
-		if err == nil && s <= 0 {
-			err = errors.Errorf("member reported non-positive oplog size %v", s)
-		}
-		if err != nil {
+	for i, host := range hosts {
+		if err := readErrs[i]; err != nil {
 			lastErr = errors.Wrapf(err, "reading oplog size on member %s", host)
 			if onSkip != nil {
 				onSkip(host, err)
@@ -455,8 +472,8 @@ func OplogSizeAcrossMembers(ctx context.Context, members ConfigMembers, read fun
 		}
 		readCount++
 		if readCount == 1 {
-			size = s
-		} else if s != size {
+			size = sizes[i]
+		} else if sizes[i] != size {
 			size = OplogSizeMismatch
 		}
 	}
