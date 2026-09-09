@@ -244,11 +244,38 @@ Call `GetReplSetConfig`, set `ChainingAllowed=false`, `HeartbeatIntervalMillis=3
 
 ---
 
+**INTEG-022:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs against a one-member replica set with three `member` blocks, the Integration Test Suite SHALL verify that the two missing members are added with `_id` 1 and 2, that every per-member field (priority, votes, hidden, tags) is applied, that the seed member's fields are merged in place, that the config version advanced by at least three, that the `member` state lists all three hosts in block order, and that all three members become PRIMARY or SECONDARY.
+
+**Rationale:**
+This is the host-side-seed workflow: something else initiates the set with one member and the provider grows it. It exercises SHARD-012 through SHARD-018 and SHARD-020 against a real server on every version in the matrix, including the priority-0 hidden member that the `omitempty` tag used to break.
+
+**Verification:**
+Start three mongods on one Docker network, `rs.initiate` the first alone, build a `ResourceData` with three blocks via `schema.TestResourceDataRaw`, call `RShardConfig.updateWithClient`, and assert on `GetReplSetConfig`, the resource state and `replSetGetStatus`.
+
+---
+
+**INTEG-023:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs a second time against the grown set with the same blocks, the Integration Test Suite SHALL verify that no member is added and that every member keeps its `_id` and host.
+
+**Rationale:**
+The partition is computed against the live configuration, so a repeated apply must converge without changing membership (SHARD-012, SHARD-019).
+
+**Verification:**
+Call `updateWithClient` again with the same configuration and compare `GetReplSetConfig` before and after.
+
+---
+
 ## Test File Summary
 
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/integration_test.go` | INTEG-001 through INTEG-016 | `mongodb/config.go`, `mongodb/replica_set_types.go` |
+| `mongodb/member_add_integration_test.go` | INTEG-022, INTEG-023 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
 
 ## Testcontainer Configuration
 
@@ -258,3 +285,5 @@ The integration tests use a single shared MongoDB replica set container for all 
 - Replica set name: `rs0`
 - Authentication: enabled with admin user
 - Container lifecycle: started once per test suite via `TestMain`, torn down after all tests complete
+
+The member-add tests (INTEG-022, INTEG-023) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.

@@ -241,3 +241,26 @@ func TestRSConfigBSONRoundTrip(t *testing.T) {
 			decoded.Settings.HeartbeatIntervalMillis, original.Settings.HeartbeatIntervalMillis)
 	}
 }
+
+// SHARD-020: priority 0 must reach the server. With omitempty the field was
+// dropped and MongoDB defaulted it to 1, which rejects hidden members and
+// silently makes a priority-0 member electable.
+func TestConfigMemberBSON_PriorityZeroIsSent(t *testing.T) {
+	hidden := true
+	votes := 0
+	data, err := bson.Marshal(ConfigMember{ID: 2, Host: "mongo3:27017", Hidden: &hidden, Priority: 0, Votes: &votes})
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+	raw := bson.Raw(data)
+	val, err := raw.LookupErr("priority")
+	if err != nil {
+		t.Fatalf("priority missing from marshaled member: %s", raw.String())
+	}
+	if got := val.Double(); got != 0 {
+		t.Errorf("priority: want 0, got %v", got)
+	}
+	if v, err := raw.LookupErr("votes"); err != nil || v.Int32() != 0 {
+		t.Errorf("votes: want explicit 0, got %v (err %v)", v, err)
+	}
+}

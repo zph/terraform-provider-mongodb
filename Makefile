@@ -95,7 +95,7 @@ test-unit: ## Run Go unit tests
 	cd $(PROVIDER_ROOT) && go test ./...
 
 test-integration: ## Run integration tests excluding golden (requires Docker; override image with MONGO_TEST_IMAGE)
-	cd $(PROVIDER_ROOT) && go test -tags integration -run 'TestIntegration_|TestShardedIntegration_' -v -timeout 300s ./mongodb/
+	cd $(PROVIDER_ROOT) && go test -tags integration -run 'TestIntegration_|TestShardedIntegration_' -v -timeout 600s ./mongodb/
 
 test-integration-matrix: ## Run integration tests against all supported MongoDB versions
 	@for v in $(MONGO_VERSIONS); do \

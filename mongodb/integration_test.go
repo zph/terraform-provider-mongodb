@@ -186,8 +186,10 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	// Tear down sharded cluster if it was started
+	// Tear down the sharded cluster and the member-add replica set if they
+	// were started
 	teardownShardedCluster()
+	teardownMemberAddCluster()
 
 	_ = client.Disconnect(ctx)
 	_ = container.Terminate(ctx)

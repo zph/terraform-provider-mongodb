@@ -89,12 +89,14 @@ resource "mongodb_shard_config" "shard01" {
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
 * `catch_up_timeout_millis` - (Optional) Time in milliseconds that a newly elected primary waits for secondaries to catch up before accepting writes. `-1` means infinite (MongoDB default). Default: `-1`.
 * `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. The oplog is node-local storage, so the size is applied via `replSetResizeOplog` on **every data-bearing member** of the replica set over a direct connection to each member (secondaries first, primary last; arbiters are skipped). When reading state back, the common size across members is reported; if members disagree (for example after a partially failed resize), `-1` is stored so the divergence shows up as drift in the next plan. Requires the Terraform runner to be able to reach every member host listed in the replica set configuration. Conflicts with `host_override`. When not set, oplog sizes are left at their current values (MongoDB default).
-* `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election and majority health). Default: `60`.
+* `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election) and, separately, for each added member to become reachable (see [Adding members](#adding-members)). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
 
 ### Member
 
-Each `member` block configures an individual replica set member. Members are assigned `_id` values in order (starting at 0).
+Each `member` block configures an individual replica set member. Blocks are matched to live members by `host`. A block whose host is already a member updates that member in place. A block whose host is not in the set adds a new member (see [Adding members](#adding-members)). Members that are in the set but have no block are left untouched, and the resource never removes a member.
+
+`priority` and `votes` are always sent, including `priority = 0`, so the defaults below are applied by the resource rather than by the server and hidden members (which require priority 0) can be configured.
 
 * `host` - (Required) `host:port` address of the replica set member.
 * `arbiter_only` - (Optional) Whether the member is an arbiter. Default: `false`.
@@ -109,10 +111,9 @@ Each `member` block configures an individual replica set member. Members are ass
 When the target replica set has not yet been initialized (MongoDB returns error code 94 — `NotYetInitialized`), the resource automatically handles initialization:
 
 1. Connects in direct mode to the first `member` block's host (with auth fallback for fresh instances).
-2. Runs `replSetInitiate` with a single-member config.
+2. Runs `replSetInitiate` with that host as the only member (`_id: 0`).
 3. Waits for the member to reach PRIMARY state.
-4. If additional `member` blocks exist, runs `replSetReconfig` to add them with all configured fields.
-5. Waits for a majority of members to be healthy (PRIMARY or SECONDARY).
+4. Continues exactly as for an already-initialized set: one `replSetReconfig` applies the settings and the first member's fields, then each remaining `member` block is added as described under [Adding members](#adding-members).
 
 If `replSetInitiate` returns code 23 (`AlreadyInitialized`), the resource falls through to the standard reconfiguration flow.
 
@@ -145,6 +146,49 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
+## Adding members
+
+A `member` block whose `host` is not in the replica set is added on apply. This works the same for a set the provider initialized and for one initialized elsewhere, for example by a bootstrap script on the first host that runs `replSetInitiate` with a single member and creates the first user through the localhost exception.
+
+Members are added one at a time, each with its own `replSetReconfig`, after the reconfig that applies the settings and the matched members. MongoDB 4.4 rejects a reconfig that adds more than one voting member; one member per reconfig is correct on every version. Before each add the configuration is re-read from the server, and the new member gets an `_id` one higher than the highest in use, never its position in the list.
+
+After each add the resource waits, for up to `init_timeout_secs`, until the primary reports the new member as reachable (`health: 1` in any state, including `STARTUP2`). It does not wait for initial sync, which can take hours on a set with data. If the member does not become reachable in time, the resource removes it again and fails the apply, so a mistyped host does not stay in the configuration as a permanently unreachable member. Fix the host and apply again.
+
+State is read back from the server after the last reconfig. A failed add leaves the settings and any members added before it in place; the next apply adds only what is still missing.
+
+### Growing a one-member set
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name        = "shard01"
+  init_timeout_secs = 120
+
+  # Already the only member: merged in place.
+  member {
+    host     = "mongo1:27017"
+    priority = 2
+  }
+
+  # Added first.
+  member {
+    host = "mongo2:27017"
+  }
+
+  # Added second.
+  member {
+    host     = "mongo3:27017"
+    priority = 0
+    votes    = 0
+    hidden   = true
+    tags = {
+      nodeType = "analytics"
+    }
+  }
+}
+```
+
+With `command_preview = true`, the plan lists one `replSetReconfig` line per host that will be added.
+
 ## Mongos Auto-Discovery
 
 When the provider connects to a **mongos** router instead of a direct replica set member, the resource automatically:
@@ -171,3 +215,4 @@ $ terraform import mongodb_shard_config.shard01 shard01
 
 * **Delete is a no-op:** Destroying this resource only removes it from Terraform state. The replica set configuration in MongoDB is not reverted.
 * **No force reconfiguration:** The provider does not support the `force` flag for `replSetReconfig`, which is needed when a majority of members are unreachable.
+* **No member removal:** A live member without a `member` block stays in the set. Removing a member takes `rs.remove()` or a manual `replSetReconfig`. The only removal the resource performs is undoing an add whose member never became reachable.

@@ -51,9 +51,11 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	}
 }
 
-// initializeReplicaSet performs a two-phase RS initialization:
-// Phase 1: replSetInitiate with a single member (INIT-007)
-// Phase 2: replSetReconfig to add remaining members (INIT-010)
+// initializeReplicaSet initiates a fresh replica set with the first member
+// block (INIT-007), waits for it to become PRIMARY (INIT-008) and then hands
+// over to updateWithClient, which adds the remaining members one reconfig at
+// a time and applies the settings exactly as it does for a set that was
+// initialized elsewhere (INIT-010).
 func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *schema.ResourceData, i interface{}, _ *mongo.Client) diag.Diagnostics {
 	providerConf := i.(*MongoDatabaseConfiguration)
 
@@ -106,83 +108,12 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(err)
 	}
 
-	// INIT-010/011/012: Add remaining members and apply settings
-	if len(overrides) > 1 {
-		config, err := GetReplSetConfig(ctx, initClient)
-		if err != nil {
-			return diag.FromErr(err)
-		}
-
-		config.Members = BuildInitialMembers(overrides)
-		config.Version++
-
-		// INIT-012: Apply RS settings from HCL
-		config.Settings.ChainingAllowed = data.Get("chaining_allowed").(bool)
-		config.Settings.HeartbeatIntervalMillis = int64(data.Get("heartbeat_interval_millis").(int))
-		config.Settings.HeartbeatTimeoutSecs = data.Get("heartbeat_timeout_secs").(int)
-		config.Settings.ElectionTimeoutMillis = int64(data.Get("election_timeout_millis").(int))
-		// CATCHUP-002
-		config.Settings.CatchUpTimeoutMillis = int64(data.Get("catch_up_timeout_millis").(int))
-
-		// INIT-025/026: Retry replSetReconfig if the freshly elected PRIMARY
-		// cannot yet accept writes (Location17405).
-		if err := SetReplSetConfigWithRetry(ctx, initClient, config, timeout); err != nil {
-			return diag.FromErr(err)
-		}
-
-		// INIT-013/014: Wait for majority healthy
-		if err := WaitForMajorityHealthy(ctx, initClient, len(overrides), timeout); err != nil {
-			return diag.FromErr(err)
-		}
-	}
-
-	// Read back final config and set Terraform state
-	finalConfig, err := GetReplSetConfig(ctx, initClient)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	data.SetId(finalConfig.ID)
-	if err := data.Set("shard_name", finalConfig.ID); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := data.Set("chaining_allowed", finalConfig.Settings.ChainingAllowed); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := data.Set("heartbeat_interval_millis", finalConfig.Settings.HeartbeatIntervalMillis); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := data.Set("heartbeat_timeout_secs", finalConfig.Settings.HeartbeatTimeoutSecs); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := data.Set("election_timeout_millis", finalConfig.Settings.ElectionTimeoutMillis); err != nil {
-		return diag.FromErr(err)
-	}
-	// CATCHUP-004
-	if err := data.Set("catch_up_timeout_millis", finalConfig.Settings.CatchUpTimeoutMillis); err != nil {
-		return diag.FromErr(err)
-	}
-
-	managedHosts := managedHostsFromState(data)
-	memberState := RSConfigMembersToState(finalConfig.Members, managedHosts)
-	if err := data.Set("member", memberState); err != nil {
-		return diag.FromErr(err)
-	}
-
-	// OPLOG-006: Apply oplog settings after RS is initialized and stable.
-	// The no-auth fallback is allowed here: members of a freshly initialized
-	// replica set may not have users yet (INIT-018).
-	resizeAttempted, err := applyOplogConfig(ctx, initClient, data, finalConfig.Members, providerConf, true)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	// OPLOG-005: Read back oplog config
-	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, true, resizeAttempted); err != nil {
-		return diag.FromErr(err)
-	}
-
-	return nil
+	// INIT-010: the set exists with one member now. The remaining member
+	// blocks, the settings, the oplog size and the state read-back are the
+	// same reconciliation Update performs on any initialized set, so hand
+	// over to it. Users cannot exist yet (INIT-018), so the per-member oplog
+	// connections keep the no-auth fallback. OPLOG-006, OPLOG-017
+	return r.updateWithClient(ctx, data, initClient, providerConf, true)
 }
 
 // CATCHUP-005
@@ -599,13 +530,17 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
 }
 
-// updateWithClient performs the Update logic using a pre-established client.
-// This allows both Update (which creates its own authenticated connection) and
-// initializeReplicaSet (which may only have a no-auth connection) to share
-// the same reconfig logic. allowNoAuthFallback carries that distinction into
-// the per-member oplog connections: initialization paths that can run before
-// users exist pass true (INIT-018, OPLOG-017); steady-state paths pass false
-// so an authentication failure surfaces as one. // INIT-030
+// updateWithClient reconciles an initialized replica set with the Terraform
+// configuration using a pre-established client: settings and the member
+// blocks that match a live host go out in one replSetReconfig, member blocks
+// whose host is not in the set yet are then added one reconfig at a time,
+// and state is derived from the configuration the server holds afterwards.
+// Both Update (which creates its own authenticated connection) and
+// initializeReplicaSet (which may only have a no-auth connection) share it.
+// allowNoAuthFallback carries that distinction into the per-member oplog
+// connections: initialization paths that can run before users exist pass
+// true (INIT-018, OPLOG-017); steady-state paths pass false so an
+// authentication failure surfaces as one. // INIT-030
 func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) diag.Diagnostics {
 	var m ShardModel
 
@@ -635,28 +570,21 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// CATCHUP-003
 	config.Settings.CatchUpTimeoutMillis = m.Settings.CatchUpTimeoutMillis
 
-	// SHARD-003/005/006: Apply member overrides if present
+	// SHARD-003/005/006/012: apply member blocks. Blocks whose host is
+	// already a member are merged in place here; the rest are added after
+	// this reconfig, one reconfig each (SHARD-013).
+	var newMembers []MemberOverride
 	if overrides, ok := extractMemberOverrides(data); ok {
 		if errD := validateMemberOverrides(overrides); errD != nil {
 			return errD
 		}
-		// Reject any override whose host is not in the current replica set (e.g. user changed host).
-		// Changing host is not allowed; remove the member and add a new one.
-		rsHosts := make(map[string]bool, len(config.Members))
-		for _, m := range config.Members {
-			rsHosts[m.Host] = true
-		}
-		for _, o := range overrides {
-			if !rsHosts[o.Host] {
-				return diag.Errorf("changing member host is not allowed: %q is not in the replica set (current members: %v). Remove the member and add a new one with the desired host",
-					o.Host, memberHosts(config.Members))
-			}
-		}
-		merged, mergeErr := MergeMembers(config.Members, overrides)
+		existing, missing := PartitionMemberOverrides(config.Members, overrides)
+		merged, mergeErr := MergeMembers(config.Members, existing)
 		if mergeErr != nil {
 			return diag.FromErr(mergeErr)
 		}
 		config.Members = merged
+		newMembers = missing
 	}
 
 	ctx = tflog.SetField(ctx, `updated replSetConfig`, config)
@@ -690,24 +618,41 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
-	// SHARD-007/008: Read back member state for drift detection
+	// SHARD-013/021: add the members that are not in the set yet, one
+	// reconfig each. This runs after SetId and the settings writes above so
+	// a failed add cannot leave the applied settings reconfig unrecorded;
+	// the next apply partitions against the live config again and only adds
+	// what is still missing.
+	if len(newMembers) > 0 {
+		if err := AddMembersSequentially(ctx, newMembers, memberAddOpsForClient(client, timeout)); err != nil {
+			return diag.FromErr(err)
+		}
+	}
+
+	// SHARD-007/008/018: derive member state from the configuration the
+	// server holds now. The adds, and on MongoDB 5.0+ the server's own
+	// newlyAdded reconfigurations, may have changed it since the config
+	// sent above.
+	finalConfig, errD := r.getReplSetConfig(ctx, client)
+	if errD != nil {
+		return errD
+	}
 	managedHosts := managedHostsFromState(data)
-	memberState := RSConfigMembersToState(config.Members, managedHosts)
+	memberState := RSConfigMembersToState(finalConfig.Members, managedHosts)
 	if err := data.Set("member", memberState); err != nil {
 		return diag.FromErr(err)
 	}
 
-	// OPLOG-003: Apply oplog configuration after replSetReconfig. This runs
-	// after SetId and the state writes above so a fan-out failure cannot
-	// leave an applied replSetReconfig unrecorded (Create delegates here on
-	// the already-initialized paths).
-	resizeAttempted, err := applyOplogConfig(ctx, client, data, config.Members, providerConf, allowNoAuthFallback)
+	// OPLOG-003: Apply oplog configuration after the reconfigs. Members
+	// still in initial sync are skipped by the fan-out (OPLOG-016) and
+	// surface as drift once they are SECONDARY.
+	resizeAttempted, err := applyOplogConfig(ctx, client, data, finalConfig.Members, providerConf, allowNoAuthFallback)
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
 	// OPLOG-005: Read back oplog state for drift detection
-	if err := readOplogConfig(ctx, data, config.Members, providerConf, allowNoAuthFallback, resizeAttempted); err != nil {
+	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, allowNoAuthFallback, resizeAttempted); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -928,10 +873,13 @@ func resourceShardConfig() *schema.Resource {
 							Optional:    true,
 							Description: "Whether this member is hidden from client discovery",
 						},
+						// SHARD-020: the default is sent explicitly, and so is 0,
+						// which hidden members require.
 						"priority": {
 							Type:        schema.TypeFloat,
 							Optional:    true,
-							Description: "Election priority for this member (0 = never primary). MongoDB accepts 0-1000 (integer or decimal).",
+							Default:     1.0,
+							Description: "Election priority for this member (0 = never primary). MongoDB accepts 0-1000 (integer or decimal). Default 1.",
 						},
 						"tags": {
 							Type:     schema.TypeMap,
@@ -944,7 +892,8 @@ func resourceShardConfig() *schema.Resource {
 						"votes": {
 							Type:        schema.TypeInt,
 							Optional:    true,
-							Description: "Number of votes this member has in elections (0 or 1)",
+							Default:     1,
+							Description: "Number of votes this member has in elections (0 or 1). Default 1.",
 						},
 					},
 				},

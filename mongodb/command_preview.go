@@ -224,9 +224,12 @@ func buildBalancerConfigPreview(in balancerPreviewInput) string {
 	return strings.Join(cmds, "\n")
 }
 
-// buildShardConfigPreview builds the shard config preview.
+// buildShardConfigPreview builds the shard config preview. addedHosts are
+// the member hosts that are not in state yet; each is added with its own
+// replSetReconfig after the settings reconfig (SHARD-013). Whether a host is
+// already in the live set is only known at apply time, so the line says so.
 // PREVIEW-022, PREVIEW-023
-func buildShardConfigPreview(shardName string, isCreate bool) string {
+func buildShardConfigPreview(shardName string, isCreate bool, addedHosts []string) string {
 	var cmds []string
 	if isCreate {
 		cmds = append(cmds, fmt.Sprintf(
@@ -234,7 +237,50 @@ func buildShardConfigPreview(shardName string, isCreate bool) string {
 	}
 	cmds = append(cmds, fmt.Sprintf(
 		"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [...], settings: {...}}})", shardName))
+	for _, host := range addedHosts {
+		cmds = append(cmds, fmt.Sprintf(
+			"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [..., {_id: <max+1>, host: %q, ...}]}})  // adds %s unless it is already a member",
+			shardName, host, host))
+	}
 	return strings.Join(cmds, "\n")
+}
+
+// previewAddedHosts returns the hosts in newHosts that are not in oldHosts,
+// in order and without duplicates. Empty hosts (unknown at plan time) are
+// skipped.
+func previewAddedHosts(oldHosts, newHosts []string) []string {
+	seen := make(map[string]bool, len(oldHosts))
+	for _, h := range oldHosts {
+		seen[h] = true
+	}
+	var added []string
+	for _, h := range newHosts {
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		added = append(added, h)
+	}
+	return added
+}
+
+// memberHostsFromRaw extracts the host of each block from the raw value of
+// the "member" list. A host that is unknown at plan time reads as "".
+func memberHostsFromRaw(v interface{}) []string {
+	list, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	hosts := make([]string, 0, len(list))
+	for _, raw := range list {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		host, _ := m["host"].(string)
+		hosts = append(hosts, host)
+	}
+	return hosts
 }
 
 // --- ResourceDiff adapters (bridge from schema to pure functions) ---
@@ -355,9 +401,23 @@ func balancerConfigCommandPreview(d *schema.ResourceDiff) string {
 }
 
 // shardConfigCommandPreview extracts fields from ResourceDiff and delegates.
+// On Create the first member block is the replSetInitiate member and every
+// later block is an add; on Update every block whose host is not in state
+// is an add.
 func shardConfigCommandPreview(d *schema.ResourceDiff) string {
 	shardName := d.Get("shard_name").(string)
-	return buildShardConfigPreview(shardName, d.Id() == "")
+	isCreate := d.Id() == ""
+	oldRaw, newRaw := d.GetChange("member")
+	newHosts := memberHostsFromRaw(newRaw)
+	var oldHosts []string
+	if isCreate {
+		if len(newHosts) > 0 {
+			oldHosts = newHosts[:1]
+		}
+	} else {
+		oldHosts = memberHostsFromRaw(oldRaw)
+	}
+	return buildShardConfigPreview(shardName, isCreate, previewAddedHosts(oldHosts, newHosts))
 }
 
 // buildShardZonePreview builds the addShardToZone command string.

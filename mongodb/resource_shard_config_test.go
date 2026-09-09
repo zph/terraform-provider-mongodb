@@ -721,3 +721,25 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 		t.Error("fan-out must not run with oplog_size_mb unchanged")
 	}
 }
+
+// SHARD-T26: SHARD-020 — priority and votes default to 1 in the schema, so the
+// documented defaults are sent explicitly instead of relying on the server.
+func TestShardConfigSchema_MemberDefaults(t *testing.T) {
+	elem := resourceShardConfig().Schema["member"].Elem.(*schema.Resource)
+
+	priority := elem.Schema["priority"]
+	if priority.Type != schema.TypeFloat {
+		t.Errorf("priority type: want TypeFloat, got %v", priority.Type)
+	}
+	if priority.Default != 1.0 {
+		t.Errorf("priority default: want 1.0, got %v", priority.Default)
+	}
+
+	votes := elem.Schema["votes"]
+	if votes.Type != schema.TypeInt {
+		t.Errorf("votes type: want TypeInt, got %v", votes.Type)
+	}
+	if votes.Default != 1 {
+		t.Errorf("votes default: want 1, got %v", votes.Default)
+	}
+}

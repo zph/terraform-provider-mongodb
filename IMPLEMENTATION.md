@@ -26,7 +26,7 @@ mongodb/
 |---|---|---|
 | `mongodb_db_user` | Complete | CRUD + import |
 | `mongodb_db_role` | Complete | CRUD + import |
-| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block. Mongos auto-discovery via `listShards`. |
+| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block; members not yet in the set are added one reconfig at a time. Mongos auto-discovery via `listShards`. |
 | `mongodb_original_user` | Complete | CRUD (bootstrap no-auth, idempotent adopt) |
 
 ## Test Coverage
@@ -43,7 +43,8 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `provider_test.go` | 3 | Schema validation, resource map |
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
-| `resource_shard_config_test.go` | 15 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation |
+| `resource_shard_config_test.go` | 32 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation, member defaults, oplog fan-out helpers |
+| `shard_members_test.go` | 12 | PartitionMemberOverrides, NextMemberID, BuildConfigMember, AddMembersSequentially ordering and rollback, memberReachable |
 | `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
@@ -76,8 +77,10 @@ Testcontainer-based tests against a live MongoDB replica set. Run with `make tes
 | INTEG-019 | MergeMembers votes update round-trip |
 | INTEG-020 | MergeMembers host-not-found error |
 | INTEG-021 | RSConfigMembersToState read-back round-trip |
+| INTEG-022 | updateWithClient grows a one-member set to three, one reconfig per member |
+| INTEG-023 | Second apply against the grown set adds nothing |
 
-Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-016), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-010)
+Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-023), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-021)
 
 ## Make Targets
 

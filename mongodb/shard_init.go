@@ -49,7 +49,7 @@ const (
 	DefaultInitTimeoutSecs = 60
 
 	// initPollInterval is the polling interval for WaitForPrimary and
-	// WaitForMajorityHealthy.
+	// WaitForMemberReachable, and the SetReplSetConfigWithRetry backoff.
 	initPollInterval = 500 * time.Millisecond
 )
 
@@ -137,30 +137,6 @@ func IsVersionConflict(err error) bool {
 	return false
 }
 
-// BuildInitialMembers converts MemberOverride slices into ConfigMembers with
-// sequential _id values starting from 0. // INIT-005
-func BuildInitialMembers(overrides []MemberOverride) ConfigMembers {
-	if len(overrides) == 0 {
-		return ConfigMembers{}
-	}
-	members := make(ConfigMembers, len(overrides))
-	for i, o := range overrides {
-		members[i] = ConfigMember{
-			ID:           i,
-			Host:         o.Host,
-			Priority:     o.Priority,
-			Votes:        intPtr(o.Votes),
-			Hidden:       boolPtr(o.Hidden),
-			ArbiterOnly:  boolPtr(o.ArbiterOnly),
-			BuildIndexes: boolPtr(o.BuildIndexes),
-		}
-		if o.Tags != nil {
-			members[i].Tags = ReplsetTags(o.Tags)
-		}
-	}
-	return members
-}
-
 // InitiateReplicaSet runs replSetInitiate with a single-member config on the
 // given client. The config has _id=rsName, version=1, and a single member
 // with _id=0 at firstHost. // INIT-007
@@ -211,45 +187,6 @@ func WaitForPrimary(ctx context.Context, client *mongo.Client, timeout time.Dura
 		if err == nil && status.MyState == MemberStatePrimary {
 			tflog.Info(ctx, "replica set member reached PRIMARY state")
 			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(initPollInterval):
-		}
-	}
-}
-
-// WaitForMajorityHealthy polls replSetGetStatus until a majority of the
-// expected member count report a healthy state (PRIMARY or SECONDARY).
-// // INIT-013, INIT-014
-func WaitForMajorityHealthy(ctx context.Context, client *mongo.Client, expectedCount int, timeout time.Duration) error {
-	majority := (expectedCount / 2) + 1
-	deadline := time.Now().Add(timeout)
-
-	for {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("majority of members (%d/%d) did not reach healthy state within %s",
-				majority, expectedCount, timeout)
-		}
-
-		status, err := GetReplSetStatus(ctx, client)
-		if err == nil {
-			healthy := 0
-			for _, m := range status.Members {
-				if m.Health == MemberHealthUp &&
-					(m.State == MemberStatePrimary || m.State == MemberStateSecondary) {
-					healthy++
-				}
-			}
-			if healthy >= majority {
-				tflog.Info(ctx, "majority of members healthy", map[string]interface{}{
-					"healthy":  healthy,
-					"expected": expectedCount,
-				})
-				return nil
-			}
 		}
 
 		select {
