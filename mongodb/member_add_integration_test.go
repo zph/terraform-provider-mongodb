@@ -18,16 +18,14 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// memberAddCluster is three mongods on their own network. Only the first is
-// initiated, as a one-member set, the way a host-side seed leaves it; the
-// other two are plain mongods for the provider to add. Started lazily on
-// first use; tests skip if it cannot start.
+// memberAddCluster is three mongods on their own network without auth. Only
+// the first is initiated, as a one-member set; the other two wait to be
+// added. Started lazily; tests skip if it cannot start.
 var memberAddCluster struct {
-	once    sync.Once
-	err     error
-	network *testcontainers.DockerNetwork
-	nodes   []*testcontainers.DockerContainer
-	// seedHost and seedPort reach the initiated member from the test process.
+	once     sync.Once
+	err      error
+	network  *testcontainers.DockerNetwork
+	nodes    []*testcontainers.DockerContainer
 	seedHost string
 	seedPort string
 }
@@ -37,8 +35,8 @@ const (
 	memberAddPort   = "27017"
 )
 
-// memberAddAliases are the members' names on the test network, and therefore
-// the hosts in the replica set configuration.
+// memberAddAliases are the members' names on the test network, and so the
+// hosts in the replica set configuration.
 var memberAddAliases = []string{"rsgrow-a", "rsgrow-b", "rsgrow-c"}
 
 func memberAddHost(i int) string { return memberAddAliases[i] + ":" + memberAddPort }
@@ -105,8 +103,6 @@ func setupMemberAddCluster() error {
 	return nil
 }
 
-// ensureMemberAddCluster lazily starts the cluster and skips the test when it
-// cannot start, the same way ensureShardedCluster does.
 func ensureMemberAddCluster(t *testing.T) {
 	t.Helper()
 	memberAddCluster.once.Do(func() {
@@ -117,8 +113,7 @@ func ensureMemberAddCluster(t *testing.T) {
 	}
 }
 
-// teardownMemberAddCluster terminates the containers and removes the
-// network. Called from TestMain.
+// teardownMemberAddCluster is called from TestMain.
 func teardownMemberAddCluster() {
 	ctx := context.Background()
 	for _, c := range memberAddCluster.nodes {
@@ -131,12 +126,8 @@ func teardownMemberAddCluster() {
 	}
 }
 
-// newMemberAddSeedClient connects directly to the initiated member without
-// auth (the cluster runs without a keyfile), the way ConnectForInit's no-auth
-// fallback would on a fresh set.
-func newMemberAddSeedClient(t *testing.T) *mongo.Client {
-	t.Helper()
-	conf := &MongoDatabaseConfiguration{
+func memberAddProviderConf() *MongoDatabaseConfiguration {
+	return &MongoDatabaseConfiguration{
 		Config: &ClientConfig{
 			Host:        memberAddCluster.seedHost,
 			Port:        memberAddCluster.seedPort,
@@ -146,7 +137,13 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 		},
 		MaxConnLifetime: 10,
 	}
-	client, err := MongoClientInitNoAuth(context.Background(), conf)
+}
+
+// newMemberAddSeedClient connects directly to the initiated member without
+// auth, as ConnectForInit's fallback would on a fresh set.
+func newMemberAddSeedClient(t *testing.T) *mongo.Client {
+	t.Helper()
+	client, err := MongoClientInitNoAuth(context.Background(), memberAddProviderConf())
 	if err != nil {
 		t.Fatalf("MongoClientInitNoAuth failed: %v", err)
 	}
@@ -154,13 +151,30 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 	return client
 }
 
-// waitForAllMembersHealthy polls until every member is PRIMARY or SECONDARY.
+// memberAddResourceData is the three-member configuration both tests apply:
+// the seed member with a changed priority, a tagged voter and a hidden
+// priority-0 non-voter.
+func memberAddResourceData(t *testing.T) *schema.ResourceData {
+	return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name":        memberAddRSName,
+		"init_timeout_secs": 120,
+		"member": []interface{}{
+			map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
+			map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
+				"tags": map[string]interface{}{"role": "online"}},
+			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": 0, "hidden": true},
+		},
+	})
+}
+
 func waitForAllMembersHealthy(ctx context.Context, client *mongo.Client, want int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	last := ""
+	last := "no status yet"
 	for time.Now().Before(deadline) {
 		status, err := GetReplSetStatus(ctx, client)
-		if err == nil {
+		if err != nil {
+			last = err.Error()
+		} else {
 			healthy := 0
 			var states []string
 			for _, m := range status.Members {
@@ -173,38 +187,19 @@ func waitForAllMembersHealthy(ctx context.Context, client *mongo.Client, want in
 				return nil
 			}
 			last = fmt.Sprint(states)
-		} else {
-			last = err.Error()
 		}
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("not all %d members became PRIMARY/SECONDARY within %s (last: %s)", want, timeout, last)
 }
 
-// INTEG-022: updateWithClient grows a one-member set to three, one reconfig
-// per member, with _id continuing from the highest in use and every
-// per-member field applied, and derives state from the final configuration.
-// SHARD-012, SHARD-013, SHARD-014, SHARD-015, SHARD-016, SHARD-018, SHARD-020
+// INTEG-022: SHARD-012 through SHARD-018, SHARD-020 — a one-member set grows
+// to three, one reconfig per member, with every field applied.
 func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 	ensureMemberAddCluster(t)
 	client := newMemberAddSeedClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-
-	raw := map[string]interface{}{
-		"shard_name":        memberAddRSName,
-		"init_timeout_secs": 120,
-		"member": []interface{}{
-			map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
-			map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
-				"tags": map[string]interface{}{"role": "online"}},
-			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": 0, "hidden": true},
-		},
-	}
-	providerConf := &MongoDatabaseConfiguration{
-		Config:          &ClientConfig{Host: memberAddCluster.seedHost, Port: memberAddCluster.seedPort, Direct: true},
-		MaxConnLifetime: 10,
-	}
 
 	before, err := GetReplSetConfig(ctx, client)
 	if err != nil {
@@ -214,8 +209,8 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 		t.Fatalf("precondition: want a one-member set, got %d members", len(before.Members))
 	}
 
-	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, raw)
-	if diags := RShardConfig.updateWithClient(ctx, data, client, providerConf, true); diags.HasError() {
+	data := memberAddResourceData(t)
+	if diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true); diags.HasError() {
 		t.Fatalf("updateWithClient: %v", diags)
 	}
 
@@ -233,19 +228,17 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 		}
 	}
 	if cfg.Members[0].Priority != 2 {
-		t.Errorf("seed member priority: want 2 (merged in place), got %v", cfg.Members[0].Priority)
+		t.Errorf("seed member priority: want 2, got %v", cfg.Members[0].Priority)
 	}
 	if cfg.Members[1].Priority != 1 || cfg.Members[1].Tags["role"] != "online" {
 		t.Errorf("second member: want priority 1 and tag role=online, got %+v", cfg.Members[1])
 	}
-	third := cfg.Members[2]
-	if !derefBool(third.Hidden) || third.Priority != 0 || derefInt(third.Votes) != 0 {
+	if third := cfg.Members[2]; !derefBool(third.Hidden) || third.Priority != 0 || derefInt(third.Votes) != 0 {
 		t.Errorf("third member: want hidden, priority 0, votes 0, got %+v", third)
 	}
-	// One reconfig for the settings and the merged seed member, then one per
-	// added member. MongoDB 5.0+ may add reconfigs of its own (newlyAdded).
+	// Settings reconfig plus one per add; 5.0+ may add newlyAdded reconfigs.
 	if cfg.Version < before.Version+3 {
-		t.Errorf("version: want at least %d (three reconfigs), got %d", before.Version+3, cfg.Version)
+		t.Errorf("version: want at least %d, got %d", before.Version+3, cfg.Version)
 	}
 
 	stateMembers, ok := data.Get("member").([]interface{})
@@ -253,25 +246,20 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 		t.Fatalf("state member list: want 3 entries, got %v", data.Get("member"))
 	}
 	for i, raw := range stateMembers {
-		m := raw.(map[string]interface{})
-		if m["host"] != memberAddHost(i) {
-			t.Errorf("state member %d: want host %s, got %v", i, memberAddHost(i), m["host"])
+		if host := raw.(map[string]interface{})["host"]; host != memberAddHost(i) {
+			t.Errorf("state member %d: want host %s, got %v", i, memberAddHost(i), host)
 		}
 	}
 	if data.Id() != memberAddRSName {
 		t.Errorf("resource id: want %s, got %s", memberAddRSName, data.Id())
 	}
 
-	// The members were only required to be reachable; on an empty set they
-	// finish initial sync quickly.
 	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// INTEG-023: a second apply against the grown set adds nothing: every block
-// now matches a live host and is merged in place, and the ids are unchanged.
-// SHARD-012, SHARD-019
+// INTEG-023: SHARD-012, SHARD-019 — a second apply adds nothing and keeps ids.
 func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 	ensureMemberAddCluster(t)
 	client := newMemberAddSeedClient(t)
@@ -283,25 +271,11 @@ func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 		t.Fatalf("GetReplSetConfig before: %v", err)
 	}
 	if len(before.Members) != 3 {
-		t.Skipf("precondition: this test runs after the set has grown to 3 members, got %d", len(before.Members))
+		t.Skipf("precondition: runs after the set has grown to 3 members, got %d", len(before.Members))
 	}
 
-	raw := map[string]interface{}{
-		"shard_name":        memberAddRSName,
-		"init_timeout_secs": 120,
-		"member": []interface{}{
-			map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
-			map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
-				"tags": map[string]interface{}{"role": "online"}},
-			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": 0, "hidden": true},
-		},
-	}
-	providerConf := &MongoDatabaseConfiguration{
-		Config:          &ClientConfig{Host: memberAddCluster.seedHost, Port: memberAddCluster.seedPort, Direct: true},
-		MaxConnLifetime: 10,
-	}
-	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, raw)
-	if diags := RShardConfig.updateWithClient(ctx, data, client, providerConf, true); diags.HasError() {
+	data := memberAddResourceData(t)
+	if diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true); diags.HasError() {
 		t.Fatalf("updateWithClient: %v", diags)
 	}
 

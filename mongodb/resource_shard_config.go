@@ -51,11 +51,9 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 	}
 }
 
-// initializeReplicaSet initiates a fresh replica set with the first member
-// block (INIT-007), waits for it to become PRIMARY (INIT-008) and then hands
-// over to updateWithClient, which adds the remaining members one reconfig at
-// a time and applies the settings exactly as it does for a set that was
-// initialized elsewhere (INIT-010).
+// initializeReplicaSet runs replSetInitiate with the first member block,
+// waits for PRIMARY, then hands over to updateWithClient for the remaining
+// members and the settings. INIT-007, INIT-008, INIT-010
 func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *schema.ResourceData, i interface{}, _ *mongo.Client) diag.Diagnostics {
 	providerConf := i.(*MongoDatabaseConfiguration)
 
@@ -108,11 +106,9 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(err)
 	}
 
-	// INIT-010: the set exists with one member now. The remaining member
-	// blocks, the settings, the oplog size and the state read-back are the
-	// same reconciliation Update performs on any initialized set, so hand
-	// over to it. Users cannot exist yet (INIT-018), so the per-member oplog
-	// connections keep the no-auth fallback. OPLOG-006, OPLOG-017
+	// INIT-010: from here the set is reconciled like any initialized set.
+	// Users cannot exist yet, so the per-member oplog connections keep the
+	// no-auth fallback (INIT-018, OPLOG-017).
 	return r.updateWithClient(ctx, data, initClient, providerConf, true)
 }
 
@@ -531,16 +527,10 @@ func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceD
 }
 
 // updateWithClient reconciles an initialized replica set with the Terraform
-// configuration using a pre-established client: settings and the member
-// blocks that match a live host go out in one replSetReconfig, member blocks
-// whose host is not in the set yet are then added one reconfig at a time,
-// and state is derived from the configuration the server holds afterwards.
-// Both Update (which creates its own authenticated connection) and
-// initializeReplicaSet (which may only have a no-auth connection) share it.
-// allowNoAuthFallback carries that distinction into the per-member oplog
-// connections: initialization paths that can run before users exist pass
-// true (INIT-018, OPLOG-017); steady-state paths pass false so an
-// authentication failure surfaces as one. // INIT-030
+// configuration: settings and matched members in one replSetReconfig, then
+// missing members one reconfig each, then state from a final read. Shared by
+// Update and initializeReplicaSet; allowNoAuthFallback is passed through to
+// the per-member oplog connections (INIT-018, OPLOG-017). INIT-030
 func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema.ResourceData, client *mongo.Client, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) diag.Diagnostics {
 	var m ShardModel
 
@@ -570,9 +560,8 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// CATCHUP-003
 	config.Settings.CatchUpTimeoutMillis = m.Settings.CatchUpTimeoutMillis
 
-	// SHARD-003/005/006/012: apply member blocks. Blocks whose host is
-	// already a member are merged in place here; the rest are added after
-	// this reconfig, one reconfig each (SHARD-013).
+	// SHARD-012: matched blocks are merged here; the rest are added after
+	// this reconfig (SHARD-013).
 	var newMembers []MemberOverride
 	if overrides, ok := extractMemberOverrides(data); ok {
 		if errD := validateMemberOverrides(overrides); errD != nil {
@@ -618,21 +607,17 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
-	// SHARD-013/021: add the members that are not in the set yet, one
-	// reconfig each. This runs after SetId and the settings writes above so
-	// a failed add cannot leave the applied settings reconfig unrecorded;
-	// the next apply partitions against the live config again and only adds
-	// what is still missing.
+	// SHARD-013/021: adds run after the settings are in state, so a failed
+	// add cannot leave the applied reconfig unrecorded; the next apply
+	// re-partitions against the live config and adds only what is missing.
 	if len(newMembers) > 0 {
 		if err := AddMembersSequentially(ctx, newMembers, memberAddOpsForClient(client, timeout)); err != nil {
 			return diag.FromErr(err)
 		}
 	}
 
-	// SHARD-007/008/018: derive member state from the configuration the
-	// server holds now. The adds, and on MongoDB 5.0+ the server's own
-	// newlyAdded reconfigurations, may have changed it since the config
-	// sent above.
+	// SHARD-018: state comes from the config the server holds now, which the
+	// adds (and newlyAdded reconfigs on 5.0+) may have changed.
 	finalConfig, errD := r.getReplSetConfig(ctx, client)
 	if errD != nil {
 		return errD
@@ -643,9 +628,8 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
-	// OPLOG-003: Apply oplog configuration after the reconfigs. Members
-	// still in initial sync are skipped by the fan-out (OPLOG-016) and
-	// surface as drift once they are SECONDARY.
+	// OPLOG-003: members still in initial sync are skipped by the fan-out
+	// (OPLOG-016) and surface as drift once they are SECONDARY.
 	resizeAttempted, err := applyOplogConfig(ctx, client, data, finalConfig.Members, providerConf, allowNoAuthFallback)
 	if err != nil {
 		return diag.FromErr(err)
@@ -873,8 +857,7 @@ func resourceShardConfig() *schema.Resource {
 							Optional:    true,
 							Description: "Whether this member is hidden from client discovery",
 						},
-						// SHARD-020: the default is sent explicitly, and so is 0,
-						// which hidden members require.
+						// SHARD-020: sent explicitly, including 0 (required for hidden members).
 						"priority": {
 							Type:        schema.TypeFloat,
 							Optional:    true,

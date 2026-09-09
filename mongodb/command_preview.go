@@ -224,11 +224,8 @@ func buildBalancerConfigPreview(in balancerPreviewInput) string {
 	return strings.Join(cmds, "\n")
 }
 
-// buildShardConfigPreview builds the shard config preview. addedHosts are
-// the member hosts that are not in state yet; each is added with its own
-// replSetReconfig after the settings reconfig (SHARD-013). Whether a host is
-// already in the live set is only known at apply time, so the line says so.
-// PREVIEW-022, PREVIEW-023
+// buildShardConfigPreview renders the initiate/reconfig sequence; each added
+// host gets its own reconfig line (SHARD-013). PREVIEW-022, PREVIEW-023
 func buildShardConfigPreview(shardName string, isCreate bool, addedHosts []string) string {
 	var cmds []string
 	if isCreate {
@@ -245,9 +242,8 @@ func buildShardConfigPreview(shardName string, isCreate bool, addedHosts []strin
 	return strings.Join(cmds, "\n")
 }
 
-// previewAddedHosts returns the hosts in newHosts that are not in oldHosts,
-// in order and without duplicates. Empty hosts (unknown at plan time) are
-// skipped.
+// previewAddedHosts returns newHosts not in oldHosts, in order, skipping
+// duplicates and hosts unknown at plan time ("").
 func previewAddedHosts(oldHosts, newHosts []string) []string {
 	seen := make(map[string]bool, len(oldHosts))
 	for _, h := range oldHosts {
@@ -264,8 +260,8 @@ func previewAddedHosts(oldHosts, newHosts []string) []string {
 	return added
 }
 
-// memberHostsFromRaw extracts the host of each block from the raw value of
-// the "member" list. A host that is unknown at plan time reads as "".
+// memberHostsFromRaw extracts each block's host from the raw "member" list;
+// hosts unknown at plan time read as "".
 func memberHostsFromRaw(v interface{}) []string {
 	list, ok := v.([]interface{})
 	if !ok {
@@ -400,10 +396,8 @@ func balancerConfigCommandPreview(d *schema.ResourceDiff) string {
 	return buildBalancerConfigPreview(in)
 }
 
-// shardConfigCommandPreview extracts fields from ResourceDiff and delegates.
-// On Create the first member block is the replSetInitiate member and every
-// later block is an add; on Update every block whose host is not in state
-// is an add.
+// shardConfigCommandPreview treats every block after the first as an add on
+// Create, and every block whose host is not in state as an add on Update.
 func shardConfigCommandPreview(d *schema.ResourceDiff) string {
 	shardName := d.Get("shard_name").(string)
 	isCreate := d.Id() == ""
