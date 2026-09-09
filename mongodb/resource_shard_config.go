@@ -18,35 +18,47 @@ import (
 type ResourceShardConfig struct {
 }
 
-// Create detects whether the target replica set is initialized.
+// Create waits for the replica set to accept the provider connection, then
+// detects whether it is initialized. The wait is bounded by the create
+// timeout: a host that refuses connections, or that enforces authentication
+// but has not created the provider user yet, is retried (INIT-034, INIT-035),
+// so the resource can be applied in the same run as the instances it
+// configures.
 // INIT-001: If replSetGetConfig returns code 94, enter init flow.
 // INIT-002: If replSetGetConfig returns a valid config, delegate to Update.
 // INIT-015: If replSetGetConfig returns code 23, delegate to Update.
-// INIT-029: If getShardClient fails with an auth error, enter init flow
-// (user may not exist yet on a fresh instance; ConnectForInit has no-auth fallback).
+// INIT-029: If the provider user cannot log in and the host does not enforce
+// authentication, enter init flow (the user does not exist yet on a fresh
+// instance; ConnectForInit has a no-auth fallback).
 func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, cleanup, errD := r.getShardClient(ctx, data, i)
-	if errD != nil {
-		// INIT-029: Auth failure on fresh instance — fall through to init
-		// flow which uses ConnectForInit with no-auth fallback.
-		if diagContainsAuthError(errD) {
-			return r.initializeReplicaSet(ctx, data, i, nil)
-		}
-		return errD
+	providerConf := i.(*MongoDatabaseConfiguration)
+	target := providerConf.Config.Host + ":" + providerConf.Config.Port
+	tflog.Info(ctx, "waiting for the replica set to accept the provider connection", map[string]interface{}{
+		"host": target, "timeout": data.Timeout(schema.TimeoutCreate).String(),
+	})
+	connect := func(ctx context.Context) (*mongo.Client, func(), error) {
+		return r.getShardClient(ctx, data, i)
+	}
+	client, cleanup, noAuth, err := WaitForShardClient(ctx, target, providerConf.Config.Username, connect, authProbeFor(providerConf), readyPollInterval)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	if noAuth {
+		return r.initializeReplicaSet(ctx, data, i)
 	}
 	defer cleanup()
 
-	_, err := GetReplSetConfig(ctx, client)
+	_, err = GetReplSetConfig(ctx, client)
 	switch {
 	case err == nil:
 		// INIT-002: Already configured, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
+		return r.updateWithClient(ctx, data, client, providerConf, false)
 	case IsAlreadyInitialized(err):
 		// INIT-015: Already initialized, delegate to Update (client is authed)
-		return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
+		return r.updateWithClient(ctx, data, client, providerConf, false)
 	case IsNotYetInitialized(err):
 		// INIT-001: Enter initialization flow
-		return r.initializeReplicaSet(ctx, data, i, client)
+		return r.initializeReplicaSet(ctx, data, i)
 	default:
 		return diag.FromErr(err)
 	}
@@ -55,7 +67,7 @@ func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceD
 // initializeReplicaSet runs replSetInitiate with the first member block,
 // waits for PRIMARY, then hands over to updateWithClient for the remaining
 // members and the settings. INIT-007, INIT-008, INIT-010
-func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *schema.ResourceData, i interface{}, _ *mongo.Client) diag.Diagnostics {
+func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	providerConf := i.(*MongoDatabaseConfiguration)
 
 	overrides, ok := extractMemberOverrides(data)
@@ -76,8 +88,15 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(fmt.Errorf("invalid first member host %q: %w", firstHost, err))
 	}
 
-	// INIT-006/017/018/022: Direct connect with auth fallback
-	initClient, initCleanup, err := ConnectForInit(ctx, providerConf.Config, host, port, providerConf.MaxConnLifetime)
+	// INIT-006/017/018/022: Direct connect with auth fallback, retried while
+	// the host is still starting (INIT-034).
+	var initClient *mongo.Client
+	initCleanup := func() {}
+	err = waitUntilReachable(ctx, "replica set member "+firstHost, readyPollInterval, func(ctx context.Context) error {
+		var connErr error
+		initClient, initCleanup, connErr = ConnectForInit(ctx, providerConf.Config, host, port, providerConf.MaxConnLifetime)
+		return connErr
+	})
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -594,9 +613,9 @@ func connectToMember(ctx context.Context, providerConf *MongoDatabaseConfigurati
 }
 
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, cleanup, errD := r.getShardClient(ctx, data, i)
-	if errD != nil {
-		return errD
+	client, cleanup, err := r.getShardClient(ctx, data, i)
+	if err != nil {
+		return diag.FromErr(err)
 	}
 	defer cleanup()
 	return r.updateWithClient(ctx, data, client, i.(*MongoDatabaseConfiguration), false)
@@ -646,15 +665,21 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 			return errD
 		}
 		existing, missing := PartitionMemberOverrides(config.Members, overrides)
+		// SHARD-029: a host that is still starting is waited for, up to the
+		// operation timeout, before it is inspected.
 		// SHARD-027: a host that is already a member under another name must
 		// be refused before anything is sent. Under host_override the member
-		// hosts are not reachable from here (DISC-008), so every host reads
-		// as uninspectable: data-bearing adds go ahead with the wait after
-		// each add as the only check, and arbiters are refused (SHARD-028).
+		// hosts are not reachable from here (DISC-008), so neither the wait
+		// nor the probe is attempted and every host reads as uninspectable:
+		// data-bearing adds go ahead with the wait after each add as the only
+		// check, and arbiters are refused (SHARD-028).
 		if len(missing) > 0 {
 			probe := memberProbeFor(providerConf)
 			if _, overridden := data.GetOk("host_override"); overridden {
 				probe = memberProbeSkipped
+			}
+			if err := WaitForAddTargets(ctx, missing, probe, readyPollInterval); err != nil {
+				return diag.FromErr(err)
 			}
 			if err := PreflightAddTargets(ctx, config.ID, missing, probe); err != nil {
 				return diag.FromErr(err)
@@ -767,9 +792,9 @@ func (r *ResourceShardConfig) getReplSetConfig(ctx context.Context, client *mong
 }
 
 func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, cleanup, errD := r.getShardClient(ctx, data, i)
-	if errD != nil {
-		return errD
+	client, cleanup, err := r.getShardClient(ctx, data, i)
+	if err != nil {
+		return diag.FromErr(err)
 	}
 	defer cleanup()
 
@@ -815,9 +840,9 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 }
 
 func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
-	client, cleanup, errD := r.getShardClient(ctx, data, i)
-	if errD != nil {
-		return errD
+	client, cleanup, err := r.getShardClient(ctx, data, i)
+	if err != nil {
+		return diag.FromErr(err)
 	}
 	defer cleanup()
 
@@ -842,13 +867,15 @@ func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceD
 // getShardClient returns a MongoDB client connected to the appropriate shard.
 // If the provider is connected to a mongos, it auto-discovers the shard via
 // listShards and creates a temporary direct connection. The returned cleanup
-// function MUST be called via defer to disconnect temporary clients.
+// function MUST be called via defer to disconnect temporary clients. Errors
+// wrap the driver's so callers can tell a refused connection from a refused
+// login (INIT-034, INIT-035).
 // DISC-001 through DISC-010
-func (r *ResourceShardConfig) getShardClient(ctx context.Context, data *schema.ResourceData, i interface{}) (*mongo.Client, func(), diag.Diagnostics) {
+func (r *ResourceShardConfig) getShardClient(ctx context.Context, data *schema.ResourceData, i interface{}) (*mongo.Client, func(), error) {
 	providerConf := i.(*MongoDatabaseConfiguration)
 	providerClient, err := MongoClientInit(ctx, providerConf)
 	if err != nil {
-		return nil, func() {}, diag.Errorf("Error connecting to database: %s", err)
+		return nil, func() {}, fmt.Errorf("Error connecting to database: %w", err)
 	}
 
 	shardName := data.Get("shard_name").(string)
@@ -863,7 +890,7 @@ func (r *ResourceShardConfig) getShardClient(ctx context.Context, data *schema.R
 	)
 	if err != nil {
 		_ = providerClient.Disconnect(ctx)
-		return nil, func() {}, diag.Errorf("Error resolving shard client: %s", err)
+		return nil, func() {}, fmt.Errorf("Error resolving shard client: %w", err)
 	}
 
 	// Build a combined cleanup that disconnects both clients when the shard
@@ -916,6 +943,13 @@ func resourceShardConfig() *schema.Resource {
 			requireFeature("mongodb_shard_config"),
 			previewCommands(shardConfigCommandPreview),
 		),
+		// INIT-033: the create and update timeouts bound the whole operation,
+		// including the waits for hosts that are still starting (INIT-034,
+		// SHARD-029) and for the provider user to be created (INIT-035).
+		Timeouts: &schema.ResourceTimeout{
+			Create: schema.DefaultTimeout(DefaultShardConfigTimeout),
+			Update: schema.DefaultTimeout(DefaultShardConfigTimeout),
+		},
 		Schema: map[string]*schema.Schema{
 			"planned_commands": commandPreviewSchema(), // PREVIEW-005
 			"shard_name": {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -175,13 +174,15 @@ func TestIsAuthError_WrappedUnauthorized(t *testing.T) {
 	}
 }
 
-// --- diagContainsAuthError tests ---
-
-// INIT-T12m: diagContainsAuthError matches diag.Errorf from getShardClient
-func TestDiagContainsAuthError_GetShardClientFormat(t *testing.T) {
-	d := diag.Errorf("Error connecting to database: connection() error occurred during connection handshake: auth error: sasl conversation error: unable to authenticate using mechanism \"SCRAM-SHA-1\": (AuthenticationFailed) Authentication failed.")
-	if !diagContainsAuthError(d) {
-		t.Errorf("expected diagContainsAuthError to match getShardClient auth error, got false. Summary=%q Detail=%q", d[0].Summary, d[0].Detail)
+// INIT-T12m: IsAuthError matches the wrapped handshake failure getShardClient
+// returns, and IsConnectionError does not claim it (INIT-034).
+func TestIsAuthError_GetShardClientFormat(t *testing.T) {
+	err := fmt.Errorf("Error connecting to database: %w", fmt.Errorf("connection() error occurred during connection handshake: auth error: sasl conversation error: unable to authenticate using mechanism \"SCRAM-SHA-1\": (AuthenticationFailed) Authentication failed."))
+	if !IsAuthError(err) {
+		t.Errorf("expected IsAuthError to match the getShardClient auth error, got false: %v", err)
+	}
+	if IsConnectionError(err) {
+		t.Error("a refused login must not read as a connection error")
 	}
 }
 

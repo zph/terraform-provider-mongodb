@@ -2,7 +2,7 @@
 
 ~> **EXPERIMENTAL:** This resource requires opt-in via `TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config`. The API may change in future releases.
 
-`mongodb_shard_config` manages replica set configuration settings for a MongoDB shard. This resource modifies the replica set settings via `replSetReconfig`.
+`mongodb_shard_config` manages replica set configuration settings for a MongoDB shard. This resource modifies the replica set settings via `replSetReconfig`. It initializes a replica set that is not yet initialized, adds members, and can be applied in the same run as the instances it configures (see [Creating in one apply](#creating-in-one-apply)).
 
 ~> **IMPORTANT:** Delete is a no-op. When this resource is destroyed, Terraform removes it from state but does **not** reset the MongoDB replica set configuration. To restore defaults, manually reconfigure the replica set.
 
@@ -90,7 +90,24 @@ resource "mongodb_shard_config" "shard01" {
 * `catch_up_timeout_millis` - (Optional) Time in milliseconds that a newly elected primary waits for secondaries to catch up before accepting writes. `-1` means infinite (MongoDB default). Default: `-1`.
 * `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. The oplog is node-local storage, so the size is applied via `replSetResizeOplog` on **every data-bearing member** of the replica set over a direct connection to each member (secondaries first, primary last; arbiters are skipped). When reading state back, the common size across members is reported; if members disagree (for example after a partially failed resize), `-1` is stored so the divergence shows up as drift in the next plan. Requires the Terraform runner to be able to reach every member host listed in the replica set configuration. Conflicts with `host_override`. When not set, oplog sizes are left at their current values (MongoDB default).
 * `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election) and, separately, for each added or promoted member to reach the state described under [Adding members](#adding-members). Default: `60`.
-* `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
+* `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner. Also tells the resource that the member hosts are unreachable from the runner, which skips the waits and inspections described under [Adding members](#adding-members).
+
+### Timeouts
+
+The resource accepts a `timeouts` block with `create` and `update`, both `20m` by default. The timeout bounds the whole operation: the waits described under [Creating in one apply](#creating-in-one-apply), `replSetInitiate`, every `replSetReconfig` and every member wait. An apply that adds several members waits up to `init_timeout_secs` for each, so it can need more than the default.
+
+```hcl
+resource "mongodb_shard_config" "shard01" {
+  shard_name = "shard01"
+
+  timeouts {
+    create = "30m"
+    update = "15m"
+  }
+
+  # ...
+}
+```
 
 ### Member
 
@@ -126,6 +143,11 @@ resource "mongodb_shard_config" "shard01" {
   election_timeout_millis = 10000
   init_timeout_secs       = 120
 
+  # The hosts may still be booting when this is applied.
+  timeouts {
+    create = "30m"
+  }
+
   member {
     host     = "mongo1:27017"
     priority = 2
@@ -146,6 +168,20 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
+## Creating in one apply
+
+The resource can be applied in the same run as the instances it configures, for example with the `mongodb_shard_config` depending on the instances of a replica set whose first host runs a bootstrap that initiates the set and creates the first user through the localhost exception. During Create the resource waits, for up to the create timeout, for the replica set to accept the provider connection:
+
+* A host that refuses connections or does not answer, for example because it is still booting or its name does not resolve yet, is retried every 10 seconds.
+* A host that refuses the provider's credentials is probed once more, without credentials, with `replSetGetStatus`. If the command is refused as `Unauthorized`, the host enforces authentication and its bootstrap has not created the user yet, so the resource keeps waiting. If the command is answered, the host runs without access control and the provider user simply does not exist, so the resource initializes the replica set itself at once.
+* Any other error fails the apply immediately.
+
+When the create timeout elapses, the apply fails with an error naming the host, how long it waited and the last error and, if the credentials were being refused, the provider user that could not log in. SCRAM does not distinguish a missing user from a wrong password, so a wrong password also waits for the whole timeout before failing; lower `timeouts.create` while debugging credentials.
+
+Before a member is added, its host is waited for in the same way: a new member host that does not accept connections is retried every 10 seconds, up to the create or update timeout, before it is inspected as described under [Adding members](#adding-members). When the Terraform runner cannot reach the member hosts at all, set `host_override`.
+
+Terraform prints `Still creating...` while the resource waits. With `TF_LOG=INFO`, each attempt and what it is waiting for is logged.
+
 ## Adding members
 
 A `member` block whose `host` is not in the replica set is added on apply. This works the same for a set the provider initialized and for one initialized elsewhere, for example by a bootstrap script on the first host that runs `replSetInitiate` with a single member and creates the first user through the localhost exception.
@@ -154,13 +190,13 @@ Members are added one at a time, each with its own `replSetReconfig`, after the 
 
 A member that will vote is added in two steps. The first reconfig adds it with `votes: 0` and `priority: 0` and every other configured field, so it does not count toward the replica set's majority while it performs initial sync. Before MongoDB 5.0 a newly added voter counts toward majority immediately, and if it is unreachable or still syncing the set can be left with a majority of voters online but no primary that can be elected; MongoDB's own guidance for those versions is to add as a non-voter first. The resource then waits, for up to `init_timeout_secs`, until the primary reports the member in `SECONDARY` state, and a second reconfig gives it the configured `votes` and `priority`. Members configured with `votes = 0` are added in one step, and the resource only waits for them to become reachable (`health: 1` in any state). Arbiters must vote, so they are added in one step in their final form and the resource waits for `ARBITER` state.
 
-Before any member is added, the resource connects directly to each new host, without credentials, and runs `isMaster`, which needs no authentication on any MongoDB version. A host that is already a member of this set under another name, for example `mongo2.internal:27017` for a member the set knows as `mongo2:27017`, that belongs to a different set, that is a mongos, or that is not running with `--replSet`, is refused before anything is sent, and the error names the host the set knows it by. A fresh host, or one removed from the set earlier, is added. A data-bearing host the Terraform runner cannot reach is added anyway, with a log line saying it could not be inspected; the wait below still catches a mistyped host. An arbiter whose host cannot be inspected is refused instead: an arbiter is added with its vote and cannot be staged, so if its host were down a single-voter set would lose its primary and the resource could not remove the member again. Make the arbiter host reachable from the runner, or add it by hand with `rs.addArb()`. When `host_override` is set, the member hostnames are by definition not reachable from the runner, so every new host counts as uninspectable: data-bearing members are added and arbiters are refused.
+Before any member is added, the resource waits for each new host to accept a connection (see [Creating in one apply](#creating-in-one-apply)), then connects to it directly, without credentials, and runs `isMaster`, which needs no authentication on any MongoDB version. A host that is already a member of this set under another name, for example `mongo2.internal:27017` for a member the set knows as `mongo2:27017`, that belongs to a different set, that is a mongos, or that is not running with `--replSet`, is refused before anything is sent, and the error names the host the set knows it by. A fresh host, or one removed from the set earlier, is added. A host that still does not accept connections when the create or update timeout elapses fails the apply, before any reconfig, with an error naming it. When `host_override` is set, the member hostnames are by definition not reachable from the runner, so neither the wait nor the inspection is attempted and every new host counts as uninspectable: a data-bearing member is added anyway, with a log line saying it could not be inspected, and the wait after the add still catches a mistyped host; an arbiter is refused instead, because an arbiter is added with its vote and cannot be staged, so if its host were down a single-voter set would lose its primary and the resource could not remove the member again. Add such an arbiter by hand with `rs.addArb()`.
 
 If the primary reports the new member down for the whole of `init_timeout_secs`, the resource removes it again and fails the apply, so a mistyped host does not stay in the configuration. If the member's status could not be read at all during the wait, it is left in place and the apply fails with a message saying the wait was inconclusive. If the member is reachable but has not reached `SECONDARY` in time, which is the normal case when initial sync of a data-bearing set takes longer than the timeout, the member stays in the set as a non-voter with priority 0, the apply continues with the remaining blocks and succeeds with a warning, and state records the member at votes 0. The next plan shows the promotion as a pending change; apply again once the member is `SECONDARY`, or raise `init_timeout_secs`, and the resource performs only the promotion.
 
 The same two-step path applies to a block that raises the `votes` of a member already in the set: its votes and priority are left out of the settings reconfig, the resource waits for it to be `SECONDARY`, and one reconfig per member applies the new values. Lowering votes or changing any other field goes out in the settings reconfig as before.
 
-Every wait is bounded by `init_timeout_secs`, and each `replSetReconfig` is sent with `maxTimeMS` set to the time remaining, so an apply cannot hang in a server-side wait for a member that is still syncing; MongoDB 4.4 and later otherwise wait indefinitely for the previous configuration to be committed. An apply that adds several members can take a multiple of the timeout. If the apply is interrupted while waiting, a member added in that apply that the primary has reported down and never up is removed again, and any other member stays in the set as a non-voter for the next apply to finish.
+Every wait is bounded by `init_timeout_secs`, and each `replSetReconfig` is sent with `maxTimeMS` set to the time remaining, so an apply cannot hang in a server-side wait for a member that is still syncing; MongoDB 4.4 and later otherwise wait indefinitely for the previous configuration to be committed. An apply that adds several members can take a multiple of the timeout, and the whole apply is bounded by the create or update timeout (see [Timeouts](#timeouts)). If the apply is interrupted while waiting, a member added in that apply that the primary has reported down and never up is removed again, and any other member stays in the set as a non-voter for the next apply to finish.
 
 State is read back from the server after the last reconfig, whether or not every step succeeded, so state always describes the members the server has. A failed step leaves the settings and every earlier step in place; the next apply does only what is still missing.
 
@@ -224,4 +260,5 @@ $ terraform import mongodb_shard_config.shard01 shard01
 * **Delete is a no-op:** Destroying this resource only removes it from Terraform state. The replica set configuration in MongoDB is not reverted.
 * **No force reconfiguration:** The provider does not support the `force` flag for `replSetReconfig`, which is needed when a majority of members are unreachable.
 * **No member removal:** A live member without a `member` block stays in the set. Removing a member takes `rs.remove()` or a manual `replSetReconfig`. The only removal the resource performs is undoing an add whose member never became reachable.
-* **Arbiters need a reachable host:** An arbiter is only added when the Terraform runner can connect to its host and confirm it is a fresh mongod, since the add cannot be staged or undone if the host is down. With `host_override`, or when the runner cannot reach the host, add the arbiter with `rs.addArb()`.
+* **Arbiters need a reachable host:** An arbiter is only added when the Terraform runner can connect to its host and confirm it is a fresh mongod, since the add cannot be staged or undone if the host is down. With `host_override`, add the arbiter with `rs.addArb()`.
+* **A wrong password waits for the timeout:** SCRAM reports a missing user and a wrong password the same way, so during Create a wrong provider password is retried until the create timeout elapses before the apply fails.

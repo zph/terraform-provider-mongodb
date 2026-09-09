@@ -192,10 +192,52 @@ SECONDARY vote, so the retry is expected to succeed quickly.
 
 **INIT-029** (Event Driven): WHEN `getShardClient` fails with an
 authentication or authorization error (codes 13 or 18, or a SCRAM handshake
-failure) during Create, the resource SHALL fall through to the initialization
-flow via `initializeReplicaSet`, because on a fresh instance the admin user
-may not exist yet. The initialization flow uses `ConnectForInit` which has its
-own no-auth fallback via the localhost exception.
+failure) during Create, and the probe of INIT-035 finds that the host does
+not enforce authentication, the resource SHALL fall through to the
+initialization flow via `initializeReplicaSet`, because on a fresh instance
+without access control the admin user does not exist yet. The initialization
+flow uses `ConnectForInit` which has its own no-auth fallback. WHEN the probe
+finds that the host enforces authentication, the resource SHALL keep waiting
+per INIT-035 instead.
+
+## Readiness
+
+The resource can be applied in the same run as the instances it configures,
+which may still be booting, or running a bootstrap that initiates the set and
+creates the first user through the localhost exception, when Create starts.
+
+**INIT-033** (Ubiquitous): The resource SHALL declare `create` and `update`
+timeouts, each defaulting to 20 minutes, so that a `timeouts` block is
+accepted. The SDK bounds the whole Create or Update, including the waits
+below and every member wait of SHARD-016, by the respective timeout.
+
+**INIT-034** (Event Driven): WHEN, during Create, connecting as the provider
+user fails because the host cannot be reached (a refused or unanswered dial,
+a name that does not resolve, or a dropped connection, as opposed to any
+answer from the server), the resource SHALL retry the connection every 10
+seconds until it succeeds or the create timeout elapses. The same applies to
+the direct connection to the first member in the initialization flow
+(INIT-006).
+
+**INIT-035** (Event Driven): WHEN, during Create, connecting as the provider
+user fails with an authentication error, the resource SHALL connect to the
+provider host directly and without credentials and run `replSetGetStatus`.
+IF the command is refused as Unauthorized (code 13), THEN the host enforces
+authentication and either the user has not been created yet or the
+credentials are wrong, which SCRAM does not tell apart, and the resource
+SHALL keep retrying the authenticated connection per INIT-034. IF the command
+is answered, or fails for any reason other than Unauthorized such as
+NotYetInitialized, THEN the host does not enforce authentication and the
+resource SHALL enter the initialization flow at once (INIT-029). IF the probe
+gets no answer, THEN the resource SHALL keep retrying.
+
+**INIT-036** (Unwanted Behaviour): IF the create timeout elapses while the
+wait of INIT-034 or INIT-035 is still going, THEN the resource SHALL return an
+error naming the host, how long it waited, the last error the host gave and,
+when the credentials were being refused, the provider user that could not
+authenticate, without having sent any command to the replica set. Any error
+other than a failed connection or a refused login SHALL be returned at once,
+without waiting.
 
 ## Scope
 

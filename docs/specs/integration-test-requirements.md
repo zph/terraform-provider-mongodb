@@ -289,7 +289,7 @@ After INTEG-022 and INTEG-023, wait for all members to be PRIMARY or SECONDARY, 
 When `updateWithClient` runs against the grown set with a fourth block naming a host that does not resolve and `init_timeout_secs` of 15, the Integration Test Suite SHALL verify that the call returns an error naming the host and saying it was removed again, that `GetReplSetConfig` still lists exactly the three live members with unchanged `_id` values, and that the resource's `member` state lists only those three hosts.
 
 **Rationale:**
-A member the primary reports down for the whole wait is rolled back (SHARD-017), and state must describe the members the server has even when the apply fails, because the SDK persists state on error (SHARD-021). The pre-flight of SHARD-027 cannot reach the container aliases from the test process, so this test also exercises its pass-through path.
+A member the primary reports down for the whole wait is rolled back (SHARD-017), and state must describe the members the server has even when the apply fails, because the SDK persists state on error (SHARD-021). The configuration sets `host_override`, since the container aliases are unreachable from the test process, so this test also exercises the pass-through path of SHARD-027 where the host is neither waited for nor inspected.
 
 **Verification:**
 After INTEG-022, wait for all members to be PRIMARY or SECONDARY, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017`, and assert on the diagnostics, `GetReplSetConfig` and `data.Get("member")`.
@@ -312,7 +312,7 @@ After INTEG-022, wait for all members to be PRIMARY or SECONDARY, run `memberPro
 **INTEG-027:** Unwanted Behaviour
 
 **Requirement:**
-When `updateWithClient` runs against the grown set with a fourth block that has `arbiter_only = true` and a host that does not resolve, the Integration Test Suite SHALL verify that the call returns an error naming the arbiter host and saying it could not be inspected and can be added by hand, and that no `replSetReconfig` was sent.
+When `updateWithClient` runs against the grown set, with `host_override` set, with a fourth block that has `arbiter_only = true` and a host that does not resolve, the Integration Test Suite SHALL verify that the call returns an error naming the arbiter host and saying it could not be inspected and can be added by hand, and that no `replSetReconfig` was sent.
 
 **Rationale:**
 An arbiter is added with its vote and cannot be staged, so an arbiter host the pre-flight cannot inspect is refused before anything is sent (SHARD-028). A data-bearing block with the same host is added and rolled back instead (INTEG-025); the two tests together pin the difference.
@@ -322,12 +322,52 @@ After INTEG-022, call `updateWithClient` with the three-member configuration plu
 
 ---
 
+**INTEG-028:** Unwanted Behaviour
+
+**Requirement:**
+When `updateWithClient` runs against the grown set, without `host_override` and under a context that expires after 15 seconds, with a fourth block naming a host that does not resolve, the Integration Test Suite SHALL verify that the call waits until the context expires, then returns an error naming the host and saying it did not accept connections within the operation timeout, that no `replSetReconfig` was sent, and that the resource recorded no ID.
+
+**Rationale:**
+A new member host that does not answer is waited for up to the operation timeout (SHARD-029), so a node that is still starting counts as not ready yet; a host that never answers fails the apply before anything is sent, instead of being added and rolled back as under `host_override` (INTEG-025).
+
+**Verification:**
+After INTEG-022, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017`, `host_override` removed, under a 15-second context, and assert on the elapsed time, the diagnostics, `GetReplSetConfig` and `data.Id()`.
+
+---
+
+**INTEG-029:** Event Driven
+
+**Requirement:**
+Against a mongod started with `--replSet` and a keyfile (which turns access control on) that holds no user, the Integration Test Suite SHALL verify that connecting as an unknown user fails with an error that `IsAuthError` accepts and `IsConnectionError` rejects, and that the unauthenticated probe classifies as `authRequired`; and against the shared replica set, which runs without access control, that connecting as an unknown user fails the same way while the probe classifies as `authNotEnforced`.
+
+**Rationale:**
+The readiness wait decides from these classifications whether to keep waiting for a bootstrap to create the user (INIT-035) or to initialize without credentials (INIT-029); pinning them against real servers on every version in the matrix guards the string matching in `IsAuthError` and the error shapes `IsConnectionError` relies on.
+
+**Verification:**
+Start the keyfile container lazily, call `MongoClientInit`, `authProbeFor` and `classifyAuthProbe` against both containers with a user that is never created, and assert on the results.
+
+---
+
+**INTEG-030:** Event Driven
+
+**Requirement:**
+When `Create` runs against the keyfile mongod before any bootstrap has run, and the bootstrap (initiate the set with `localhost:27017`, wait for PRIMARY, create the provider user through the localhost exception) runs a few seconds later, the Integration Test Suite SHALL verify that `Create` does not return before the bootstrap, then returns without error, records the replica set name as the ID, and applies the configured `election_timeout_millis` to the set.
+
+**Rationale:**
+This is the one-apply workflow: the resource is applied while the seed host is still bootstrapping. The provider user is refused until the bootstrap creates it, the probe is refused as Unauthorized so Create keeps waiting (INIT-034 through INIT-036), and once the user exists Create continues into the reconciliation.
+
+**Verification:**
+Run `Create` in a goroutine, assert it has not returned after three seconds, run the bootstrap through container exec, then assert on the diagnostics, `data.Id()` and `GetReplSetConfig` read through an authenticated client.
+
+---
+
 ## Test File Summary
 
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/integration_test.go` | INTEG-001 through INTEG-016 | `mongodb/config.go`, `mongodb/replica_set_types.go` |
-| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-027 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-028 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
+| `mongodb/readiness_integration_test.go` | INTEG-029, INTEG-030 | `mongodb/shard_ready.go`, `mongodb/resource_shard_config.go` |
 
 ## Testcontainer Configuration
 
@@ -338,4 +378,4 @@ The integration tests use a single shared MongoDB replica set container for all 
 - Authentication: enabled with admin user
 - Container lifecycle: started once per test suite via `TestMain`, torn down after all tests complete
 
-The member-add tests (INTEG-022 through INTEG-027) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.
+The member-add tests (INTEG-022 through INTEG-028) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. The readiness tests (INTEG-029, INTEG-030) start one mongod with `--replSet` and a keyfile, neither initiated nor holding a user, the first time one of them runs. `TestMain` tears both down with the rest.

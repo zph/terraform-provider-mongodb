@@ -174,15 +174,23 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 // priority-0 member whose votes the caller picks.
 //
 // The member hosts are container aliases that only resolve inside the test
-// network, so the pre-flight probe (SHARD-027) cannot reach them from the
-// test process and logs them as uninspectable; the adds exercise that
-// pass-through path. INTEG-026 reaches the same nodes through their mapped
-// ports, which the probe can connect to, to exercise the refusal.
+// network, so the test process cannot reach them. host_override says so
+// (DISC-008): without it the readiness wait of SHARD-029 would wait for the
+// aliases until the deadline. With it, the pre-flight probe (SHARD-027) is
+// skipped as well, so the adds exercise the uninspectable pass-through path.
+// INTEG-026 and INTEG-028 drop host_override to run the wait and the probe
+// against a host the test process can reach and one it cannot.
 func memberAddResourceData(t *testing.T, thirdVotes int) *schema.ResourceData {
 	return memberAddResourceDataWith(t, 120, thirdVotes)
 }
 
 func memberAddResourceDataWith(t *testing.T, timeoutSecs, thirdVotes int, extra ...map[string]interface{}) *schema.ResourceData {
+	return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, memberAddRaw(timeoutSecs, thirdVotes, extra...))
+}
+
+// memberAddRaw is the raw configuration behind memberAddResourceDataWith, for
+// tests that adjust it before building the ResourceData.
+func memberAddRaw(timeoutSecs, thirdVotes int, extra ...map[string]interface{}) map[string]interface{} {
 	members := []interface{}{
 		map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
 		map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
@@ -192,11 +200,12 @@ func memberAddResourceDataWith(t *testing.T, timeoutSecs, thirdVotes int, extra 
 	for _, m := range extra {
 		members = append(members, m)
 	}
-	return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+	return map[string]interface{}{
 		"shard_name":        memberAddRSName,
 		"init_timeout_secs": timeoutSecs,
+		"host_override":     memberAddCluster.seedHost + ":" + memberAddCluster.seedPort,
 		"member":            members,
-	})
+	}
 }
 
 // ensureMemberAddClusterGrown brings the set to the three-member shape
@@ -498,7 +507,12 @@ func TestIntegration_ShardConfigUpdate_RefusesAliasOfLiveMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mapped host of node 0: %v", err)
 	}
-	data := memberAddResourceDataWith(t, 120, 0, map[string]interface{}{"host": alias, "priority": 1.0, "votes": 1})
+	// The three live blocks are matched, so the alias is the only host to
+	// wait for and inspect, and the test process can reach it: without
+	// host_override the readiness wait (SHARD-029) and the probe run.
+	raw := memberAddRaw(120, 0, map[string]interface{}{"host": alias, "priority": 1.0, "votes": 1})
+	delete(raw, "host_override")
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, raw)
 	diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true)
 	if !diags.HasError() {
 		t.Fatal("want the aliased member to be refused")
@@ -523,9 +537,10 @@ func TestIntegration_ShardConfigUpdate_RefusesAliasOfLiveMember(t *testing.T) {
 	}
 }
 
-// INTEG-027: SHARD-028 — an arbiter whose host the pre-flight cannot inspect
-// is refused before any reconfig is sent: it would be added with its vote,
-// and if the host were down the resource could not undo the add.
+// INTEG-027: SHARD-028 — an arbiter whose host the pre-flight cannot inspect,
+// here because host_override says the member hosts are unreachable from the
+// runner, is refused before any reconfig is sent: it would be added with its
+// vote, and if the host were down the resource could not undo the add.
 func TestIntegration_ShardConfigUpdate_RefusesUninspectableArbiter(t *testing.T) {
 	ensureMemberAddCluster(t)
 	client := newMemberAddSeedClient(t)
@@ -558,5 +573,57 @@ func TestIntegration_ShardConfigUpdate_RefusesUninspectableArbiter(t *testing.T)
 	if after.Version != before.Version || len(after.Members) != len(before.Members) {
 		t.Errorf("a refused arbiter must not send any reconfig: version %d -> %d, members %v -> %v",
 			before.Version, after.Version, memberHosts(before.Members), memberHosts(after.Members))
+	}
+}
+
+// INTEG-028: SHARD-029 — without host_override, a new member host that does
+// not answer is waited for until the operation's deadline, and the apply then
+// fails naming the host before any reconfig is sent.
+func TestIntegration_ShardConfigUpdate_WaitsForUnreachableMemberUntilDeadline(t *testing.T) {
+	ensureMemberAddCluster(t)
+	client := newMemberAddSeedClient(t)
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancelSetup()
+
+	ensureMemberAddClusterGrown(setupCtx, t, client)
+	before, err := GetReplSetConfig(setupCtx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig before: %v", err)
+	}
+
+	const bogus = "rsgrow-nope:27017"
+	raw := memberAddRaw(15, 0, map[string]interface{}{"host": bogus, "priority": 1.0, "votes": 1})
+	delete(raw, "host_override")
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, raw)
+
+	// The deadline stands in for the create or update timeout the SDK puts on
+	// the context.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true)
+	if !diags.HasError() {
+		t.Fatal("want an error once the deadline passes with the host still unreachable")
+	}
+	if elapsed := time.Since(start); elapsed < 10*time.Second {
+		t.Errorf("the wait should last until the deadline, returned after %s", elapsed)
+	}
+	msg := fmt.Sprint(diags)
+	for _, want := range []string{"replica set member " + bogus, "did not accept connections", "operation timeout"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostics should contain %q, got: %s", want, msg)
+		}
+	}
+
+	after, err := GetReplSetConfig(setupCtx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after: %v", err)
+	}
+	if after.Version != before.Version || len(after.Members) != len(before.Members) {
+		t.Errorf("a host still unreachable at the deadline must not send any reconfig: version %d -> %d, members %v -> %v",
+			before.Version, after.Version, memberHosts(before.Members), memberHosts(after.Members))
+	}
+	if data.Id() != "" {
+		t.Errorf("nothing may be recorded in state when the wait fails, got id %q", data.Id())
 	}
 }
