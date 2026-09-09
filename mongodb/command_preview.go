@@ -224,9 +224,26 @@ func buildBalancerConfigPreview(in balancerPreviewInput) string {
 	return strings.Join(cmds, "\n")
 }
 
-// buildShardConfigPreview renders the initiate/reconfig sequence; each added
-// host gets its own reconfig line (SHARD-013). PREVIEW-022, PREVIEW-023
-func buildShardConfigPreview(shardName string, isCreate bool, addedHosts []string) string {
+// previewMember is the part of a member block the preview needs.
+type previewMember struct {
+	Host        string
+	Votes       int
+	Priority    float64
+	ArbiterOnly bool
+}
+
+// previewMemberChange is one host the apply will add or promote.
+// SHARD-022, SHARD-023
+type previewMemberChange struct {
+	previewMember
+	Add     bool // host is not in the set: one reconfig adds it
+	Promote bool // a further reconfig sets votes and priority once it is SECONDARY
+}
+
+// buildShardConfigPreview renders the initiate/reconfig sequence: the
+// settings reconfig, then one line per add and one per promotion.
+// PREVIEW-022, PREVIEW-023
+func buildShardConfigPreview(shardName string, isCreate bool, changes []previewMemberChange) string {
 	var cmds []string
 	if isCreate {
 		cmds = append(cmds, fmt.Sprintf(
@@ -234,49 +251,78 @@ func buildShardConfigPreview(shardName string, isCreate bool, addedHosts []strin
 	}
 	cmds = append(cmds, fmt.Sprintf(
 		"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [...], settings: {...}}})", shardName))
-	for _, host := range addedHosts {
-		cmds = append(cmds, fmt.Sprintf(
-			"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [..., {_id: <max+1>, host: %q, ...}]}})  // adds %s unless it is already a member",
-			shardName, host, host))
+	for _, c := range changes {
+		switch {
+		case c.Add && c.ArbiterOnly:
+			cmds = append(cmds, fmt.Sprintf(
+				"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [..., {_id: <max+1>, host: %q, arbiterOnly: true}]}})  // adds %s as an arbiter unless it is already a member",
+				shardName, c.Host, c.Host))
+		case c.Add:
+			cmds = append(cmds, fmt.Sprintf(
+				"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [..., {_id: <max+1>, host: %q, votes: 0, priority: 0, ...}]}})  // adds %s as a non-voting member unless it is already a member",
+				shardName, c.Host, c.Host))
+		}
+		if c.Promote {
+			cmds = append(cmds, fmt.Sprintf(
+				"db.adminCommand({replSetReconfig: {_id: %q, version: <current+1>, members: [..., {host: %q, votes: %d, priority: %v, ...}]}})  // once %s is SECONDARY",
+				shardName, c.Host, c.Votes, c.Priority, c.Host))
+		}
 	}
 	return strings.Join(cmds, "\n")
 }
 
-// previewAddedHosts returns newHosts not in oldHosts, in order, skipping
-// duplicates and hosts unknown at plan time ("").
-func previewAddedHosts(oldHosts, newHosts []string) []string {
-	seen := make(map[string]bool, len(oldHosts))
-	for _, h := range oldHosts {
-		seen[h] = true
-	}
-	var added []string
-	for _, h := range newHosts {
-		if h == "" || seen[h] {
-			continue
-		}
-		seen[h] = true
-		added = append(added, h)
-	}
-	return added
-}
-
-// memberHostsFromRaw extracts each block's host from the raw "member" list;
-// hosts unknown at plan time read as "".
-func memberHostsFromRaw(v interface{}) []string {
+// previewMembersFromRaw reads host, votes, priority and arbiter_only from the
+// raw "member" list; hosts unknown at plan time read as "".
+func previewMembersFromRaw(v interface{}) []previewMember {
 	list, ok := v.([]interface{})
 	if !ok {
 		return nil
 	}
-	hosts := make([]string, 0, len(list))
+	members := make([]previewMember, 0, len(list))
 	for _, raw := range list {
 		m, ok := raw.(map[string]interface{})
 		if !ok {
 			continue
 		}
 		host, _ := m["host"].(string)
-		hosts = append(hosts, host)
+		votes, _ := m["votes"].(int)
+		arbiter, _ := m["arbiter_only"].(bool)
+		members = append(members, previewMember{
+			Host: host, Votes: votes, Priority: toFloat64(m["priority"]), ArbiterOnly: arbiter,
+		})
 	}
-	return hosts
+	return members
+}
+
+// previewMemberChanges lists, in block order, the hosts the apply will add
+// (not in state) and promote (added with votes or priority above 0, or in
+// state with fewer votes). Duplicate and unknown hosts are skipped.
+func previewMemberChanges(state, planned []previewMember) []previewMemberChange {
+	live := make(map[string]previewMember, len(state))
+	for _, m := range state {
+		live[m.Host] = m
+	}
+	seen := make(map[string]bool, len(planned))
+	var changes []previewMemberChange
+	for _, m := range planned {
+		if m.Host == "" || seen[m.Host] {
+			continue
+		}
+		seen[m.Host] = true
+		prev, known := live[m.Host]
+		c := previewMemberChange{previewMember: m}
+		switch {
+		case !known:
+			c.Add = true
+			c.Promote = !m.ArbiterOnly && (m.Votes != 0 || m.Priority != 0)
+		case m.Votes > prev.Votes:
+			c.Promote = true
+		default:
+			continue
+		}
+		changes = append(changes, c)
+	}
+	return changes
 }
 
 // --- ResourceDiff adapters (bridge from schema to pure functions) ---
@@ -397,21 +443,24 @@ func balancerConfigCommandPreview(d *schema.ResourceDiff) string {
 }
 
 // shardConfigCommandPreview treats every block after the first as an add on
-// Create, and every block whose host is not in state as an add on Update.
+// Create, and compares blocks against state on Update.
 func shardConfigCommandPreview(d *schema.ResourceDiff) string {
 	shardName := d.Get("shard_name").(string)
 	isCreate := d.Id() == ""
 	oldRaw, newRaw := d.GetChange("member")
-	newHosts := memberHostsFromRaw(newRaw)
-	var oldHosts []string
+	planned := previewMembersFromRaw(newRaw)
+	var state []previewMember
 	if isCreate {
-		if len(newHosts) > 0 {
-			oldHosts = newHosts[:1]
+		if len(planned) > 0 {
+			// replSetInitiate gives the first member votes 1 and priority 1.
+			first := planned[0]
+			first.Votes, first.Priority = 1, 1
+			state = []previewMember{first}
 		}
 	} else {
-		oldHosts = memberHostsFromRaw(oldRaw)
+		state = previewMembersFromRaw(oldRaw)
 	}
-	return buildShardConfigPreview(shardName, isCreate, previewAddedHosts(oldHosts, newHosts))
+	return buildShardConfigPreview(shardName, isCreate, previewMemberChanges(state, planned))
 }
 
 // buildShardZonePreview builds the addShardToZone command string.

@@ -560,20 +560,24 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// CATCHUP-003
 	config.Settings.CatchUpTimeoutMillis = m.Settings.CatchUpTimeoutMillis
 
-	// SHARD-012: matched blocks are merged here; the rest are added after
-	// this reconfig (SHARD-013).
-	var newMembers []MemberOverride
+	// SHARD-012: matched blocks are merged here, except that a block raising
+	// a member's votes keeps the live votes and priority for now (SHARD-023);
+	// promotions and adds each get their own reconfig after this one
+	// (SHARD-013).
+	var newMembers, promotions []MemberOverride
 	if overrides, ok := extractMemberOverrides(data); ok {
 		if errD := validateMemberOverrides(overrides); errD != nil {
 			return errD
 		}
 		existing, missing := PartitionMemberOverrides(config.Members, overrides)
-		merged, mergeErr := MergeMembers(config.Members, existing)
+		held, promote := HoldPromotions(config.Members, existing)
+		merged, mergeErr := MergeMembers(config.Members, held)
 		if mergeErr != nil {
 			return diag.FromErr(mergeErr)
 		}
 		config.Members = merged
 		newMembers = missing
+		promotions = promote
 	}
 
 	ctx = tflog.SetField(ctx, `updated replSetConfig`, config)
@@ -607,11 +611,19 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		return diag.FromErr(err)
 	}
 
-	// SHARD-013/021: adds run after the settings are in state, so a failed
-	// add cannot leave the applied reconfig unrecorded; the next apply
-	// re-partitions against the live config and adds only what is missing.
+	// SHARD-013/021/023: promotions and adds run after the settings are in
+	// state, so a failure here cannot leave the applied reconfig unrecorded;
+	// the next apply re-partitions against the live config and finishes only
+	// what is still missing. Promotions go first: they are members from an
+	// earlier apply that have had time to sync.
+	ops := memberAddOpsForClient(client, timeout)
+	if len(promotions) > 0 {
+		if err := PromoteMembersSequentially(ctx, promotions, ops); err != nil {
+			return diag.FromErr(err)
+		}
+	}
 	if len(newMembers) > 0 {
-		if err := AddMembersSequentially(ctx, newMembers, memberAddOpsForClient(client, timeout)); err != nil {
+		if err := AddMembersSequentially(ctx, newMembers, ops); err != nil {
 			return diag.FromErr(err)
 		}
 	}

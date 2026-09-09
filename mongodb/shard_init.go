@@ -49,7 +49,7 @@ const (
 	DefaultInitTimeoutSecs = 60
 
 	// initPollInterval is the polling interval for WaitForPrimary and
-	// WaitForMemberReachable, and the SetReplSetConfigWithRetry backoff.
+	// WaitForMemberState, and the SetReplSetConfigWithRetry backoff.
 	initPollInterval = 500 * time.Millisecond
 )
 

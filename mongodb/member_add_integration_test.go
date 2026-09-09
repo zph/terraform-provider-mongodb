@@ -151,10 +151,10 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 	return client
 }
 
-// memberAddResourceData is the three-member configuration both tests apply:
+// memberAddResourceData is the three-member configuration the tests apply:
 // the seed member with a changed priority, a tagged voter and a hidden
-// priority-0 non-voter.
-func memberAddResourceData(t *testing.T) *schema.ResourceData {
+// priority-0 member whose votes the caller picks.
+func memberAddResourceData(t *testing.T, thirdVotes int) *schema.ResourceData {
 	return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
 		"shard_name":        memberAddRSName,
 		"init_timeout_secs": 120,
@@ -162,7 +162,7 @@ func memberAddResourceData(t *testing.T) *schema.ResourceData {
 			map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
 			map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
 				"tags": map[string]interface{}{"role": "online"}},
-			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": 0, "hidden": true},
+			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": thirdVotes, "hidden": true},
 		},
 	})
 }
@@ -193,8 +193,9 @@ func waitForAllMembersHealthy(ctx context.Context, client *mongo.Client, want in
 	return fmt.Errorf("not all %d members became PRIMARY/SECONDARY within %s (last: %s)", want, timeout, last)
 }
 
-// INTEG-022: SHARD-012 through SHARD-018, SHARD-020 — a one-member set grows
-// to three, one reconfig per member, with every field applied.
+// INTEG-022: SHARD-012 through SHARD-018, SHARD-020, SHARD-022 — a one-member
+// set grows to three: the voter is staged then promoted, the non-voter is
+// added in one step, and every field is applied.
 func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 	ensureMemberAddCluster(t)
 	client := newMemberAddSeedClient(t)
@@ -209,7 +210,7 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 		t.Fatalf("precondition: want a one-member set, got %d members", len(before.Members))
 	}
 
-	data := memberAddResourceData(t)
+	data := memberAddResourceData(t, 0)
 	if diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true); diags.HasError() {
 		t.Fatalf("updateWithClient: %v", diags)
 	}
@@ -230,15 +231,16 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 	if cfg.Members[0].Priority != 2 {
 		t.Errorf("seed member priority: want 2, got %v", cfg.Members[0].Priority)
 	}
-	if cfg.Members[1].Priority != 1 || cfg.Members[1].Tags["role"] != "online" {
-		t.Errorf("second member: want priority 1 and tag role=online, got %+v", cfg.Members[1])
+	if second := cfg.Members[1]; second.Priority != 1 || derefInt(second.Votes) != 1 || second.Tags["role"] != "online" {
+		t.Errorf("second member: want priority 1, votes 1 and tag role=online after promotion, got %+v", second)
 	}
 	if third := cfg.Members[2]; !derefBool(third.Hidden) || third.Priority != 0 || derefInt(third.Votes) != 0 {
 		t.Errorf("third member: want hidden, priority 0, votes 0, got %+v", third)
 	}
-	// Settings reconfig plus one per add; 5.0+ may add newlyAdded reconfigs.
-	if cfg.Version < before.Version+3 {
-		t.Errorf("version: want at least %d, got %d", before.Version+3, cfg.Version)
+	// Settings reconfig, staged add and promotion of the voter, one add for
+	// the non-voter; 5.0+ may add newlyAdded reconfigs on top.
+	if cfg.Version < before.Version+4 {
+		t.Errorf("version: want at least %d, got %d", before.Version+4, cfg.Version)
 	}
 
 	stateMembers, ok := data.Get("member").([]interface{})
@@ -274,7 +276,7 @@ func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 		t.Skipf("precondition: runs after the set has grown to 3 members, got %d", len(before.Members))
 	}
 
-	data := memberAddResourceData(t)
+	data := memberAddResourceData(t, 0)
 	if diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true); diags.HasError() {
 		t.Fatalf("updateWithClient: %v", diags)
 	}
@@ -290,5 +292,50 @@ func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 		if after.Members[i].ID != before.Members[i].ID || after.Members[i].Host != before.Members[i].Host {
 			t.Errorf("member %d changed: before %+v after %+v", i, before.Members[i], after.Members[i])
 		}
+	}
+}
+
+// INTEG-024: SHARD-023 — raising a live member's votes waits for SECONDARY
+// and goes out in its own reconfig, leaving the member's other fields alone.
+func TestIntegration_ShardConfigUpdate_PromotesLiveMember(t *testing.T) {
+	ensureMemberAddCluster(t)
+	client := newMemberAddSeedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	before, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig before: %v", err)
+	}
+	if len(before.Members) != 3 || derefInt(before.Members[2].Votes) != 0 {
+		t.Skipf("precondition: runs after the set has grown to 3 members with a non-voting third, got %v", before.Members)
+	}
+	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	data := memberAddResourceData(t, 1)
+	if diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true); diags.HasError() {
+		t.Fatalf("updateWithClient: %v", diags)
+	}
+
+	after, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after: %v", err)
+	}
+	if len(after.Members) != 3 {
+		t.Fatalf("want 3 members, got %d", len(after.Members))
+	}
+	third := after.Members[2]
+	if derefInt(third.Votes) != 1 || third.Priority != 0 || !derefBool(third.Hidden) || third.ID != before.Members[2].ID {
+		t.Errorf("third member: want votes 1 with priority 0, hidden and the same _id, got %+v", third)
+	}
+	// Settings reconfig plus the promotion.
+	if after.Version < before.Version+2 {
+		t.Errorf("version: want at least %d, got %d", before.Version+2, after.Version)
+	}
+	if stateMembers := data.Get("member").([]interface{}); len(stateMembers) != 3 ||
+		stateMembers[2].(map[string]interface{})["votes"] != 1 {
+		t.Errorf("state should show the promoted votes, got %v", data.Get("member"))
 	}
 }

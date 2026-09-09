@@ -247,10 +247,10 @@ Call `GetReplSetConfig`, set `ChainingAllowed=false`, `HeartbeatIntervalMillis=3
 **INTEG-022:** Event Driven
 
 **Requirement:**
-When `updateWithClient` runs against a one-member replica set with three `member` blocks, the Integration Test Suite SHALL verify that the two missing members are added with `_id` 1 and 2, that every per-member field (priority, votes, hidden, tags) is applied, that the seed member's fields are merged in place, that the config version advanced by at least three, that the `member` state lists all three hosts in block order, and that all three members become PRIMARY or SECONDARY.
+When `updateWithClient` runs against a one-member replica set with three `member` blocks, the Integration Test Suite SHALL verify that the two missing members are added with `_id` 1 and 2, that the voting member ends with its configured votes and priority after being staged as a non-voter, that every per-member field (priority, votes, hidden, tags) is applied, that the seed member's fields are merged in place, that the config version advanced by at least four (settings, staged add, promotion, second add), that the `member` state lists all three hosts in block order, and that all three members become PRIMARY or SECONDARY.
 
 **Rationale:**
-This is the host-side-seed workflow: something else initiates the set with one member and the provider grows it. It exercises SHARD-012 through SHARD-018 and SHARD-020 against a real server on every version in the matrix, including the priority-0 hidden member that the `omitempty` tag used to break.
+This is the host-side-seed workflow: something else initiates the set with one member and the provider grows it. It exercises SHARD-012 through SHARD-018, SHARD-020 and SHARD-022 against a real server on every version in the matrix, including the priority-0 hidden member that the `omitempty` tag used to break.
 
 **Verification:**
 Start three mongods on one Docker network, `rs.initiate` the first alone, build a `ResourceData` with three blocks via `schema.TestResourceDataRaw`, call `RShardConfig.updateWithClient`, and assert on `GetReplSetConfig`, the resource state and `replSetGetStatus`.
@@ -270,12 +270,25 @@ Call `updateWithClient` again with the same configuration and compare `GetReplSe
 
 ---
 
+**INTEG-024:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with the hidden member's block changed from `votes = 0` to `votes = 1`, the Integration Test Suite SHALL verify that the member ends with votes 1, priority 0, hidden and the same `_id`, that the config version advanced by at least two (settings, promotion), and that the resource state shows the new votes.
+
+**Rationale:**
+Raising a live member's votes is the second half of a staged add and the path for turning a non-voter into a voter. It must wait for SECONDARY and go out in its own reconfig (SHARD-023).
+
+**Verification:**
+After INTEG-022 and INTEG-023, wait for all members to be PRIMARY or SECONDARY, call `updateWithClient` with the third block's votes set to 1, and assert on `GetReplSetConfig` and the resource state.
+
+---
+
 ## Test File Summary
 
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/integration_test.go` | INTEG-001 through INTEG-016 | `mongodb/config.go`, `mongodb/replica_set_types.go` |
-| `mongodb/member_add_integration_test.go` | INTEG-022, INTEG-023 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-024 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
 
 ## Testcontainer Configuration
 
@@ -286,4 +299,4 @@ The integration tests use a single shared MongoDB replica set container for all 
 - Authentication: enabled with admin user
 - Container lifecycle: started once per test suite via `TestMain`, torn down after all tests complete
 
-The member-add tests (INTEG-022, INTEG-023) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.
+The member-add tests (INTEG-022 through INTEG-024) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.

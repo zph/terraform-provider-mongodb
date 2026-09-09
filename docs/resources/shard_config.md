@@ -89,7 +89,7 @@ resource "mongodb_shard_config" "shard01" {
 * `election_timeout_millis` - (Optional) Time limit in milliseconds for detecting when a primary is unreachable and calling an election. Default: `10000`.
 * `catch_up_timeout_millis` - (Optional) Time in milliseconds that a newly elected primary waits for secondaries to catch up before accepting writes. `-1` means infinite (MongoDB default). Default: `-1`.
 * `oplog_size_mb` - (Optional) Maximum oplog size in megabytes. The oplog is node-local storage, so the size is applied via `replSetResizeOplog` on **every data-bearing member** of the replica set over a direct connection to each member (secondaries first, primary last; arbiters are skipped). When reading state back, the common size across members is reported; if members disagree (for example after a partially failed resize), `-1` is stored so the divergence shows up as drift in the next plan. Requires the Terraform runner to be able to reach every member host listed in the replica set configuration. Conflicts with `host_override`. When not set, oplog sizes are left at their current values (MongoDB default).
-* `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election) and, separately, for each added member to become reachable (see [Adding members](#adding-members)). Default: `60`.
+* `init_timeout_secs` - (Optional) Timeout in seconds for replica set initialization (waiting for PRIMARY election) and, separately, for each added or promoted member to reach the state described under [Adding members](#adding-members). Default: `60`.
 * `host_override` - (Optional) Override the shard host:port discovered via `listShards`. Use when internal hostnames from `listShards` are unreachable from the Terraform runner.
 
 ### Member
@@ -150,11 +150,15 @@ resource "mongodb_shard_config" "shard01" {
 
 A `member` block whose `host` is not in the replica set is added on apply. This works the same for a set the provider initialized and for one initialized elsewhere, for example by a bootstrap script on the first host that runs `replSetInitiate` with a single member and creates the first user through the localhost exception.
 
-Members are added one at a time, each with its own `replSetReconfig`, after the reconfig that applies the settings and the matched members. MongoDB 4.4 rejects a reconfig that adds more than one voting member; one member per reconfig is correct on every version. Before each add the configuration is re-read from the server, and the new member gets an `_id` one higher than the highest in use, never its position in the list.
+Members are added one at a time, each with its own `replSetReconfig`, after the reconfig that applies the settings and the matched members. MongoDB 4.4 and later reject a reconfig that adds more than one voting member. Before each add the configuration is re-read from the server, and the new member gets an `_id` one higher than the highest in use, never its position in the list.
 
-After each add the resource waits, for up to `init_timeout_secs`, until the primary reports the new member as reachable (`health: 1` in any state, including `STARTUP2`). It does not wait for initial sync, which can take hours on a set with data. If the member does not become reachable in time, the resource removes it again and fails the apply, so a mistyped host does not stay in the configuration as a permanently unreachable member. Fix the host and apply again.
+A member that will vote is added in two steps. The first reconfig adds it with `votes: 0` and `priority: 0` and every other configured field, so it does not count toward the replica set's majority while it performs initial sync. Before MongoDB 5.0 a newly added voter counts toward majority immediately, and if it is unreachable or still syncing the set can be left with a majority of voters online but no primary that can be elected; MongoDB's own guidance for those versions is to add as a non-voter first. The resource then waits, for up to `init_timeout_secs`, until the primary reports the member in `SECONDARY` state, and a second reconfig gives it the configured `votes` and `priority`. Members configured with `votes = 0` are added in one step, and the resource only waits for them to become reachable (`health: 1` in any state). Arbiters must vote, so they are added in one step in their final form and the resource waits for `ARBITER` state.
 
-State is read back from the server after the last reconfig. A failed add leaves the settings and any members added before it in place; the next apply adds only what is still missing.
+If a new member does not become reachable at all within `init_timeout_secs`, the resource removes it again and fails the apply, so a mistyped host does not stay in the configuration. If it is reachable but has not reached `SECONDARY` in time, which happens when initial sync of a data-bearing set takes longer than the timeout, the member stays in the set as a non-voter with priority 0 and the apply fails with a message saying so. Apply again once the member is `SECONDARY`, or raise `init_timeout_secs`: the next apply finds the member in the set and performs only the promotion.
+
+The same two-step path applies to a block that raises the `votes` of a member already in the set: its votes and priority are left out of the settings reconfig, the resource waits for it to be `SECONDARY`, and one reconfig per member applies the new values. Lowering votes or changing any other field goes out in the settings reconfig as before.
+
+State is read back from the server after the last reconfig. A failed step leaves the settings and every earlier step in place; the next apply does only what is still missing.
 
 ### Growing a one-member set
 
@@ -169,12 +173,12 @@ resource "mongodb_shard_config" "shard01" {
     priority = 2
   }
 
-  # Added first.
+  # Added first, as a non-voter; promoted to votes 1 / priority 1 once SECONDARY.
   member {
     host = "mongo2:27017"
   }
 
-  # Added second.
+  # Added second, in one step: it stays a non-voter.
   member {
     host     = "mongo3:27017"
     priority = 0
@@ -187,7 +191,7 @@ resource "mongodb_shard_config" "shard01" {
 }
 ```
 
-With `command_preview = true`, the plan lists one `replSetReconfig` line per host that will be added.
+With `command_preview = true`, the plan lists one `replSetReconfig` line per add and one per promotion.
 
 ## Mongos Auto-Discovery
 

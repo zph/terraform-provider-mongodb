@@ -68,7 +68,7 @@ primary within the timeout period.
 the resource SHALL run the Update reconciliation against it over the
 initialization connection: one `replSetReconfig` applies the settings and the
 first member's fields, then each remaining `member` block is added per
-SHARD-013 through SHARD-017, and state is derived from the final configuration
+SHARD-013 through SHARD-017 and SHARD-022, and state is derived from the final configuration
 per SHARD-018. No initialization-specific member logic exists beyond
 `replSetInitiate`.
 
@@ -85,16 +85,19 @@ catch_up_timeout_millis) from the HCL configuration in the first
 ## Health Check
 
 **INIT-013** (Event Driven): WHEN a member has been added, the resource SHALL
-wait until the primary reports it with `health: 1` in any state, or until the
-initialization timeout is reached (SHARD-016). Initial sync is not waited
-for. This supersedes the earlier majority-healthy wait, which never observed
-the added member once the set had two or more members and, for a one-member
-set, blocked on initial sync.
+wait until the primary reports it with `health: 1` and in the state its block
+requires (`SECONDARY` before it is given votes, `ARBITER` for an arbiter, any
+state for a member that stays a non-voter), or until the initialization
+timeout is reached (SHARD-016, SHARD-022). This supersedes the earlier
+majority-healthy wait, which never observed the added member once the set had
+two or more members.
 
-**INIT-014** (Unwanted Behaviour): IF the added member does not become
+**INIT-014** (Unwanted Behaviour): IF the added member never becomes
 reachable within the initialization timeout, THEN the resource SHALL remove
 it again and return a diagnostic error naming the host and the last observed
-status (SHARD-017).
+status. IF it is reachable but not yet in the required state, THEN the
+resource SHALL leave it as a non-voter and return an error saying the next
+apply will promote it (SHARD-017).
 
 ## Idempotency
 

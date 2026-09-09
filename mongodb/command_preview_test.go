@@ -234,12 +234,16 @@ func TestBalancerConfigPreviewBuild_Disabled(t *testing.T) {
 
 // PREVIEW-T20: PREVIEW-022, PREVIEW-023 — shard_config preview
 func TestShardConfigPreviewBuild_Create(t *testing.T) {
-	got := buildShardConfigPreview("shard01", true, []string{"mongo2:27017", "mongo3:27017"})
+	got := buildShardConfigPreview("shard01", true, []previewMemberChange{
+		{previewMember: previewMember{Host: "mongo2:27017", Votes: 1, Priority: 1}, Add: true, Promote: true},
+		{previewMember: previewMember{Host: "mongo3:27017"}, Add: true},
+	})
 	if !strings.Contains(got, "replSetInitiate") {
 		t.Errorf("create should show replSetInitiate, got: %s", got)
 	}
-	if n := strings.Count(got, "replSetReconfig"); n != 3 {
-		t.Errorf("create with two added hosts should show three replSetReconfig lines, got %d: %s", n, got)
+	// settings, add mongo2, promote mongo2, add mongo3
+	if n := strings.Count(got, "replSetReconfig"); n != 4 {
+		t.Errorf("create with a voting and a non-voting add should show four replSetReconfig lines, got %d: %s", n, got)
 	}
 	for _, host := range []string{"mongo2:27017", "mongo3:27017"} {
 		if !strings.Contains(got, host) {
@@ -254,53 +258,99 @@ func TestShardConfigPreviewBuild_Update(t *testing.T) {
 		t.Errorf("update should not show replSetInitiate, got: %s", got)
 	}
 	if n := strings.Count(got, "replSetReconfig"); n != 1 {
-		t.Errorf("update without added hosts should show one replSetReconfig, got %d: %s", n, got)
+		t.Errorf("update without member changes should show one replSetReconfig, got %d: %s", n, got)
 	}
 }
 
-// PREVIEW-T22: PREVIEW-023 — update lists one reconfig per added host, with _id max+1
-func TestShardConfigPreviewBuild_UpdateAddsHosts(t *testing.T) {
-	got := buildShardConfigPreview("shard01", false, []string{"mongo3:27017"})
-	if n := strings.Count(got, "replSetReconfig"); n != 2 {
-		t.Errorf("update with one added host should show two replSetReconfig lines, got %d: %s", n, got)
+// PREVIEW-T22: PREVIEW-023, SHARD-022 — a voting add is two lines: the staged add, then the promotion
+func TestShardConfigPreviewBuild_UpdateAddsVoter(t *testing.T) {
+	got := buildShardConfigPreview("shard01", false, []previewMemberChange{
+		{previewMember: previewMember{Host: "mongo3:27017", Votes: 1, Priority: 2}, Add: true, Promote: true},
+	})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want settings, add, promote = 3 lines, got %d: %s", len(lines), got)
 	}
-	if !strings.Contains(got, `host: "mongo3:27017"`) {
-		t.Errorf("added host line should name the host, got: %s", got)
+	if !strings.Contains(lines[1], `host: "mongo3:27017", votes: 0, priority: 0`) || !strings.Contains(lines[1], "<max+1>") {
+		t.Errorf("add line should stage the member as a non-voter with _id max+1, got: %s", lines[1])
 	}
-	if !strings.Contains(got, "<max+1>") {
-		t.Errorf("added host line should show _id as max+1, got: %s", got)
+	if !strings.Contains(lines[2], `host: "mongo3:27017", votes: 1, priority: 2`) || !strings.Contains(lines[2], "SECONDARY") {
+		t.Errorf("promotion line should carry the configured votes and priority, got: %s", lines[2])
 	}
 }
 
-// PREVIEW-T23: previewAddedHosts skips known, empty and duplicate hosts, keeps order
-func TestPreviewAddedHosts(t *testing.T) {
-	got := previewAddedHosts([]string{"a:1"}, []string{"a:1", "b:1", "", "b:1", "c:1"})
-	want := []string{"b:1", "c:1"}
+// PREVIEW-T23: arbiters and non-voters are one line each; a promotion of a live member is one line
+func TestShardConfigPreviewBuild_ArbiterNonVoterPromotion(t *testing.T) {
+	got := buildShardConfigPreview("shard01", false, []previewMemberChange{
+		{previewMember: previewMember{Host: "arb:27017", Votes: 1, ArbiterOnly: true}, Add: true},
+		{previewMember: previewMember{Host: "hidden:27017"}, Add: true},
+		{previewMember: previewMember{Host: "old:27017", Votes: 1, Priority: 1}, Promote: true},
+	})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("want settings + 3 lines, got %d: %s", len(lines), got)
+	}
+	if !strings.Contains(lines[1], `host: "arb:27017", arbiterOnly: true`) || strings.Contains(lines[1], "votes: 0") {
+		t.Errorf("arbiter line should add in final form, got: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `host: "hidden:27017", votes: 0, priority: 0`) || strings.Contains(lines[2], "SECONDARY") {
+		t.Errorf("non-voter line should be a single staged add, got: %s", lines[2])
+	}
+	if strings.Contains(lines[3], "<max+1>") || !strings.Contains(lines[3], `host: "old:27017", votes: 1, priority: 1`) {
+		t.Errorf("promotion of a live member should not look like an add, got: %s", lines[3])
+	}
+}
+
+// PREVIEW-T24: previewMemberChanges — adds and promotions in block order; known, empty and duplicate hosts skipped
+func TestPreviewMemberChanges(t *testing.T) {
+	state := []previewMember{{Host: "a:1", Votes: 1, Priority: 1}, {Host: "d:1"}}
+	planned := []previewMember{
+		{Host: "a:1", Votes: 1, Priority: 1},       // unchanged
+		{Host: "b:1", Votes: 1, Priority: 1},       // add, then promote
+		{Host: ""},                                 // unknown at plan time
+		{Host: "b:1", Votes: 1, Priority: 1},       // duplicate
+		{Host: "c:1"},                              // add as a non-voter, nothing more
+		{Host: "d:1", Votes: 1},                    // live member promoted
+		{Host: "e:1", Votes: 1, ArbiterOnly: true}, // arbiter add, no promotion
+	}
+	got := previewMemberChanges(state, planned)
+	want := []previewMemberChange{
+		{previewMember: planned[1], Add: true, Promote: true},
+		{previewMember: planned[4], Add: true},
+		{previewMember: planned[5], Promote: true},
+		{previewMember: planned[6], Add: true},
+	}
 	if len(got) != len(want) {
-		t.Fatalf("want %v, got %v", want, got)
+		t.Fatalf("want %d changes, got %d: %+v", len(want), len(got), got)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Errorf("index %d: want %s, got %s", i, want[i], got[i])
+			t.Errorf("change %d: want %+v, got %+v", i, want[i], got[i])
 		}
 	}
-	if got := previewAddedHosts(nil, nil); len(got) != 0 {
-		t.Errorf("nil inputs should yield no hosts, got %v", got)
+	if got := previewMemberChanges(nil, nil); len(got) != 0 {
+		t.Errorf("nil inputs should yield no changes, got %v", got)
 	}
 }
 
-// PREVIEW-T24: memberHostsFromRaw reads hosts from the raw member list and tolerates unknowns
-func TestMemberHostsFromRaw(t *testing.T) {
+// PREVIEW-T25: previewMembersFromRaw reads the fields it needs and tolerates unknowns
+func TestPreviewMembersFromRaw(t *testing.T) {
 	raw := []interface{}{
-		map[string]interface{}{"host": "a:1", "priority": 1.0},
+		map[string]interface{}{"host": "a:1", "priority": 2.0, "votes": 1, "arbiter_only": true},
 		map[string]interface{}{"host": nil},
 		"not a block",
 	}
-	got := memberHostsFromRaw(raw)
-	if len(got) != 2 || got[0] != "a:1" || got[1] != "" {
-		t.Errorf("want [a:1 \"\"], got %v", got)
+	got := previewMembersFromRaw(raw)
+	if len(got) != 2 {
+		t.Fatalf("want 2 members, got %v", got)
 	}
-	if got := memberHostsFromRaw(nil); got != nil {
+	if got[0] != (previewMember{Host: "a:1", Votes: 1, Priority: 2, ArbiterOnly: true}) {
+		t.Errorf("first member: got %+v", got[0])
+	}
+	if got[1].Host != "" || got[1].Votes != 0 {
+		t.Errorf("unknown host should read as empty with zero fields, got %+v", got[1])
+	}
+	if got := previewMembersFromRaw(nil); got != nil {
 		t.Errorf("nil raw should yield nil, got %v", got)
 	}
 }
