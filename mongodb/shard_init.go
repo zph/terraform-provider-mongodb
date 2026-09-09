@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -119,17 +118,6 @@ func IsReadPreferenceError(err error) bool {
 		return cmdErr.Code == MongoErrFailedReadPreference
 	}
 	return strings.Contains(err.Error(), "FailedToSatisfyReadPreference")
-}
-
-// diagContainsAuthError returns true if any diagnostic in the slice contains
-// an authentication or authorization error message. // INIT-029
-func diagContainsAuthError(diags diag.Diagnostics) bool {
-	for _, d := range diags {
-		if IsAuthError(fmt.Errorf("%s %s", d.Summary, d.Detail)) {
-			return true
-		}
-	}
-	return false
 }
 
 // IsVersionConflict returns true if err wraps a mongo.CommandError with

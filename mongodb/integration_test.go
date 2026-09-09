@@ -190,6 +190,7 @@ func TestMain(m *testing.M) {
 	// were started
 	teardownShardedCluster()
 	teardownMemberAddCluster()
+	teardownAuthRS()
 
 	_ = client.Disconnect(ctx)
 	_ = container.Terminate(ctx)

@@ -185,10 +185,12 @@ from a set earlier, SHALL be added. A host that reports this set's name, a
 different set's name, `msg: "isdbgrid"` (a mongos), or neither `setName` nor
 `isreplicaset` (a mongod without `--replSet`) SHALL be refused with an error
 naming the host and, for a member of this set, the name the set knows it by
-(`me`) and whether it is PRIMARY, SECONDARY or ARBITER. A host that cannot be
-inspected, because it is unreachable from the runner, SHALL be logged and
-added when its block is data-bearing, with the wait of SHARD-016 as the only
-check, and SHALL be refused when its block is an arbiter (SHARD-028). The
+(`me`) and whether it is PRIMARY, SECONDARY or ARBITER. A host that does not
+accept connections is waited for first (SHARD-029). A host that cannot be
+inspected, because `host_override` is set or the probe failed for a reason
+other than a failed connection, SHALL be logged and added when its block is
+data-bearing, with the wait of SHARD-016 as the only check, and SHALL be
+refused when its block is an arbiter (SHARD-028). The
 refusal exists for a host that is already a member under another name, such
 as an FQDN for a member configured by its short name: the reconfig would give
 that node two entries, the node would remove itself until an acceptable
@@ -210,6 +212,16 @@ down after `electionTimeoutMillis`, and the removal of SHARD-017 has no
 primary to run against. The probe is the only check available before the add,
 so an arbiter is added only when the probe has confirmed a mongod with
 `--replSet` and no configuration.
+
+**SHARD-029** (Event Driven): WHEN `member` blocks name hosts that are not in
+the replica set and `host_override` is not set, the resource SHALL, before
+the pre-flight of SHARD-027 and any `replSetReconfig`, wait for each such
+host to accept a connection, retrying every 10 seconds until the create or
+update timeout (INIT-033) elapses. IF the timeout elapses with a host still
+not answering, THEN the resource SHALL return an error naming the host, the
+elapsed time and the last error, without sending any reconfig. Probe failures
+other than a failed connection are left to SHARD-027. WHEN `host_override` is
+set, the wait is not attempted (DISC-008).
 
 ## Arbiters, State Order and Duplicate Hosts
 
@@ -235,5 +247,5 @@ after the first add.
 ## Initialization
 
 The initialization flow hands over to this reconciliation after
-`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-028
+`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-029
 apply unchanged.

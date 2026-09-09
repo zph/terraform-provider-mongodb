@@ -88,6 +88,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/shard_members.go` | Member reconciliation: `PartitionMemberOverrides`, `HoldPromotions`, `NextMemberID`, `BuildConfigMember`, `CheckAddTarget`, `PreflightAddTargets`, `ReconcileMembers`, `AddMembersSequentially`, `PromoteMembersSequentially`, `WaitForMemberState` |
 | `mongodb/resource_shard.go` | `mongodb_shard` resource: `addShard`, `removeShard` with polling |
 | `mongodb/resource_shard_config.go` | `mongodb_shard_config` resource: RS config + initialization flow |
+| `mongodb/shard_ready.go` | Readiness waits for Create: retry unreachable hosts, probe refused logins, wait for new member hosts (INIT-033..036, SHARD-029) |
 | `mongodb/resource_profiler.go` | `mongodb_profiler` resource: per-database profiler CRUD |
 | `mongodb/resource_server_parameter.go` | `mongodb_server_parameter` resource: setParameter/getParameter with type coercion |
 | `mongodb/resource_balancer_config.go` | `mongodb_balancer_config` resource: global balancer CRUD via balancerStart/Stop + config.settings |
@@ -102,9 +103,9 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 
 | Spec | File | ID Range |
 |------|------|----------|
-| Shard Config | `docs/specs/shard-member-requirements.md` | SHARD-001 through SHARD-028 |
+| Shard Config | `docs/specs/shard-member-requirements.md` | SHARD-001 through SHARD-029 |
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
-| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-032 |
+| Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-036 |
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-014 |
 | Golden File Testing | `docs/specs/golden-test-requirements.md` | GOLDEN-001 through GOLDEN-023 |
 | Sharded Integration Tests | `docs/specs/sharded-integration-test-requirements.md` | SINTEG-001 through SINTEG-014 |
@@ -128,7 +129,9 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 |------|-------|-----------|
 | `mongodb/shard_init_test.go` | INIT-T01..T07, INIT-T12 series, INIT-T13 (22 tests) | none |
 | `mongodb/shard_members_test.go` | SHARD-T14..T24, T26..T34, T39..T43 (25 tests) | none |
-| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-027 (6 tests) | integration |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-028 (7 tests) | integration |
+| `mongodb/readiness_integration_test.go` | INTEG-029, INTEG-030 (2 tests) | integration |
+| `mongodb/shard_ready_test.go` | READY-T01..T16 (16 tests) | none |
 | `mongodb/resource_shard_test.go` | CLUS-T01..T06 (6 tests) | none |
 | `mongodb/resource_shard_config_test.go` | SHARD-T01..T13, SHARD-T26, SHARD-T35..T38, CATCHUP-T01, OPLOG-T tests | none |
 | `mongodb/shard_discovery_test.go` | DISC tests | none |

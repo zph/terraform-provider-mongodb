@@ -192,10 +192,44 @@ SECONDARY vote, so the retry is expected to succeed quickly.
 
 **INIT-029** (Event Driven): WHEN `getShardClient` fails with an
 authentication or authorization error (codes 13 or 18, or a SCRAM handshake
-failure) during Create, the resource SHALL fall through to the initialization
-flow via `initializeReplicaSet`, because on a fresh instance the admin user
-may not exist yet. The initialization flow uses `ConnectForInit` which has its
-own no-auth fallback via the localhost exception.
+failure) during Create, and the probe of INIT-035 finds that the host does
+not enforce authentication, the resource SHALL fall through to the
+initialization flow via `initializeReplicaSet`, because on a fresh instance
+without access control the admin user does not exist yet. The initialization
+flow uses `ConnectForInit` which has its own no-auth fallback. WHEN the probe
+finds that the host enforces authentication, the resource SHALL keep waiting
+per INIT-035 instead.
+
+## Readiness
+
+**INIT-033** (Ubiquitous): The resource SHALL declare `create` and `update`
+timeouts, each defaulting to 20 minutes. The SDK bounds the whole Create or
+Update, including the waits below and every member wait of SHARD-016, by the
+respective timeout.
+
+**INIT-034** (Event Driven): WHEN, during Create, connecting as the provider
+user fails because the host cannot be reached (a refused or unanswered dial,
+an unresolvable name, or a dropped connection, as opposed to an answer from
+the server), the resource SHALL retry every 10 seconds until it succeeds or
+the create timeout elapses. The same applies to the connection to the first
+member in the initialization flow (INIT-006).
+
+**INIT-035** (Event Driven): WHEN, during Create, connecting as the provider
+user fails with an authentication error, the resource SHALL run
+`replSetGetStatus` against the provider host without credentials. IF it is
+refused as Unauthorized (code 13), THEN the host enforces authentication and
+the user is not created yet or the credentials are wrong, which SCRAM does not
+tell apart, and the resource SHALL keep retrying per INIT-034. IF it is
+answered, or fails for any other reason such as NotYetInitialized, THEN the
+host does not enforce authentication and the resource SHALL enter the
+initialization flow at once (INIT-029). IF the probe gets no answer, THEN the
+resource SHALL keep retrying.
+
+**INIT-036** (Unwanted Behaviour): IF the create timeout elapses during the
+wait of INIT-034 or INIT-035, THEN the resource SHALL return an error naming
+the host, the elapsed time, the last error and, for a refused login, the
+provider user, without having sent any command to the replica set. Any other
+error SHALL be returned at once.
 
 ## Scope
 

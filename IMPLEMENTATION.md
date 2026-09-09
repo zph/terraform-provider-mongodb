@@ -26,7 +26,7 @@ mongodb/
 |---|---|---|
 | `mongodb_db_user` | Complete | CRUD + import |
 | `mongodb_db_role` | Complete | CRUD + import |
-| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block; members not yet in the set are added one reconfig at a time, staged as non-voters and promoted once SECONDARY. Mongos auto-discovery via `listShards`. |
+| `mongodb_shard_config` | Complete | Create/Read/Update (Delete is no-op). Member-level config via `member` block; members not yet in the set are added one reconfig at a time, staged as non-voters and promoted once SECONDARY. Mongos auto-discovery via `listShards`. Create waits, up to `timeouts.create`, for hosts that are still starting and for the provider user to be created. |
 | `mongodb_original_user` | Complete | CRUD (bootstrap no-auth, idempotent adopt) |
 
 ## Test Coverage
@@ -45,6 +45,7 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `resource_db_role_test.go` | 2 | ID parsing |
 | `resource_shard_config_test.go` | 36 | ID parsing, MergeMembers, RSConfigMembersToState (block order), schema validation, member defaults, arbiter priority, duplicate hosts, oplog fan-out helpers |
 | `shard_members_test.go` | 25 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback/pending, PromoteMembersSequentially, ReconcileMembers, CheckAddTarget, PreflightAddTargets, observeMember, WaitForMemberState |
+| `shard_ready_test.go` | 16 | IsConnectionError (incl. a real refused dial), classifyAuthProbe, WaitForShardClient retry/probe/deadline paths, WaitForAddTargets, timeouts schema |
 | `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
@@ -83,8 +84,11 @@ Testcontainer-based tests against a live MongoDB replica set. Run with `make tes
 | INTEG-025 | An add whose member never answers is rolled back and state lists only the live members |
 | INTEG-026 | A block naming a live member under another name is refused by the pre-flight before any reconfig |
 | INTEG-027 | An arbiter whose host cannot be inspected is refused before any reconfig |
+| INTEG-028 | A new member host that never answers is waited for until the deadline, then refused before any reconfig |
+| INTEG-029 | A refused login and the unauthenticated probe classify correctly with and without access control |
+| INTEG-030 | Create waits while the seed's bootstrap creates the provider user, then applies the settings |
 
-Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-027), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-028)
+Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-030), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-029), `docs/specs/shard-init-requirements.md` (INIT-001 through INIT-036)
 
 ## Make Targets
 

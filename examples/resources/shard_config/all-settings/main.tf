@@ -79,6 +79,12 @@ resource "mongodb_shard_config" "shards" {
   heartbeat_timeout_secs    = each.value.heartbeat_timeout_secs
   election_timeout_millis   = each.value.election_timeout_millis
 
+  # Bounds the whole apply, including waits for hosts still starting (default 20m).
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
+
   dynamic "member" {
     for_each = each.value.members
     content {
