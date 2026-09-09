@@ -104,16 +104,25 @@ non-zero priority, `ARBITER` for an arbiter, and any state for a member that
 stays a non-voter with priority 0. Only members that will vote are made to
 wait for initial sync, because only they affect the majority.
 
-**SHARD-017** (Unwanted Behaviour): IF the new member never reports
-`health: 1` within `init_timeout_secs`, THEN the resource SHALL remove the
-member it just added with a further `replSetReconfig` (best effort) and SHALL
-return an error naming the host and the last observed status; if the removal
-also fails, the error SHALL report both failures. IF the member is reachable
-but has not reached the required state in time, THEN the resource SHALL leave
-it in the set as added (a non-voter with priority 0) and SHALL return an error
-saying so and that the next apply will complete the promotion. IF the add
-reconfig itself fails, THEN the resource SHALL check whether the member was
-nevertheless installed and remove it if so.
+**SHARD-017** (Unwanted Behaviour): IF the primary has reported the new
+member at least once and never with `health: 1` within `init_timeout_secs`,
+THEN the resource SHALL remove the member it just added with a further
+`replSetReconfig` (best effort) and SHALL return an error naming the host and
+the last observed status; if the removal also fails, the error SHALL report
+both failures. IF `replSetGetStatus` could not be read at all during the wait,
+THEN the resource SHALL leave the member in place and return an error saying
+the wait was inconclusive: nothing is known about the member, and a removal
+could take a healthy node out of the set. IF the member is reachable but has
+not reached the required state in time, THEN the resource SHALL leave it in
+the set as added (a non-voter with priority 0), SHALL continue with the
+remaining blocks, and SHALL complete the apply with a warning naming the host,
+the observed state, and the votes and priority a later apply will give it; the
+state written per SHARD-018 shows the member at votes 0, so the next plan
+shows the promotion as a pending change. Initial sync of a data-bearing set
+routinely outlasts the timeout, so this is the expected outcome of adding a
+voter to a shard with data, not a failure. IF the add reconfig itself fails,
+THEN the resource SHALL check whether the member was nevertheless installed
+and remove it if so.
 
 **SHARD-018** (Event Driven): WHEN all reconfigs have completed, the resource
 SHALL read the configuration from the server and derive the `member` state
@@ -131,7 +140,12 @@ which require priority 0, can be configured.
 **SHARD-021** (Event Driven): WHEN the settings reconfig has succeeded, the
 resource SHALL record the resource ID and the settings in state before
 promoting or adding members, so a failure there cannot leave an applied
-reconfig unrecorded. A following apply partitions against the live
+reconfig unrecorded. WHEN the member phase ends, with or without an error, the
+resource SHALL read the configuration from the server and write the `member`
+state from it before returning (SHARD-018). The SDK persists state on error,
+and without this write the state would hold the planned blocks, such as votes
+1 for a member the server has at votes 0, and a plan without refresh would
+show nothing left to do. A following apply partitions against the live
 configuration again and does only what is still missing.
 
 ## Staged Adds and Promotion
@@ -152,8 +166,34 @@ priority in the settings reconfig, SHALL wait for the member to report
 `SECONDARY` (SHARD-016), and SHALL then apply the block's votes and priority
 in one `replSetReconfig` per member, before any missing member is added. This
 completes an add whose promotion did not fit in an earlier apply, and is the
-path for any block that turns a non-voter into a voter. Lowering votes and
-every other field change go out in the settings reconfig (SHARD-005).
+path for any block that turns a non-voter into a voter. A member that is still
+syncing when its wait ends is left as it is and reported as a warning per
+SHARD-017. Lowering votes and every other field change go out in the settings
+reconfig (SHARD-005).
+
+## Pre-flight of Hosts to Add
+
+**SHARD-027** (Event Driven): WHEN one or more `member` blocks name hosts
+that are not in the replica set, the resource SHALL, before sending any
+`replSetReconfig`, connect directly to each such host, run `replSetGetStatus`
+against it with the provider's credentials and then without authentication,
+and decide from the answer. A host that reports NotYetInitialized (code 94) or
+InvalidReplicaSetConfig (code 93, a member removed earlier), or that reports
+this set with itself in state REMOVED, SHALL be added. A host that reports
+NoReplicationEnabled (code 76), a different set name, or this set in any other
+state SHALL be refused with an error naming the host and, for a member of this
+set, the name the set knows it by. A host that cannot be inspected, because it
+is unreachable from the runner or accepts none of the credentials tried, SHALL
+be logged and added, with the wait of SHARD-016 as the only check. The
+refusal exists for a host that is already a member under another name, such
+as an FQDN for a member configured by its short name: the reconfig would give
+that node two entries, the node would remove itself until an acceptable
+configuration arrives, and in a two-voter set the primary would lose its
+majority with no rollback able to run. A fresh node has no users, so an
+authenticated probe fails there and reads as uninspectable, while a live
+member has replicated users and answers. The probe SHALL be skipped when
+`host_override` is set, since the member hosts are then known to be
+unreachable from the runner (DISC-008).
 
 ## Arbiters, State Order and Duplicate Hosts
 
@@ -179,5 +219,5 @@ after the first add.
 ## Initialization
 
 The initialization flow hands over to this reconciliation after
-`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-026
+`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-027
 apply unchanged.

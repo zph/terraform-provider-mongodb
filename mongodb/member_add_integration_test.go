@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -154,16 +155,29 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 // memberAddResourceData is the three-member configuration the tests apply:
 // the seed member with a changed priority, a tagged voter and a hidden
 // priority-0 member whose votes the caller picks.
+//
+// The member hosts are container aliases that only resolve inside the test
+// network, so the pre-flight probe (SHARD-027) cannot reach them from the
+// test process and logs them as uninspectable; these tests exercise that
+// pass-through path only, and the refusal cases are unit tested.
 func memberAddResourceData(t *testing.T, thirdVotes int) *schema.ResourceData {
+	return memberAddResourceDataWith(t, 120, thirdVotes)
+}
+
+func memberAddResourceDataWith(t *testing.T, timeoutSecs, thirdVotes int, extra ...map[string]interface{}) *schema.ResourceData {
+	members := []interface{}{
+		map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
+		map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
+			"tags": map[string]interface{}{"role": "online"}},
+		map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": thirdVotes, "hidden": true},
+	}
+	for _, m := range extra {
+		members = append(members, m)
+	}
 	return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
 		"shard_name":        memberAddRSName,
-		"init_timeout_secs": 120,
-		"member": []interface{}{
-			map[string]interface{}{"host": memberAddHost(0), "priority": 2.0, "votes": 1},
-			map[string]interface{}{"host": memberAddHost(1), "priority": 1.0, "votes": 1,
-				"tags": map[string]interface{}{"role": "online"}},
-			map[string]interface{}{"host": memberAddHost(2), "priority": 0.0, "votes": thirdVotes, "hidden": true},
-		},
+		"init_timeout_secs": timeoutSecs,
+		"member":            members,
 	})
 }
 
@@ -305,6 +319,61 @@ func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 	for i := range after.Members {
 		if after.Members[i].ID != before.Members[i].ID || after.Members[i].Host != before.Members[i].Host {
 			t.Errorf("member %d changed: before %+v after %+v", i, before.Members[i], after.Members[i])
+		}
+	}
+}
+
+// INTEG-025: SHARD-017, SHARD-021 — a member the primary never reaches is
+// removed again, the apply fails, and the member state written on the way out
+// lists the live members rather than the planned blocks.
+func TestIntegration_ShardConfigUpdate_UnreachableMemberRolledBack(t *testing.T) {
+	ensureMemberAddCluster(t)
+	client := newMemberAddSeedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ensureMemberAddClusterGrown(ctx, t, client)
+	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	before, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig before: %v", err)
+	}
+
+	const bogus = "rsgrow-nope:27017"
+	data := memberAddResourceDataWith(t, 15, 0, map[string]interface{}{"host": bogus, "priority": 1.0, "votes": 1})
+	diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true)
+	if !diags.HasError() {
+		t.Fatal("want an error for the member that never became reachable")
+	}
+	msg := fmt.Sprint(diags)
+	for _, want := range []string{bogus, "removed again"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostics should contain %q, got: %s", want, msg)
+		}
+	}
+
+	after, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after: %v", err)
+	}
+	if len(after.Members) != 3 {
+		t.Fatalf("want the three live members after the rollback, got %v", memberHosts(after.Members))
+	}
+	for i := range after.Members {
+		if after.Members[i].Host != before.Members[i].Host || after.Members[i].ID != before.Members[i].ID {
+			t.Errorf("member %d changed: before %+v after %+v", i, before.Members[i], after.Members[i])
+		}
+	}
+
+	stateMembers, ok := data.Get("member").([]interface{})
+	if !ok || len(stateMembers) != 3 {
+		t.Fatalf("state must list only the live members after a failed add, got %v", data.Get("member"))
+	}
+	for i, raw := range stateMembers {
+		if host := raw.(map[string]interface{})["host"]; host != memberAddHost(i) {
+			t.Errorf("state member %d: want %s, got %v", i, memberAddHost(i), host)
 		}
 	}
 }

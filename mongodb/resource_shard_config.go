@@ -523,6 +523,28 @@ func readOplogConfig(ctx context.Context, data *schema.ResourceData, members Con
 	return data.Set("oplog_size_mb", size)
 }
 
+// memberPreflightTimeout bounds the direct connection and status read that
+// inspect a host before it is added. As with the oplog read-back, a host that
+// cannot be reached from here should cost seconds. SHARD-027
+const memberPreflightTimeout = 20 * time.Second
+
+// memberProbeFor returns a probe that connects directly to a host with the
+// provider's credentials and falls back to no auth. The probe only reads, and
+// a fresh node has no users yet, so the fallback is safe on every path.
+// SHARD-027
+func memberProbeFor(providerConf *MongoDatabaseConfiguration) memberProbe {
+	return func(ctx context.Context, hostPort string) (*ReplSetStatus, error) {
+		probeCtx, cancel := context.WithTimeout(ctx, memberPreflightTimeout)
+		defer cancel()
+		client, cleanup, err := connectToMember(probeCtx, providerConf, hostPort, true)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		return GetReplSetStatus(probeCtx, client)
+	}
+}
+
 // connectToMember opens a direct connection to a single replica set member
 // for node-local commands, inheriting the provider's credentials, TLS, and
 // proxy settings. host_override does not apply here; the schema rejects it
@@ -604,6 +626,15 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 			return errD
 		}
 		existing, missing := PartitionMemberOverrides(config.Members, overrides)
+		// SHARD-027: a host that is already a member under another name must
+		// be refused before anything is sent. host_override means the member
+		// hosts are not reachable from here (DISC-008), so the probe is
+		// skipped and the wait after each add is the only check.
+		if _, overridden := data.GetOk("host_override"); !overridden && len(missing) > 0 {
+			if err := PreflightAddTargets(ctx, config.ID, missing, memberProbeFor(providerConf)); err != nil {
+				return diag.FromErr(err)
+			}
+		}
 		held, promote := HoldPromotions(config.Members, existing)
 		merged, mergeErr := MergeMembers(config.Members, held)
 		if mergeErr != nil {
@@ -650,43 +681,59 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 	// the next apply re-partitions against the live config and finishes only
 	// what is still missing. Promotions go first: they are members from an
 	// earlier apply that have had time to sync.
-	ops := memberAddOpsForClient(client, timeout)
-	if len(promotions) > 0 {
-		if err := PromoteMembersSequentially(ctx, promotions, ops); err != nil {
-			return diag.FromErr(err)
-		}
-	}
-	if len(newMembers) > 0 {
-		if err := AddMembersSequentially(ctx, newMembers, ops); err != nil {
-			return diag.FromErr(err)
-		}
-	}
+	pending, memberErr := ReconcileMembers(ctx, promotions, newMembers, memberAddOpsForClient(client, timeout))
 
-	// SHARD-018: state comes from the config the server holds now, which the
-	// adds (and newlyAdded reconfigs on 5.0+) may have changed.
-	finalConfig, errD := r.getReplSetConfig(ctx, client)
-	if errD != nil {
-		return errD
-	}
-	managedHosts := managedHostsFromState(data)
-	memberState := RSConfigMembersToState(finalConfig.Members, managedHosts)
-	if err := data.Set("member", memberState); err != nil {
+	// SHARD-018/021: state comes from the config the server holds now, which
+	// the adds (and newlyAdded reconfigs on 4.4+) may have changed. This runs
+	// even when the member phase failed: the SDK persists state on error, and
+	// without this write it would hold the planned blocks, such as votes 1 for
+	// a member the server has at votes 0, so a plan without refresh would show
+	// nothing left to do.
+	finalConfig, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		if memberErr != nil {
+			return diag.Errorf("%s; reading the configuration afterwards also failed: %s", memberErr, err)
+		}
 		return diag.FromErr(err)
 	}
+	managedHosts := managedHostsFromState(data)
+	if err := data.Set("member", RSConfigMembersToState(finalConfig.Members, managedHosts)); err != nil {
+		return diag.FromErr(err)
+	}
+	if memberErr != nil {
+		return diag.FromErr(memberErr)
+	}
+	diags := pendingMemberWarnings(pending)
 
 	// OPLOG-003: members still in initial sync are skipped by the fan-out
 	// (OPLOG-016) and surface as drift once they are SECONDARY.
 	resizeAttempted, err := applyOplogConfig(ctx, client, data, finalConfig.Members, providerConf, allowNoAuthFallback)
 	if err != nil {
-		return diag.FromErr(err)
+		return append(diags, diag.FromErr(err)...)
 	}
 
 	// OPLOG-005: Read back oplog state for drift detection
 	if err := readOplogConfig(ctx, data, finalConfig.Members, providerConf, allowNoAuthFallback, resizeAttempted); err != nil {
-		return diag.FromErr(err)
+		return append(diags, diag.FromErr(err)...)
 	}
 
-	return nil
+	return diags
+}
+
+// pendingMemberWarnings turns members that were still syncing when their wait
+// ended into warnings. The apply succeeds, state records them as non-voters,
+// and the next plan shows the promotion as a pending change. SHARD-017,
+// SHARD-023
+func pendingMemberWarnings(pending []memberPending) diag.Diagnostics {
+	var diags diag.Diagnostics
+	for _, p := range pending {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Warning,
+			Summary:  p.Summary(),
+			Detail:   p.Detail(),
+		})
+	}
+	return diags
 }
 
 func (r *ResourceShardConfig) getReplSetConfig(ctx context.Context, client *mongo.Client) (*RSConfig, diag.Diagnostics) {
@@ -934,7 +981,7 @@ func resourceShardConfig() *schema.Resource {
 				Type:        schema.TypeInt,
 				Optional:    true,
 				Default:     DefaultInitTimeoutSecs,
-				Description: "Timeout in seconds for replica set initialization.",
+				Description: "Timeout in seconds for replica set initialization, and separately for each added or promoted member to reach its required state. A member still syncing at the timeout stays a non-voter and is promoted by a later apply.",
 			},
 			// OPLOG-001/002: Optional oplog size in megabytes
 			"oplog_size_mb": {

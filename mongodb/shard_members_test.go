@@ -7,7 +7,94 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.mongodb.org/mongo-driver/mongo"
 )
+
+// SHARD-T41: SHARD-027 — CheckAddTarget from the candidate's own status
+func TestCheckAddTarget(t *testing.T) {
+	const set = "rs0"
+	self := func(name string, state MemberState) *ReplSetStatus {
+		return &ReplSetStatus{Set: set, MyState: state, Members: []*Member{
+			{Name: "other:27017", State: MemberStatePrimary},
+			{Name: name, State: state, Self: true},
+		}}
+	}
+	cases := []struct {
+		name    string
+		status  *ReplSetStatus
+		err     error
+		verdict addTargetVerdict
+		reason  string
+	}{
+		{"fresh node", nil, mongo.CommandError{Code: MongoErrNotYetInitialized}, addTargetOK, "not yet initialized"},
+		{"removed earlier, config kept", nil, fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrInvalidReplicaSetConfig}), addTargetOK, "removed"},
+		{"no --replSet", nil, mongo.CommandError{Code: MongoErrNoReplicationEnabled}, addTargetRefused, "--replSet"},
+		{"unreachable", nil, errors.New("server selection timeout"), addTargetUnknown, "server selection timeout"},
+		{"auth refused", nil, mongo.CommandError{Code: MongoErrUnauthorized, Message: "command replSetGetStatus requires authentication"}, addTargetUnknown, "requires authentication"},
+		{"other set", &ReplSetStatus{Set: "rs1", MyState: MemberStateSecondary}, nil, addTargetRefused, `replica set "rs1"`},
+		{"removed from this set", &ReplSetStatus{Set: set, MyState: MemberStateRemoved}, nil, addTargetOK, "removed from this replica set"},
+		{"live secondary under another name", self("mongo2.internal:27017", MemberStateSecondary), nil, addTargetRefused, "as mongo2.internal:27017 (state SECONDARY)"},
+		{"live primary under another name", self("mongo1.internal:27017", MemberStatePrimary), nil, addTargetRefused, "as mongo1.internal:27017 (state PRIMARY)"},
+		{"syncing under another name", self("mongo3.internal:27017", MemberStateStartup2), nil, addTargetRefused, "state STARTUP2"},
+		{"member with no self row", &ReplSetStatus{Set: set, MyState: MemberStateSecondary}, nil, addTargetRefused, "under another name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict, reason := CheckAddTarget(set, tc.status, tc.err)
+			if verdict != tc.verdict || !strings.Contains(reason, tc.reason) {
+				t.Errorf("want verdict %d reason~%q, got %d %q", tc.verdict, tc.reason, verdict, reason)
+			}
+		})
+	}
+}
+
+// SHARD-T42: SHARD-027 — PreflightAddTargets probes in block order, lets
+// uninspectable hosts through, and stops at the first refusal
+func TestPreflightAddTargets(t *testing.T) {
+	type answer struct {
+		status *ReplSetStatus
+		err    error
+	}
+	answers := map[string]answer{
+		"fresh:27017":  {err: mongo.CommandError{Code: MongoErrNotYetInitialized}},
+		"dark:27017":   {err: errors.New("dial tcp: no route to host")},
+		"alias:27017":  {status: &ReplSetStatus{Set: "rs0", MyState: MemberStateSecondary, Members: []*Member{{Name: "real:27017", Self: true}}}},
+		"unseen:27017": {err: mongo.CommandError{Code: MongoErrNotYetInitialized}},
+	}
+	var probed []string
+	probe := func(_ context.Context, host string) (*ReplSetStatus, error) {
+		probed = append(probed, host)
+		a, ok := answers[host]
+		if !ok {
+			t.Fatalf("unexpected probe of %s", host)
+		}
+		return a.status, a.err
+	}
+	blocks := []MemberOverride{{Host: "fresh:27017"}, {Host: "dark:27017"}, {Host: "alias:27017"}, {Host: "unseen:27017"}}
+
+	err := PreflightAddTargets(context.Background(), "rs0", blocks, probe)
+
+	if err == nil {
+		t.Fatal("want a refusal for the aliased member")
+	}
+	for _, want := range []string{"alias:27017", "rs0", "already a member", "as real:27017"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should contain %q, got: %v", want, err)
+		}
+	}
+	if len(probed) != 3 || probed[0] != "fresh:27017" || probed[1] != "dark:27017" || probed[2] != "alias:27017" {
+		t.Errorf("want probes in block order stopping at the refusal, got %v", probed)
+	}
+
+	probed = nil
+	if err := PreflightAddTargets(context.Background(), "rs0", blocks[:2], probe); err != nil {
+		t.Errorf("a fresh host and an uninspectable host must both pass, got %v", err)
+	}
+	if err := PreflightAddTargets(context.Background(), "rs0", nil, probe); err != nil || len(probed) != 2 {
+		t.Errorf("no blocks means no probes, got err %v probes %v", err, probed)
+	}
+}
 
 type waitCall struct {
 	host   string
@@ -66,7 +153,7 @@ func (f *fakeMemberAddServer) ops() memberAddOps {
 			case f.wait != nil:
 				res = f.wait(host, target)
 			case f.waitErr == nil:
-				res = memberWaitResult{Met: true, EverReachable: true, Last: "health=1 state=" + target.String()}
+				res = memberWaitResult{Met: true, EverReachable: true, Observed: true, Last: "health=1 state=" + target.String()}
 			}
 			return res, f.waitErr
 		},
@@ -223,7 +310,7 @@ func TestAddMembersSequentially_OneReconfigPerStep(t *testing.T) {
 		{Host: "mongo3:27017", Priority: 0, Votes: 0, Hidden: true, BuildIndexes: true},
 	}
 
-	if err := AddMembersSequentially(context.Background(), overrides, srv.ops()); err != nil {
+	if _, err := AddMembersSequentially(context.Background(), overrides, srv.ops()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -269,7 +356,7 @@ func TestAddMembersSequentially_FollowsLiveConfig(t *testing.T) {
 		return memberWaitResult{Met: true, EverReachable: true}
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "c:1"}, {Host: "d:1"}}, srv.ops())
+	_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "c:1"}, {Host: "d:1"}}, srv.ops())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +390,7 @@ func TestAddMembersSequentially_StopsOnReconfigError(t *testing.T) {
 		return nil
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{
+	_, err := AddMembersSequentially(context.Background(), []MemberOverride{
 		{Host: "mongo2:27017"}, {Host: "mongo3:27017"}, {Host: "mongo4:27017"},
 	}, srv.ops())
 
@@ -324,12 +411,12 @@ func TestAddMembersSequentially_RollsBackUnreachableMember(t *testing.T) {
 	srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
 	srv.wait = func(host string, _ memberWaitTarget) memberWaitResult {
 		if host == "mongo3:27017" {
-			return memberWaitResult{Last: "not listed in replSetGetStatus"}
+			return memberWaitResult{Observed: true, Last: "not listed in replSetGetStatus"}
 		}
 		return memberWaitResult{Met: true, EverReachable: true}
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{
+	_, err := AddMembersSequentially(context.Background(), []MemberOverride{
 		{Host: "mongo2:27017"}, {Host: "mongo3:27017"}, {Host: "mongo4:27017"},
 	}, srv.ops())
 
@@ -355,7 +442,7 @@ func TestAddMembersSequentially_RollsBackUnreachableMember(t *testing.T) {
 func TestAddMembersSequentially_ReportsRollbackFailure(t *testing.T) {
 	srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
 	srv.wait = func(string, memberWaitTarget) memberWaitResult {
-		return memberWaitResult{Last: "health=0 state=(not reachable/healthy)"}
+		return memberWaitResult{Observed: true, Last: "health=0 state=(not reachable/healthy)"}
 	}
 	srv.setErr = func(cfg *RSConfig) error {
 		if len(cfg.Members) < len(srv.current.Members) {
@@ -364,7 +451,7 @@ func TestAddMembersSequentially_ReportsRollbackFailure(t *testing.T) {
 		return nil
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017"}}, srv.ops())
+	_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017"}}, srv.ops())
 
 	if err == nil {
 		t.Fatal("want an error")
@@ -380,7 +467,7 @@ func TestAddMembersSequentially_ReportsRollbackFailure(t *testing.T) {
 // SHARD-T24: SHARD-013 — no missing members means no server interaction at all
 func TestAddMembersSequentially_NoMembers(t *testing.T) {
 	srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
-	if err := AddMembersSequentially(context.Background(), nil, srv.ops()); err != nil {
+	if _, err := AddMembersSequentially(context.Background(), nil, srv.ops()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if srv.getCalls != 0 || len(srv.reconfigs) != 0 || len(srv.waited) != 0 {
@@ -396,7 +483,7 @@ func TestAddMembersSequentially_StagesVoterThenPromotes(t *testing.T) {
 		Tags: map[string]string{"dc": "east"},
 	}
 
-	if err := AddMembersSequentially(context.Background(), []MemberOverride{override}, srv.ops()); err != nil {
+	if _, err := AddMembersSequentially(context.Background(), []MemberOverride{override}, srv.ops()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -422,7 +509,7 @@ func TestAddMembersSequentially_ArbiterAddedDirectly(t *testing.T) {
 	srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
 	override := MemberOverride{Host: "arb:27017", Priority: 0, Votes: 1, ArbiterOnly: true, BuildIndexes: true}
 
-	if err := AddMembersSequentially(context.Background(), []MemberOverride{override}, srv.ops()); err != nil {
+	if _, err := AddMembersSequentially(context.Background(), []MemberOverride{override}, srv.ops()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -439,32 +526,142 @@ func TestAddMembersSequentially_ArbiterAddedDirectly(t *testing.T) {
 // SHARD-T28: SHARD-016, SHARD-017 — a reachable member still syncing at the timeout is kept as a non-voter
 func TestAddMembersSequentially_KeepsSyncingMember(t *testing.T) {
 	srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
-	srv.wait = func(string, memberWaitTarget) memberWaitResult {
-		return memberWaitResult{EverReachable: true, Last: "health=1 state=STARTUP2"}
+	srv.wait = func(host string, _ memberWaitTarget) memberWaitResult {
+		if host == "mongo2:27017" {
+			return memberWaitResult{EverReachable: true, Observed: true, Last: "health=1 state=STARTUP2"}
+		}
+		return memberWaitResult{Met: true, EverReachable: true, Observed: true}
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{
-		{Host: "mongo2:27017", Priority: 1, Votes: 1}, {Host: "mongo3:27017", Priority: 1, Votes: 1},
+	pending, err := AddMembersSequentially(context.Background(), []MemberOverride{
+		{Host: "mongo2:27017", Priority: 2, Votes: 1}, {Host: "mongo3:27017", Priority: 1, Votes: 1},
 	}, srv.ops())
 
-	if err == nil {
-		t.Fatal("want an error when the member is not SECONDARY in time")
+	if err != nil {
+		t.Fatalf("a member still syncing is not an error, got %v", err)
 	}
-	for _, want := range []string{"mongo2:27017", "STARTUP2", "keeps its current votes", "votes 1 and priority 1", "next apply"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should contain %q, got: %v", want, err)
+	if len(pending) != 1 || pending[0].Host != "mongo2:27017" || pending[0].Votes != 1 || pending[0].Priority != 2 || pending[0].Target != waitSecondary {
+		t.Fatalf("want mongo2 pending with its configured votes and priority, got %+v", pending)
+	}
+	for _, want := range []string{"mongo2:27017", "STARTUP2", "non-voter", "votes 1 and priority 2", "1m0s"} {
+		if !strings.Contains(pending[0].Detail(), want) {
+			t.Errorf("warning detail should contain %q, got: %s", want, pending[0].Detail())
 		}
 	}
-	if len(srv.reconfigs) != 1 {
-		t.Fatalf("want only the staged add, no promotion and no removal, got %d reconfigs", len(srv.reconfigs))
+	// staged add of mongo2, no promotion; staged add of mongo3 and its promotion
+	if len(srv.reconfigs) != 3 {
+		t.Fatalf("want the loop to continue past the syncing member, got %d reconfigs", len(srv.reconfigs))
 	}
 	kept := srv.member("mongo2:27017")
 	if kept.Host == "" || derefInt(kept.Votes) != 0 || kept.Priority != 0 {
-		t.Errorf("member should stay in the set as a non-voter, got %+v", kept)
+		t.Errorf("syncing member should stay in the set as a non-voter, got %+v", kept)
 	}
-	if srv.member("mongo3:27017").Host != "" {
-		t.Error("the loop must stop before adding the next member")
+	next := srv.member("mongo3:27017")
+	if next.Host == "" || derefInt(next.Votes) != 1 || next.Priority != 1 {
+		t.Errorf("the following member should be added and promoted, got %+v", next)
 	}
+}
+
+// SHARD-T39: SHARD-017 — when replSetGetStatus never answered, nothing is
+// known about the member, so it is left in place and the wait is reported as
+// inconclusive rather than rolled back as unreachable
+func TestAddMembersSequentially_LeavesMemberWhenStatusUnreadable(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
+		srv.wait = func(string, memberWaitTarget) memberWaitResult {
+			return memberWaitResult{Last: "replSetGetStatus: connection reset by peer"}
+		}
+
+		_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+
+		if err == nil {
+			t.Fatal("want an error when status could not be read")
+		}
+		for _, want := range []string{"mongo2:27017", "could not be read", "connection reset", "left in the replica set"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should contain %q, got: %v", want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "removed") {
+			t.Errorf("nothing must be removed without an observation, got: %v", err)
+		}
+		if len(srv.reconfigs) != 1 {
+			t.Fatalf("want only the staged add, got %d reconfigs", len(srv.reconfigs))
+		}
+		assertHosts(t, "live config", srv.current.Members, "mongo1:27017", "mongo2:27017")
+	})
+
+	t.Run("interrupted", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
+		srv.waitErr = context.Canceled
+		srv.wait = func(string, memberWaitTarget) memberWaitResult {
+			return memberWaitResult{Last: "replSetGetStatus: connection reset by peer"}
+		}
+
+		_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+
+		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "removed") {
+			t.Fatalf("want the bare cancellation with no removal, got %v", err)
+		}
+		if len(srv.reconfigs) != 1 {
+			t.Fatalf("want only the staged add, got %d reconfigs", len(srv.reconfigs))
+		}
+		assertHosts(t, "live config", srv.current.Members, "mongo1:27017", "mongo2:27017")
+	})
+}
+
+// SHARD-T40: SHARD-013, SHARD-023 — ReconcileMembers runs promotions before
+// adds, gathers pending members from both, and skips the adds after a hard
+// promotion failure
+func TestReconcileMembers(t *testing.T) {
+	t.Run("promotions first, pending gathered", func(t *testing.T) {
+		srv := newFakeMemberAddServer(
+			ConfigMember{ID: 0, Host: "mongo1:27017", Votes: intPtr(1), Priority: 1},
+			ConfigMember{ID: 1, Host: "mongo2:27017", Votes: intPtr(0), Priority: 0},
+		)
+		srv.wait = func(host string, _ memberWaitTarget) memberWaitResult {
+			if host == "mongo3:27017" {
+				return memberWaitResult{EverReachable: true, Observed: true, Last: "health=1 state=STARTUP2"}
+			}
+			return memberWaitResult{Met: true, EverReachable: true, Observed: true}
+		}
+
+		pending, err := ReconcileMembers(context.Background(),
+			[]MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}},
+			[]MemberOverride{{Host: "mongo3:27017", Votes: 1, Priority: 1}},
+			srv.ops())
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(pending) != 1 || pending[0].Host != "mongo3:27017" {
+			t.Errorf("want only mongo3 pending, got %+v", pending)
+		}
+		// promotion of mongo2, then staged add of mongo3
+		if len(srv.reconfigs) != 2 {
+			t.Fatalf("want promotion then add, got %d reconfigs", len(srv.reconfigs))
+		}
+		if m := srv.reconfigs[0].Members[1]; derefInt(m.Votes) != 1 {
+			t.Errorf("first reconfig should promote mongo2, got %+v", m)
+		}
+		assertHosts(t, "second reconfig", srv.reconfigs[1].Members, "mongo1:27017", "mongo2:27017", "mongo3:27017")
+	})
+
+	t.Run("hard promotion failure stops before the adds", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017", Votes: intPtr(1), Priority: 1})
+
+		_, err := ReconcileMembers(context.Background(),
+			[]MemberOverride{{Host: "gone:27017", Votes: 1, Priority: 1}},
+			[]MemberOverride{{Host: "mongo3:27017"}},
+			srv.ops())
+
+		if err == nil || !strings.Contains(err.Error(), "gone:27017") {
+			t.Fatalf("want the promotion error, got %v", err)
+		}
+		if len(srv.reconfigs) != 0 {
+			t.Errorf("no add may run after a failed promotion, got %d reconfigs", len(srv.reconfigs))
+		}
+	})
 }
 
 // SHARD-T29: SHARD-023 — HoldPromotions pins votes and priority of a promoting block, passes the rest through
@@ -510,7 +707,7 @@ func TestPromoteMembersSequentially(t *testing.T) {
 			ConfigMember{ID: 0, Host: "mongo1:27017", Votes: intPtr(1), Priority: 1},
 			ConfigMember{ID: 1, Host: "mongo2:27017", Votes: intPtr(0), Priority: 0},
 		)
-		err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -526,18 +723,38 @@ func TestPromoteMembersSequentially(t *testing.T) {
 
 	t.Run("no reconfig when already matching", func(t *testing.T) {
 		srv := newFakeMemberAddServer(ConfigMember{ID: 1, Host: "mongo2:27017", Votes: intPtr(1), Priority: 1})
-		err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 		if err != nil || len(srv.reconfigs) != 0 {
 			t.Fatalf("want no reconfig and no error, got %d reconfigs, err %v", len(srv.reconfigs), err)
+		}
+	})
+
+	t.Run("still syncing is pending, not an error", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 1, Host: "mongo2:27017", Votes: intPtr(0), Priority: 0})
+		srv.wait = func(string, memberWaitTarget) memberWaitResult {
+			return memberWaitResult{EverReachable: true, Observed: true, Last: "health=1 state=RECOVERING"}
+		}
+		pending, err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 3}}, srv.ops())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(pending) != 1 || pending[0].Host != "mongo2:27017" || pending[0].Votes != 1 || pending[0].Priority != 3 {
+			t.Fatalf("want mongo2 pending with votes 1 priority 3, got %+v", pending)
+		}
+		if !strings.Contains(pending[0].Summary(), "mongo2:27017") || !strings.Contains(pending[0].Detail(), "RECOVERING") {
+			t.Errorf("warning should name the host and the observed state, got %q / %q", pending[0].Summary(), pending[0].Detail())
+		}
+		if len(srv.reconfigs) != 0 || derefInt(srv.member("mongo2:27017").Votes) != 0 {
+			t.Errorf("no reconfig may run before the member is SECONDARY, got %d", len(srv.reconfigs))
 		}
 	})
 
 	t.Run("unreachable live member is reported, not removed", func(t *testing.T) {
 		srv := newFakeMemberAddServer(ConfigMember{ID: 1, Host: "mongo2:27017", Votes: intPtr(0), Priority: 0})
 		srv.wait = func(string, memberWaitTarget) memberWaitResult {
-			return memberWaitResult{Last: "health=0 state=(not reachable/healthy)"}
+			return memberWaitResult{Observed: true, Last: "health=0 state=(not reachable/healthy)"}
 		}
-		err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 		if err == nil || !strings.Contains(err.Error(), "did not become reachable") || strings.Contains(err.Error(), "removed") {
 			t.Fatalf("want a plain unreachable error, got %v", err)
 		}
@@ -548,7 +765,7 @@ func TestPromoteMembersSequentially(t *testing.T) {
 
 	t.Run("member gone from the config", func(t *testing.T) {
 		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017", Votes: intPtr(1), Priority: 1})
-		err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := PromoteMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 		if err == nil || !strings.Contains(err.Error(), "no longer in the replica set configuration") {
 			t.Fatalf("want an error about the missing member, got %v", err)
 		}
@@ -618,8 +835,16 @@ func TestWaitForMemberState(t *testing.T) {
 
 	t.Run("times out never reachable", func(t *testing.T) {
 		res, err := WaitForMemberState(context.Background(), script(row(MemberHealthDown, MemberStateUnknown)), "m:1", waitReachable, 5*poll, poll)
-		if err != nil || res.Met || res.EverReachable || !strings.Contains(res.Last, "health=0") {
-			t.Fatalf("want a clean timeout with no reachability, got %+v err %v", res, err)
+		if err != nil || res.Met || res.EverReachable || !res.Observed || !strings.Contains(res.Last, "health=0") {
+			t.Fatalf("want a clean timeout with the member observed down, got %+v err %v", res, err)
+		}
+	})
+
+	t.Run("status never readable is not an observation", func(t *testing.T) {
+		failing := func(context.Context) (*ReplSetStatus, error) { return nil, errors.New("connection reset") }
+		res, err := WaitForMemberState(context.Background(), failing, "m:1", waitReachable, 5*poll, poll)
+		if err != nil || res.Met || res.EverReachable || res.Observed || !strings.Contains(res.Last, "replSetGetStatus: connection reset") {
+			t.Fatalf("want a timeout with nothing observed, got %+v err %v", res, err)
 		}
 	})
 
@@ -653,7 +878,7 @@ func TestAddMembersSequentially_RemovesMemberInstalledByFailedReconfig(t *testin
 		return nil
 	}
 
-	err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017"}}, srv.ops())
+	_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017"}}, srv.ops())
 
 	if err == nil || !strings.Contains(err.Error(), "after the config was installed, so it was removed again") {
 		t.Fatalf("want an error saying the installed member was removed, got %v", err)
@@ -670,10 +895,10 @@ func TestAddMembersSequentially_InterruptedWait(t *testing.T) {
 		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
 		srv.waitErr = context.Canceled
 		srv.wait = func(string, memberWaitTarget) memberWaitResult {
-			return memberWaitResult{Last: "not listed in replSetGetStatus"}
+			return memberWaitResult{Observed: true, Last: "not listed in replSetGetStatus"}
 		}
 
-		err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 
 		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "removed again") {
 			t.Fatalf("want the cancellation wrapped with a removal note, got %v", err)
@@ -691,7 +916,7 @@ func TestAddMembersSequentially_InterruptedWait(t *testing.T) {
 			return memberWaitResult{EverReachable: true, Last: "health=1 state=STARTUP2"}
 		}
 
-		err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+		_, err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
 
 		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "removed") {
 			t.Fatalf("want the bare cancellation, got %v", err)

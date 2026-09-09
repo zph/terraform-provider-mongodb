@@ -92,12 +92,14 @@ timeout is reached (SHARD-016, SHARD-022). This supersedes the earlier
 majority-healthy wait, which never observed the added member once the set had
 two or more members.
 
-**INIT-014** (Unwanted Behaviour): IF the added member never becomes
-reachable within the initialization timeout, THEN the resource SHALL remove
-it again and return a diagnostic error naming the host and the last observed
+**INIT-014** (Unwanted Behaviour): IF the primary reports the added member
+down throughout the initialization timeout, THEN the resource SHALL remove it
+again and return a diagnostic error naming the host and the last observed
 status. IF it is reachable but not yet in the required state, THEN the
-resource SHALL leave it as a non-voter and return an error saying the next
-apply will promote it (SHARD-017).
+resource SHALL leave it as a non-voter, continue with the remaining members,
+and finish with a warning saying a later apply will promote it. IF its status
+could not be read at all, THEN the resource SHALL leave it in place and
+return an error saying the wait was inconclusive (SHARD-017).
 
 ## Idempotency
 

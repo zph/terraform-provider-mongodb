@@ -283,12 +283,25 @@ After INTEG-022 and INTEG-023, wait for all members to be PRIMARY or SECONDARY, 
 
 ---
 
+**INTEG-025:** Unwanted Behaviour
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with a fourth block naming a host that does not resolve and `init_timeout_secs` of 15, the Integration Test Suite SHALL verify that the call returns an error naming the host and saying it was removed again, that `GetReplSetConfig` still lists exactly the three live members with unchanged `_id` values, and that the resource's `member` state lists only those three hosts.
+
+**Rationale:**
+A member the primary reports down for the whole wait is rolled back (SHARD-017), and state must describe the members the server has even when the apply fails, because the SDK persists state on error (SHARD-021). The pre-flight of SHARD-027 cannot reach the container aliases from the test process, so this test also exercises its pass-through path.
+
+**Verification:**
+After INTEG-022, wait for all members to be PRIMARY or SECONDARY, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017`, and assert on the diagnostics, `GetReplSetConfig` and `data.Get("member")`.
+
+---
+
 ## Test File Summary
 
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/integration_test.go` | INTEG-001 through INTEG-016 | `mongodb/config.go`, `mongodb/replica_set_types.go` |
-| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-024 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-025 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
 
 ## Testcontainer Configuration
 
@@ -299,4 +312,4 @@ The integration tests use a single shared MongoDB replica set container for all 
 - Authentication: enabled with admin user
 - Container lifecycle: started once per test suite via `TestMain`, torn down after all tests complete
 
-The member-add tests (INTEG-022 through INTEG-024) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.
+The member-add tests (INTEG-022 through INTEG-025) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.

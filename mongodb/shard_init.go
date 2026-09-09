@@ -43,6 +43,17 @@ const (
 	// operation requires authentication but the client is not authorized. // INIT-029
 	MongoErrUnauthorized = 13
 
+	// MongoErrInvalidReplicaSetConfig is MongoDB error code 93
+	// (InvalidReplicaSetConfig), which replSetGetStatus returns on a node that
+	// holds a configuration it is no longer part of, such as a member removed
+	// from the set earlier. // SHARD-027
+	MongoErrInvalidReplicaSetConfig = 93
+
+	// MongoErrNoReplicationEnabled is MongoDB error code 76
+	// (NoReplicationEnabled), returned by replica set commands on a mongod
+	// started without --replSet. // SHARD-027
+	MongoErrNoReplicationEnabled = 76
+
 	// MongoErrAuthenticationFailed is MongoDB error code 18, returned when
 	// SCRAM-SHA authentication fails (wrong credentials or user missing). // INIT-029
 	MongoErrAuthenticationFailed = 18
@@ -150,6 +161,26 @@ func IsCurrentConfigNotCommitted(err error) bool {
 	var cmdErr mongo.CommandError
 	if errors.As(err, &cmdErr) {
 		return cmdErr.Code == MongoErrCurrentConfigNotCommitted
+	}
+	return false
+}
+
+// IsInvalidReplicaSetConfig returns true if err wraps a mongo.CommandError
+// with code 93 (InvalidReplicaSetConfig). // SHARD-027
+func IsInvalidReplicaSetConfig(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrInvalidReplicaSetConfig
+	}
+	return false
+}
+
+// IsNoReplicationEnabled returns true if err wraps a mongo.CommandError with
+// code 76 (NoReplicationEnabled). // SHARD-027
+func IsNoReplicationEnabled(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrNoReplicationEnabled
 	}
 	return false
 }

@@ -104,6 +104,83 @@ func needsPromotion(o MemberOverride) bool {
 	return !o.ArbiterOnly && (o.Votes != 0 || o.Priority != 0)
 }
 
+// addTargetVerdict is what a candidate host's own replSetGetStatus says about
+// adding it. SHARD-027
+type addTargetVerdict int
+
+const (
+	// addTargetOK is a fresh mongod started with --replSet, or one removed
+	// from a set earlier: adding it is what the block asks for.
+	addTargetOK addTargetVerdict = iota
+	// addTargetRefused is a host that is already an active member of this set
+	// under another name, belongs to a different set, or does not run
+	// replication at all.
+	addTargetRefused
+	// addTargetUnknown is a host that could not be inspected, because it is
+	// unreachable from here or accepts none of the credentials tried. The add
+	// proceeds and the wait after it decides (SHARD-016, SHARD-017).
+	addTargetUnknown
+)
+
+// CheckAddTarget decides from replSetGetStatus run against a candidate host
+// whether it may be added to set. The case this exists for is a host that
+// is already an active member under another name, such as an FQDN for a
+// member configured by its short name: the reconfig would give that node two
+// entries, the node would remove itself until an acceptable configuration
+// arrives, and in a two-voter set the primary would lose its majority with no
+// rollback able to run. A fresh node has no users yet, so an authenticated
+// probe fails there and reads as unknown; a live member has replicated users,
+// answers, and is refused. SHARD-027
+func CheckAddTarget(set string, status *ReplSetStatus, statusErr error) (addTargetVerdict, string) {
+	if statusErr != nil {
+		switch {
+		case IsNotYetInitialized(statusErr):
+			return addTargetOK, "not yet initialized"
+		case IsInvalidReplicaSetConfig(statusErr):
+			return addTargetOK, "removed from a replica set earlier"
+		case IsNoReplicationEnabled(statusErr):
+			return addTargetRefused, "mongod is not running with --replSet"
+		default:
+			return addTargetUnknown, statusErr.Error()
+		}
+	}
+	if status.Set != set {
+		return addTargetRefused, fmt.Sprintf("it is a member of replica set %q", status.Set)
+	}
+	if status.MyState == MemberStateRemoved {
+		return addTargetOK, "removed from this replica set earlier"
+	}
+	as := "under another name"
+	if self := status.GetSelf(); self != nil {
+		as = "as " + self.Name
+	}
+	return addTargetRefused, fmt.Sprintf("it is already a member of this replica set %s (state %s); use that host in the member block",
+		as, MemberStateStrings[status.MyState])
+}
+
+// memberProbe runs replSetGetStatus against a host over a direct connection.
+type memberProbe func(ctx context.Context, host string) (*ReplSetStatus, error)
+
+// PreflightAddTargets probes every host about to be added and refuses the
+// first one that must not be, before any reconfig is sent. Hosts that cannot
+// be inspected are logged and allowed through. SHARD-027
+func PreflightAddTargets(ctx context.Context, set string, overrides []MemberOverride, probe memberProbe) error {
+	for _, o := range overrides {
+		status, err := probe(ctx, o.Host)
+		verdict, reason := CheckAddTarget(set, status, err)
+		fields := map[string]interface{}{"host": o.Host, "set": set, "reason": reason}
+		switch verdict {
+		case addTargetRefused:
+			return fmt.Errorf("member %s cannot be added to replica set %s: %s", o.Host, set, reason)
+		case addTargetUnknown:
+			tflog.Warn(ctx, "could not inspect member before adding it; relying on the wait after the add", fields)
+		default:
+			tflog.Debug(ctx, "member inspected before add", fields)
+		}
+	}
+	return nil
+}
+
 // memberWaitTarget is the state a member must report before the resource
 // moves on. SHARD-016
 type memberWaitTarget int
@@ -180,10 +257,13 @@ func observeMember(status *ReplSetStatus, host string, target memberWaitTarget) 
 
 // memberWaitResult is how a wait ended. A timeout is not an error here: the
 // caller decides what to do with a member that was never reachable versus one
-// that is reachable but still syncing.
+// that is reachable but still syncing. Observed distinguishes a member the
+// primary reported down from one whose status could not be read at all: only
+// the former justifies removing it (SHARD-017).
 type memberWaitResult struct {
 	Met           bool
 	EverReachable bool
+	Observed      bool // at least one replSetGetStatus succeeded
 	Last          string
 }
 
@@ -197,6 +277,7 @@ func WaitForMemberState(ctx context.Context, getStatus func(context.Context) (*R
 			res.Last = "replSetGetStatus: " + err.Error()
 		} else {
 			obs := observeMember(status, host, target)
+			res.Observed = true
 			res.Last = obs.Seen
 			res.EverReachable = res.EverReachable || obs.Reachable
 			if obs.Met {
@@ -221,6 +302,35 @@ func WaitForMemberState(ctx context.Context, getStatus func(context.Context) (*R
 // rollbackGrace bounds the removal of a never-reachable member when the apply
 // itself has been cancelled. SHARD-017
 const rollbackGrace = 30 * time.Second
+
+// memberPending is a member that is in the set, reachable, and due the votes
+// and priority its block asks for, but had not reached the required state
+// when the wait ended. It stays a non-voter with priority 0; the apply
+// succeeds with a warning and the next apply performs the promotion once the
+// member is SECONDARY. Initial sync of a data-bearing set routinely outlasts
+// init_timeout_secs, so this is the expected outcome, not a failure.
+// SHARD-017, SHARD-023
+type memberPending struct {
+	Host     string
+	Target   memberWaitTarget
+	Last     string
+	Votes    int
+	Priority float64
+	Timeout  time.Duration
+}
+
+// Summary is the one-line warning shown in the apply output.
+func (p memberPending) Summary() string {
+	return fmt.Sprintf("Replica set member %s is not yet %s", p.Host, p.Target)
+}
+
+// Detail explains what happened and what the next apply does.
+func (p memberPending) Detail() string {
+	return fmt.Sprintf("%s is reachable but was not %s within %s (last observed: %s). "+
+		"It stays in the replica set as a non-voter with priority 0, which the plan now shows as a pending change. "+
+		"Apply again once it is %s to give it votes %d and priority %v, or raise init_timeout_secs.",
+		p.Host, p.Target, p.Timeout, p.Last, p.Target, p.Votes, p.Priority)
+}
 
 // memberAddOps abstracts the server calls the add and promote sequences make
 // so they can be unit tested.
@@ -255,15 +365,17 @@ func memberAddOpsForClient(client *mongo.Client, timeout time.Duration) memberAd
 // promoted by a second reconfig once it is SECONDARY, so it never counts
 // toward majority while syncing (SHARD-022). Arbiters are added in final
 // form. MongoDB 4.4 rejects adding more than one voting member at a time. A
-// member that never becomes reachable is removed again (SHARD-017); one that
-// is reachable but not yet SECONDARY when the timeout elapses stays as a
-// non-voter and the apply fails, and the next apply promotes it.
+// member that the primary reports down for the whole wait is removed again
+// (SHARD-017); one that is reachable but not yet SECONDARY when the timeout
+// elapses stays as a non-voter and is returned in pending, and the loop goes
+// on with the next block because a non-voter does not affect the majority.
 // SHARD-013, SHARD-016
-func AddMembersSequentially(ctx context.Context, overrides []MemberOverride, ops memberAddOps) error {
+func AddMembersSequentially(ctx context.Context, overrides []MemberOverride, ops memberAddOps) ([]memberPending, error) {
+	var pending []memberPending
 	for _, o := range overrides {
 		cfg, err := ops.GetConfig(ctx)
 		if err != nil {
-			return fmt.Errorf("reading config before adding member %s: %w", o.Host, err)
+			return pending, fmt.Errorf("reading config before adding member %s: %w", o.Host, err)
 		}
 		member := stagedMember(o, NextMemberID(cfg.Members))
 		cfg.Members = append(cfg.Members, member)
@@ -279,81 +391,116 @@ func AddMembersSequentially(ctx context.Context, overrides []MemberOverride, ops
 			removed, rbErr := removeMemberByHost(ctx, member.Host, ops)
 			switch {
 			case rbErr != nil:
-				return fmt.Errorf("adding member %s (_id %d): %w; checking whether it was installed also failed: %v",
+				return pending, fmt.Errorf("adding member %s (_id %d): %w; checking whether it was installed also failed: %v",
 					member.Host, member.ID, err, rbErr)
 			case removed:
-				return fmt.Errorf("adding member %s (_id %d) failed after the config was installed, so it was removed again: %w",
+				return pending, fmt.Errorf("adding member %s (_id %d) failed after the config was installed, so it was removed again: %w",
 					member.Host, member.ID, err)
 			default:
-				return fmt.Errorf("adding member %s (_id %d): %w", member.Host, member.ID, err)
+				return pending, fmt.Errorf("adding member %s (_id %d): %w", member.Host, member.ID, err)
 			}
 		}
 
-		if err := settleMember(ctx, o, ops, true); err != nil {
-			return err
+		p, err := settleMember(ctx, o, ops, true)
+		if err != nil {
+			return pending, err
+		}
+		if p != nil {
+			pending = append(pending, *p)
 		}
 	}
-	return nil
+	return pending, nil
+}
+
+// ReconcileMembers runs the promotions, then the adds, and returns every
+// member left pending together with the first hard error. Adds do not start
+// when a promotion failed hard: the set is not in the shape the plan assumed.
+// SHARD-013, SHARD-023
+func ReconcileMembers(ctx context.Context, promotions, newMembers []MemberOverride, ops memberAddOps) ([]memberPending, error) {
+	pending, err := PromoteMembersSequentially(ctx, promotions, ops)
+	if err != nil {
+		return pending, err
+	}
+	added, err := AddMembersSequentially(ctx, newMembers, ops)
+	return append(pending, added...), err
 }
 
 // PromoteMembersSequentially gives live members the votes and priority their
 // blocks ask for, one reconfig each, after each has reported SECONDARY. It
 // finishes adds whose promotion did not fit in an earlier apply, and is the
-// path for any block that turns a non-voting member into a voter. SHARD-023
-func PromoteMembersSequentially(ctx context.Context, overrides []MemberOverride, ops memberAddOps) error {
+// path for any block that turns a non-voting member into a voter. A member
+// still syncing is returned in pending and the loop continues. SHARD-023
+func PromoteMembersSequentially(ctx context.Context, overrides []MemberOverride, ops memberAddOps) ([]memberPending, error) {
+	var pending []memberPending
 	for _, o := range overrides {
-		if err := settleMember(ctx, o, ops, false); err != nil {
-			return err
+		p, err := settleMember(ctx, o, ops, false)
+		if err != nil {
+			return pending, err
+		}
+		if p != nil {
+			pending = append(pending, *p)
 		}
 	}
-	return nil
+	return pending, nil
 }
 
 // settleMember waits for o's host to reach its target state, then applies the
 // block's votes and priority if they differ from the staged 0/0. addedNow says
 // whether this apply added the member, which decides whether a host that
-// never became reachable is removed again or left alone (SHARD-019).
-func settleMember(ctx context.Context, o MemberOverride, ops memberAddOps, addedNow bool) error {
+// never became reachable is removed again or left alone (SHARD-019). A
+// reachable member that is still syncing comes back as pending rather than
+// an error. Removal needs the primary to have actually reported the member
+// down at least once: if status could not be read at all, the member is left
+// alone and the wait is reported as inconclusive.
+func settleMember(ctx context.Context, o MemberOverride, ops memberAddOps, addedNow bool) (*memberPending, error) {
 	target := waitTargetFor(o)
 	res, err := ops.Wait(ctx, o.Host, target)
+	neverSeenUp := res.Observed && !res.EverReachable
 	if err != nil {
-		// The apply is being interrupted. A member added just now that has
-		// not answered a single heartbeat is most likely a typo, so remove it
-		// on a context that outlives the cancelled one; anything else stays
-		// as a non-voter for the next apply to finish.
-		if addedNow && !res.EverReachable {
+		// The apply is being interrupted. A member added just now that the
+		// primary has reported down and never up is most likely a typo, so
+		// remove it on a context that outlives the cancelled one; anything
+		// else stays as a non-voter for the next apply to finish.
+		if addedNow && neverSeenUp {
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackGrace)
 			defer cancel()
 			if _, rbErr := removeMemberByHost(rbCtx, o.Host, ops); rbErr != nil {
-				return fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable and removing it again also failed: %v",
+				return nil, fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable and removing it again also failed: %v",
 					o.Host, target, err, rbErr)
 			}
-			return fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable, so it was removed again", o.Host, target, err)
+			return nil, fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable, so it was removed again", o.Host, target, err)
 		}
-		return fmt.Errorf("waiting for member %s to become %s: %w", o.Host, target, err)
+		return nil, fmt.Errorf("waiting for member %s to become %s: %w", o.Host, target, err)
 	}
 	if !res.Met {
 		switch {
-		case !res.EverReachable && addedNow:
+		case !res.Observed && addedNow:
+			return nil, fmt.Errorf("member %s was added but replSetGetStatus could not be read within %s (last: %s); it was left in the replica set as a non-voter and the next apply will check it again",
+				o.Host, ops.Timeout, res.Last)
+		case !res.Observed:
+			return nil, fmt.Errorf("member %s: replSetGetStatus could not be read within %s (last: %s)", o.Host, ops.Timeout, res.Last)
+		case neverSeenUp && addedNow:
 			if _, rbErr := removeMemberByHost(ctx, o.Host, ops); rbErr != nil {
-				return fmt.Errorf("member %s was added but did not become reachable within %s: %s; removing it again also failed: %v",
+				return nil, fmt.Errorf("member %s was added but did not become reachable within %s: %s; removing it again also failed: %v",
 					o.Host, ops.Timeout, res.Last, rbErr)
 			}
-			return fmt.Errorf("member %s was added but did not become reachable within %s, so it was removed again (last observed: %s)",
+			return nil, fmt.Errorf("member %s was added but did not become reachable within %s, so it was removed again (last observed: %s)",
 				o.Host, ops.Timeout, res.Last)
-		case !res.EverReachable:
-			return fmt.Errorf("member %s did not become reachable within %s (last observed: %s)", o.Host, ops.Timeout, res.Last)
+		case neverSeenUp:
+			return nil, fmt.Errorf("member %s did not become reachable within %s (last observed: %s)", o.Host, ops.Timeout, res.Last)
 		case needsPromotion(o):
-			return fmt.Errorf("member %s is reachable but was not %s within %s (last observed: %s); it keeps its current votes and priority and will be given votes %d and priority %v by the next apply once it is %s",
-				o.Host, target, ops.Timeout, res.Last, o.Votes, o.Priority, target)
+			tflog.Warn(ctx, "replica set member still syncing; leaving it as a non-voter", map[string]interface{}{
+				"host": o.Host, "target": target.String(), "status": res.Last,
+			})
+			return &memberPending{Host: o.Host, Target: target, Last: res.Last, Votes: o.Votes, Priority: o.Priority, Timeout: ops.Timeout}, nil
 		default:
-			return fmt.Errorf("member %s did not become %s within %s (last observed: %s)", o.Host, target, ops.Timeout, res.Last)
+			return nil, fmt.Errorf("member %s did not become %s within %s (last observed: %s)", o.Host, target, ops.Timeout, res.Last)
 		}
 	}
 	if !needsPromotion(o) {
-		return nil
+		return nil, nil
 	}
-	return promoteMember(ctx, o, ops)
+	return nil, promoteMember(ctx, o, ops)
 }
 
 // promoteMember sets the member's votes and priority to the block's values in
