@@ -82,7 +82,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | `mongodb/resource_registry.go` | Resource maturity classification, allowlist gating, env var parsing |
 | `mongodb/parse_id.go` | Shared `parseResourceId` / `formatResourceId` helpers (IDFORMAT spec) |
 | `mongodb/config.go` | Client configuration, connection, TLS, proxy |
-| `mongodb/replica_set_types.go` | RS config types, `GetReplSetConfig`, `SetReplSetConfig`, `GetReplSetStatus` |
+| `mongodb/replica_set_types.go` | RS config types, `GetReplSetConfig`, `SetReplSetConfig`, `GetReplSetStatus`, `GetIsMaster` |
 | `mongodb/shard_discovery.go` | Connection type detection, `ListShards`, `ResolveShardClient` |
 | `mongodb/shard_init.go` | RS initialization: `IsNotYetInitialized`, `IsAlreadyInitialized`, `IsCurrentConfigNotCommitted`, `InitiateReplicaSet`, `WaitForPrimary`, `SetReplSetConfigWithRetry`, `ConnectForInit` |
 | `mongodb/shard_members.go` | Member reconciliation: `PartitionMemberOverrides`, `HoldPromotions`, `NextMemberID`, `BuildConfigMember`, `CheckAddTarget`, `PreflightAddTargets`, `ReconcileMembers`, `AddMembersSequentially`, `PromoteMembersSequentially`, `WaitForMemberState` |
@@ -102,7 +102,7 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 
 | Spec | File | ID Range |
 |------|------|----------|
-| Shard Config | `docs/specs/shard-member-requirements.md` | SHARD-001 through SHARD-027 |
+| Shard Config | `docs/specs/shard-member-requirements.md` | SHARD-001 through SHARD-028 |
 | Shard Discovery | `docs/specs/` (inline in code) | DISC-001 through DISC-010 |
 | Shard Initialization | `docs/specs/shard-init-requirements.md` | INIT-001 through INIT-032 |
 | Shard Cluster Management | `docs/specs/shard-cluster-requirements.md` | CLUS-001 through CLUS-014 |
@@ -127,8 +127,8 @@ The registry is defined in `mongodb/resource_registry.go`. See `docs/specs/resou
 | File | Tests | Build Tag |
 |------|-------|-----------|
 | `mongodb/shard_init_test.go` | INIT-T01..T07, INIT-T12 series, INIT-T13 (22 tests) | none |
-| `mongodb/shard_members_test.go` | SHARD-T14..T24, T26..T34, T39..T42 (24 tests) | none |
-| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-025 (4 tests) | integration |
+| `mongodb/shard_members_test.go` | SHARD-T14..T24, T26..T34, T39..T43 (25 tests) | none |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-027 (6 tests) | integration |
 | `mongodb/resource_shard_test.go` | CLUS-T01..T06 (6 tests) | none |
 | `mongodb/resource_shard_config_test.go` | SHARD-T01..T13, SHARD-T26, SHARD-T35..T38, CATCHUP-T01, OPLOG-T tests | none |
 | `mongodb/shard_discovery_test.go` | DISC tests | none |

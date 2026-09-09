@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -523,26 +524,45 @@ func readOplogConfig(ctx context.Context, data *schema.ResourceData, members Con
 	return data.Set("oplog_size_mb", size)
 }
 
-// memberPreflightTimeout bounds the direct connection and status read that
+// memberPreflightTimeout bounds the direct connection and isMaster that
 // inspect a host before it is added. As with the oplog read-back, a host that
 // cannot be reached from here should cost seconds. SHARD-027
 const memberPreflightTimeout = 20 * time.Second
 
-// memberProbeFor returns a probe that connects directly to a host with the
-// provider's credentials and falls back to no auth. The probe only reads, and
-// a fresh node has no users yet, so the fallback is safe on every path.
-// SHARD-027
+// memberProbeFor returns a probe that connects directly to a host without
+// credentials and runs isMaster, which needs none. A fresh node has no users
+// yet and a live member answers before authentication, so one connection
+// reads both, and the provider's password is never sent to a host that is so
+// far only a name in the configuration. SHARD-027
 func memberProbeFor(providerConf *MongoDatabaseConfiguration) memberProbe {
-	return func(ctx context.Context, hostPort string) (*ReplSetStatus, error) {
+	return func(ctx context.Context, hostPort string) (*IsMasterResp, error) {
+		host, port, err := SplitHostPort(hostPort)
+		if err != nil {
+			return nil, fmt.Errorf("invalid member host %q: %w", hostPort, err)
+		}
 		probeCtx, cancel := context.WithTimeout(ctx, memberPreflightTimeout)
 		defer cancel()
-		client, cleanup, err := connectToMember(probeCtx, providerConf, hostPort, true)
+		client, err := MongoClientInitNoAuth(probeCtx, &MongoDatabaseConfiguration{
+			Config:          BuildShardClientConfig(providerConf.Config, host, port, ""),
+			MaxConnLifetime: providerConf.MaxConnLifetime,
+		})
 		if err != nil {
 			return nil, err
 		}
-		defer cleanup()
-		return GetReplSetStatus(probeCtx, client)
+		defer func() { _ = client.Disconnect(probeCtx) }()
+		return GetIsMaster(probeCtx, client)
 	}
+}
+
+// errMemberProbeSkipped is what the probe reports under host_override: the
+// member hosts are by definition not reachable from the runner (DISC-008), so
+// every host to add reads as uninspectable. Data-bearing members are then
+// added on the strength of the wait after the add; arbiters are refused.
+// SHARD-027, SHARD-028
+var errMemberProbeSkipped = errors.New("host_override is set, so member hosts are not reachable from the Terraform runner")
+
+func memberProbeSkipped(context.Context, string) (*IsMasterResp, error) {
+	return nil, errMemberProbeSkipped
 }
 
 // connectToMember opens a direct connection to a single replica set member
@@ -627,11 +647,16 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 		}
 		existing, missing := PartitionMemberOverrides(config.Members, overrides)
 		// SHARD-027: a host that is already a member under another name must
-		// be refused before anything is sent. host_override means the member
-		// hosts are not reachable from here (DISC-008), so the probe is
-		// skipped and the wait after each add is the only check.
-		if _, overridden := data.GetOk("host_override"); !overridden && len(missing) > 0 {
-			if err := PreflightAddTargets(ctx, config.ID, missing, memberProbeFor(providerConf)); err != nil {
+		// be refused before anything is sent. Under host_override the member
+		// hosts are not reachable from here (DISC-008), so every host reads
+		// as uninspectable: data-bearing adds go ahead with the wait after
+		// each add as the only check, and arbiters are refused (SHARD-028).
+		if len(missing) > 0 {
+			probe := memberProbeFor(providerConf)
+			if _, overridden := data.GetOk("host_override"); overridden {
+				probe = memberProbeSkipped
+			}
+			if err := PreflightAddTargets(ctx, config.ID, missing, probe); err != nil {
 				return diag.FromErr(err)
 			}
 		}

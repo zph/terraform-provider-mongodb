@@ -8,40 +8,38 @@ import (
 	"testing"
 	"time"
 
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
-// SHARD-T41: SHARD-027 — CheckAddTarget from the candidate's own status
+// SHARD-T41: SHARD-027 — CheckAddTarget from the candidate's own isMaster answer
 func TestCheckAddTarget(t *testing.T) {
 	const set = "rs0"
-	self := func(name string, state MemberState) *ReplSetStatus {
-		return &ReplSetStatus{Set: set, MyState: state, Members: []*Member{
-			{Name: "other:27017", State: MemberStatePrimary},
-			{Name: name, State: state, Self: true},
-		}}
+	fresh := &IsMasterResp{IsReplicaSet: true, Info: "Does not have a valid replica set config"}
+	member := func(me string, primary, secondary, arbiter bool) *IsMasterResp {
+		return &IsMasterResp{SetName: set, Me: me, IsMaster: primary, Secondary: secondary, IsArbiter: arbiter}
 	}
 	cases := []struct {
 		name    string
-		status  *ReplSetStatus
+		resp    *IsMasterResp
 		err     error
 		verdict addTargetVerdict
 		reason  string
 	}{
-		{"fresh node", nil, mongo.CommandError{Code: MongoErrNotYetInitialized}, addTargetOK, "not yet initialized"},
-		{"removed earlier, config kept", nil, fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrInvalidReplicaSetConfig}), addTargetOK, "removed"},
-		{"no --replSet", nil, mongo.CommandError{Code: MongoErrNoReplicationEnabled}, addTargetRefused, "--replSet"},
+		{"fresh node", fresh, nil, addTargetOK, "not yet initialized"},
+		{"removed earlier answers like a fresh node", fresh, nil, addTargetOK, "removed from a replica set earlier"},
+		{"no --replSet", &IsMasterResp{IsMaster: true}, nil, addTargetRefused, "--replSet"},
+		{"mongos", &IsMasterResp{IsMaster: true, Msg: "isdbgrid"}, nil, addTargetRefused, "mongos"},
 		{"unreachable", nil, errors.New("server selection timeout"), addTargetUnknown, "server selection timeout"},
-		{"auth refused", nil, mongo.CommandError{Code: MongoErrUnauthorized, Message: "command replSetGetStatus requires authentication"}, addTargetUnknown, "requires authentication"},
-		{"other set", &ReplSetStatus{Set: "rs1", MyState: MemberStateSecondary}, nil, addTargetRefused, `replica set "rs1"`},
-		{"removed from this set", &ReplSetStatus{Set: set, MyState: MemberStateRemoved}, nil, addTargetOK, "removed from this replica set"},
-		{"live secondary under another name", self("mongo2.internal:27017", MemberStateSecondary), nil, addTargetRefused, "as mongo2.internal:27017 (state SECONDARY)"},
-		{"live primary under another name", self("mongo1.internal:27017", MemberStatePrimary), nil, addTargetRefused, "as mongo1.internal:27017 (state PRIMARY)"},
-		{"syncing under another name", self("mongo3.internal:27017", MemberStateStartup2), nil, addTargetRefused, "state STARTUP2"},
-		{"member with no self row", &ReplSetStatus{Set: set, MyState: MemberStateSecondary}, nil, addTargetRefused, "under another name"},
+		{"other set", &IsMasterResp{SetName: "rs1", Secondary: true}, nil, addTargetRefused, `replica set "rs1"`},
+		{"live secondary under another name", member("mongo2.internal:27017", false, true, false), nil, addTargetRefused, "as mongo2.internal:27017 (SECONDARY)"},
+		{"live primary under another name", member("mongo1.internal:27017", true, false, false), nil, addTargetRefused, "as mongo1.internal:27017 (PRIMARY)"},
+		{"live arbiter under another name", member("arb.internal:27017", false, false, true), nil, addTargetRefused, "as arb.internal:27017 (ARBITER)"},
+		{"syncing under another name", member("mongo3.internal:27017", false, false, false), nil, addTargetRefused, "(neither PRIMARY nor SECONDARY)"},
+		{"member with no me", &IsMasterResp{SetName: set}, nil, addTargetRefused, "under another name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			verdict, reason := CheckAddTarget(set, tc.status, tc.err)
+			verdict, reason := CheckAddTarget(set, tc.resp, tc.err)
 			if verdict != tc.verdict || !strings.Contains(reason, tc.reason) {
 				t.Errorf("want verdict %d reason~%q, got %d %q", tc.verdict, tc.reason, verdict, reason)
 			}
@@ -49,27 +47,75 @@ func TestCheckAddTarget(t *testing.T) {
 	}
 }
 
-// SHARD-T42: SHARD-027 — PreflightAddTargets probes in block order, lets
-// uninspectable hosts through, and stops at the first refusal
+// SHARD-T43: SHARD-027 — the verdict is read from documents shaped the way
+// servers shape them, pinning the isMaster field names the check relies on
+func TestCheckAddTarget_ServerShapes(t *testing.T) {
+	cases := []struct {
+		name    string
+		doc     bson.D
+		verdict addTargetVerdict
+		reason  string
+	}{
+		{"mongod with --replSet and no config", bson.D{
+			{Key: "ismaster", Value: false}, {Key: "secondary", Value: false},
+			{Key: "info", Value: "Does not have a valid replica set config"}, {Key: "isreplicaset", Value: true},
+			{Key: "ok", Value: 1},
+		}, addTargetOK, "not yet initialized"},
+		{"secondary of this set", bson.D{
+			{Key: "hosts", Value: bson.A{"mongo1:27017", "mongo2:27017"}}, {Key: "setName", Value: "rs0"},
+			{Key: "ismaster", Value: false}, {Key: "secondary", Value: true},
+			{Key: "primary", Value: "mongo1:27017"}, {Key: "me", Value: "mongo2:27017"}, {Key: "ok", Value: 1},
+		}, addTargetRefused, "as mongo2:27017 (SECONDARY)"},
+		{"arbiter of this set", bson.D{
+			{Key: "setName", Value: "rs0"}, {Key: "ismaster", Value: false}, {Key: "secondary", Value: false},
+			{Key: "arbiterOnly", Value: true}, {Key: "me", Value: "arb:27017"}, {Key: "ok", Value: 1},
+		}, addTargetRefused, "as arb:27017 (ARBITER)"},
+		{"standalone", bson.D{{Key: "ismaster", Value: true}, {Key: "ok", Value: 1}}, addTargetRefused, "--replSet"},
+		{"mongos", bson.D{{Key: "ismaster", Value: true}, {Key: "msg", Value: "isdbgrid"}, {Key: "ok", Value: 1}}, addTargetRefused, "mongos"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := bson.Marshal(tc.doc)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var resp IsMasterResp
+			if err := bson.Unmarshal(raw, &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			verdict, reason := CheckAddTarget("rs0", &resp, nil)
+			if verdict != tc.verdict || !strings.Contains(reason, tc.reason) {
+				t.Errorf("want verdict %d reason~%q, got %d %q", tc.verdict, tc.reason, verdict, reason)
+			}
+		})
+	}
+}
+
+// SHARD-T42: SHARD-027, SHARD-028 — PreflightAddTargets probes in block
+// order, lets uninspectable data-bearing hosts through, stops at the first
+// refusal, and refuses an arbiter it could not inspect
 func TestPreflightAddTargets(t *testing.T) {
 	type answer struct {
-		status *ReplSetStatus
-		err    error
+		resp *IsMasterResp
+		err  error
 	}
+	fresh := &IsMasterResp{IsReplicaSet: true}
 	answers := map[string]answer{
-		"fresh:27017":  {err: mongo.CommandError{Code: MongoErrNotYetInitialized}},
-		"dark:27017":   {err: errors.New("dial tcp: no route to host")},
-		"alias:27017":  {status: &ReplSetStatus{Set: "rs0", MyState: MemberStateSecondary, Members: []*Member{{Name: "real:27017", Self: true}}}},
-		"unseen:27017": {err: mongo.CommandError{Code: MongoErrNotYetInitialized}},
+		"fresh:27017":   {resp: fresh},
+		"dark:27017":    {err: errors.New("dial tcp: no route to host")},
+		"alias:27017":   {resp: &IsMasterResp{SetName: "rs0", Me: "real:27017", Secondary: true}},
+		"unseen:27017":  {resp: fresh},
+		"arb:27017":     {resp: fresh},
+		"darkarb:27017": {err: errors.New("dial tcp: no route to host")},
 	}
 	var probed []string
-	probe := func(_ context.Context, host string) (*ReplSetStatus, error) {
+	probe := func(_ context.Context, host string) (*IsMasterResp, error) {
 		probed = append(probed, host)
 		a, ok := answers[host]
 		if !ok {
 			t.Fatalf("unexpected probe of %s", host)
 		}
-		return a.status, a.err
+		return a.resp, a.err
 	}
 	blocks := []MemberOverride{{Host: "fresh:27017"}, {Host: "dark:27017"}, {Host: "alias:27017"}, {Host: "unseen:27017"}}
 
@@ -89,11 +135,50 @@ func TestPreflightAddTargets(t *testing.T) {
 
 	probed = nil
 	if err := PreflightAddTargets(context.Background(), "rs0", blocks[:2], probe); err != nil {
-		t.Errorf("a fresh host and an uninspectable host must both pass, got %v", err)
+		t.Errorf("a fresh host and an uninspectable data-bearing host must both pass, got %v", err)
 	}
 	if err := PreflightAddTargets(context.Background(), "rs0", nil, probe); err != nil || len(probed) != 2 {
 		t.Errorf("no blocks means no probes, got err %v probes %v", err, probed)
 	}
+
+	t.Run("arbiter", func(t *testing.T) {
+		arb := MemberOverride{Host: "arb:27017", ArbiterOnly: true, Votes: 1}
+		if err := PreflightAddTargets(context.Background(), "rs0", []MemberOverride{arb}, probe); err != nil {
+			t.Errorf("an arbiter host inspected as fresh must pass, got %v", err)
+		}
+
+		darkArb := MemberOverride{Host: "darkarb:27017", ArbiterOnly: true, Votes: 1}
+		probed = nil
+		err := PreflightAddTargets(context.Background(), "rs0", []MemberOverride{{Host: "fresh:27017"}, darkArb, {Host: "unseen:27017"}}, probe)
+		if err == nil {
+			t.Fatal("want a refusal for the arbiter that could not be inspected")
+		}
+		for _, want := range []string{"arbiter darkarb:27017", "rs0", "could not be inspected", "no route to host", "majority"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should contain %q, got: %v", want, err)
+			}
+		}
+		if len(probed) != 2 {
+			t.Errorf("the refusal must stop the pre-flight, got probes %v", probed)
+		}
+	})
+
+	t.Run("probe skipped under host_override", func(t *testing.T) {
+		data := []MemberOverride{{Host: "a:27017", Votes: 1, Priority: 1}, {Host: "b:27017"}}
+		if err := PreflightAddTargets(context.Background(), "rs0", data, memberProbeSkipped); err != nil {
+			t.Errorf("data-bearing blocks must pass when the probe is skipped, got %v", err)
+		}
+		withArb := append(data, MemberOverride{Host: "arb:27017", ArbiterOnly: true, Votes: 1})
+		err := PreflightAddTargets(context.Background(), "rs0", withArb, memberProbeSkipped)
+		if err == nil {
+			t.Fatal("want a refusal for an arbiter when the probe is skipped")
+		}
+		for _, want := range []string{"arbiter arb:27017", "host_override"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should contain %q, got: %v", want, err)
+			}
+		}
+	})
 }
 
 type waitCall struct {

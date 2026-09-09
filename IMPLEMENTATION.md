@@ -44,7 +44,7 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
 | `resource_shard_config_test.go` | 36 | ID parsing, MergeMembers, RSConfigMembersToState (block order), schema validation, member defaults, arbiter priority, duplicate hosts, oplog fan-out helpers |
-| `shard_members_test.go` | 24 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback/pending, PromoteMembersSequentially, ReconcileMembers, CheckAddTarget, PreflightAddTargets, observeMember, WaitForMemberState |
+| `shard_members_test.go` | 25 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback/pending, PromoteMembersSequentially, ReconcileMembers, CheckAddTarget, PreflightAddTargets, observeMember, WaitForMemberState |
 | `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
@@ -81,8 +81,10 @@ Testcontainer-based tests against a live MongoDB replica set. Run with `make tes
 | INTEG-023 | Second apply against the grown set adds nothing |
 | INTEG-024 | Raising a live member's votes waits for SECONDARY and reconfigs once |
 | INTEG-025 | An add whose member never answers is rolled back and state lists only the live members |
+| INTEG-026 | A block naming a live member under another name is refused by the pre-flight before any reconfig |
+| INTEG-027 | An arbiter whose host cannot be inspected is refused before any reconfig |
 
-Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-025), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-027)
+Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-027), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-028)
 
 ## Make Targets
 

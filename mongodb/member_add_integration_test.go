@@ -42,6 +42,23 @@ var memberAddAliases = []string{"rsgrow-a", "rsgrow-b", "rsgrow-c"}
 
 func memberAddHost(i int) string { return memberAddAliases[i] + ":" + memberAddPort }
 
+// memberAddMappedHost is the address at which the test process reaches node
+// i: the same mongod the set knows as memberAddHost(i), under another name.
+// The network aliases resolve only inside the test network, so this is the
+// only address the pre-flight probe (SHARD-027) can connect to.
+func memberAddMappedHost(ctx context.Context, i int) (string, error) {
+	c := memberAddCluster.nodes[i]
+	host, err := c.Host(ctx)
+	if err != nil {
+		return "", err
+	}
+	port, err := c.MappedPort(ctx, nat.Port(memberAddPort+"/tcp"))
+	if err != nil {
+		return "", err
+	}
+	return host + ":" + port.Port(), nil
+}
+
 func setupMemberAddCluster() error {
 	ctx := context.Background()
 
@@ -158,8 +175,9 @@ func newMemberAddSeedClient(t *testing.T) *mongo.Client {
 //
 // The member hosts are container aliases that only resolve inside the test
 // network, so the pre-flight probe (SHARD-027) cannot reach them from the
-// test process and logs them as uninspectable; these tests exercise that
-// pass-through path only, and the refusal cases are unit tested.
+// test process and logs them as uninspectable; the adds exercise that
+// pass-through path. INTEG-026 reaches the same nodes through their mapped
+// ports, which the probe can connect to, to exercise the refusal.
 func memberAddResourceData(t *testing.T, thirdVotes int) *schema.ResourceData {
 	return memberAddResourceDataWith(t, 120, thirdVotes)
 }
@@ -238,6 +256,19 @@ func TestIntegration_ShardConfigUpdate_AddsMembersOneAtATime(t *testing.T) {
 	}
 	if len(before.Members) != 1 {
 		t.Fatalf("precondition: want a one-member set, got %d members", len(before.Members))
+	}
+
+	// SHARD-027: before it joins, the second node answers isMaster as a mongod
+	// with --replSet and no configuration, which the pre-flight reads as
+	// addable. The probe reaches it through its mapped port; the add below
+	// names the network alias, which the probe cannot resolve.
+	freshAddr, err := memberAddMappedHost(ctx, 1)
+	if err != nil {
+		t.Fatalf("mapped host of node 1: %v", err)
+	}
+	resp, probeErr := memberProbeFor(memberAddProviderConf())(ctx, freshAddr)
+	if verdict, reason := CheckAddTarget(memberAddRSName, resp, probeErr); verdict != addTargetOK {
+		t.Fatalf("fresh node %s should read as addable, got verdict %d: %s", freshAddr, verdict, reason)
 	}
 
 	data := memberAddResourceData(t, 0)
@@ -427,5 +458,105 @@ func TestIntegration_ShardConfigUpdate_PromotesLiveMember(t *testing.T) {
 	if stateMembers := data.Get("member").([]interface{}); len(stateMembers) != 3 ||
 		stateMembers[2].(map[string]interface{})["votes"] != 1 {
 		t.Errorf("state should show the promoted votes, got %v", data.Get("member"))
+	}
+}
+
+// INTEG-026: SHARD-027 — a block naming a live member under another name is
+// refused by the pre-flight before any reconfig is sent. The test process
+// reaches each node through its mapped port, so that address is an alias of
+// the network name the set knows the node by: exactly the FQDN-for-short-name
+// case the pre-flight exists for.
+func TestIntegration_ShardConfigUpdate_RefusesAliasOfLiveMember(t *testing.T) {
+	ensureMemberAddCluster(t)
+	client := newMemberAddSeedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ensureMemberAddClusterGrown(ctx, t, client)
+	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	before, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig before: %v", err)
+	}
+
+	probe := memberProbeFor(memberAddProviderConf())
+	for i := range memberAddAliases {
+		addr, err := memberAddMappedHost(ctx, i)
+		if err != nil {
+			t.Fatalf("mapped host of node %d: %v", i, err)
+		}
+		resp, probeErr := probe(ctx, addr)
+		verdict, reason := CheckAddTarget(memberAddRSName, resp, probeErr)
+		if verdict != addTargetRefused || !strings.Contains(reason, "as "+memberAddHost(i)) {
+			t.Errorf("probe of %s: want a refusal naming %s, got verdict %d: %s", addr, memberAddHost(i), verdict, reason)
+		}
+	}
+
+	alias, err := memberAddMappedHost(ctx, 0)
+	if err != nil {
+		t.Fatalf("mapped host of node 0: %v", err)
+	}
+	data := memberAddResourceDataWith(t, 120, 0, map[string]interface{}{"host": alias, "priority": 1.0, "votes": 1})
+	diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true)
+	if !diags.HasError() {
+		t.Fatal("want the aliased member to be refused")
+	}
+	msg := fmt.Sprint(diags)
+	for _, want := range []string{alias, "already a member", "as " + memberAddHost(0), "use that host"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostics should contain %q, got: %s", want, msg)
+		}
+	}
+
+	after, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after: %v", err)
+	}
+	if after.Version != before.Version || len(after.Members) != len(before.Members) {
+		t.Errorf("a refused block must not send any reconfig: version %d -> %d, members %v -> %v",
+			before.Version, after.Version, memberHosts(before.Members), memberHosts(after.Members))
+	}
+	if data.Id() != "" {
+		t.Errorf("nothing may be recorded in state when the pre-flight refuses, got id %q", data.Id())
+	}
+}
+
+// INTEG-027: SHARD-028 — an arbiter whose host the pre-flight cannot inspect
+// is refused before any reconfig is sent: it would be added with its vote,
+// and if the host were down the resource could not undo the add.
+func TestIntegration_ShardConfigUpdate_RefusesUninspectableArbiter(t *testing.T) {
+	ensureMemberAddCluster(t)
+	client := newMemberAddSeedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	ensureMemberAddClusterGrown(ctx, t, client)
+	before, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig before: %v", err)
+	}
+
+	const bogus = "rsgrow-nope:27017"
+	data := memberAddResourceDataWith(t, 15, 0, map[string]interface{}{"host": bogus, "arbiter_only": true})
+	diags := RShardConfig.updateWithClient(ctx, data, client, memberAddProviderConf(), true)
+	if !diags.HasError() {
+		t.Fatal("want the uninspectable arbiter to be refused")
+	}
+	msg := fmt.Sprint(diags)
+	for _, want := range []string{"arbiter " + bogus, "could not be inspected", "add the arbiter by hand"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostics should contain %q, got: %s", want, msg)
+		}
+	}
+
+	after, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig after: %v", err)
+	}
+	if after.Version != before.Version || len(after.Members) != len(before.Members) {
+		t.Errorf("a refused arbiter must not send any reconfig: version %d -> %d, members %v -> %v",
+			before.Version, after.Version, memberHosts(before.Members), memberHosts(after.Members))
 	}
 }

@@ -175,25 +175,41 @@ reconfig (SHARD-005).
 
 **SHARD-027** (Event Driven): WHEN one or more `member` blocks name hosts
 that are not in the replica set, the resource SHALL, before sending any
-`replSetReconfig`, connect directly to each such host, run `replSetGetStatus`
-against it with the provider's credentials and then without authentication,
-and decide from the answer. A host that reports NotYetInitialized (code 94) or
-InvalidReplicaSetConfig (code 93, a member removed earlier), or that reports
-this set with itself in state REMOVED, SHALL be added. A host that reports
-NoReplicationEnabled (code 76), a different set name, or this set in any other
-state SHALL be refused with an error naming the host and, for a member of this
-set, the name the set knows it by. A host that cannot be inspected, because it
-is unreachable from the runner or accepts none of the credentials tried, SHALL
-be logged and added, with the wait of SHARD-016 as the only check. The
+`replSetReconfig`, connect directly to each such host without credentials,
+run `isMaster` against it, and decide from the answer. `isMaster` needs no
+authentication on any version, so a fresh node that has no users yet answers
+it as readily as a live member does. A host that reports `isreplicaset: true`
+and no `setName`, which is a mongod started with `--replSet` that holds no
+configuration it belongs to because it was never initiated or was removed
+from a set earlier, SHALL be added. A host that reports this set's name, a
+different set's name, `msg: "isdbgrid"` (a mongos), or neither `setName` nor
+`isreplicaset` (a mongod without `--replSet`) SHALL be refused with an error
+naming the host and, for a member of this set, the name the set knows it by
+(`me`) and whether it is PRIMARY, SECONDARY or ARBITER. A host that cannot be
+inspected, because it is unreachable from the runner, SHALL be logged and
+added when its block is data-bearing, with the wait of SHARD-016 as the only
+check, and SHALL be refused when its block is an arbiter (SHARD-028). The
 refusal exists for a host that is already a member under another name, such
 as an FQDN for a member configured by its short name: the reconfig would give
 that node two entries, the node would remove itself until an acceptable
 configuration arrives, and in a two-voter set the primary would lose its
-majority with no rollback able to run. A fresh node has no users, so an
-authenticated probe fails there and reads as uninspectable, while a live
-member has replicated users and answers. The probe SHALL be skipped when
-`host_override` is set, since the member hosts are then known to be
-unreachable from the runner (DISC-008).
+majority with no rollback able to run. WHEN `host_override` is set, the member
+hosts are known to be unreachable from the runner (DISC-008), so the probe is
+not attempted and every host to add reads as uninspectable.
+
+**SHARD-028** (Unwanted Behaviour): IF a `member` block with
+`arbiter_only = true` names a host that is not in the replica set and the
+pre-flight of SHARD-027 could not inspect that host, because it is unreachable
+from the runner or because `host_override` is set, THEN the resource SHALL
+refuse to add it, before any `replSetReconfig` is sent, with an error naming
+the host and the reason and saying the arbiter can be added by hand. An
+arbiter must vote, so it cannot be staged as a non-voter per SHARD-022, and if
+its host is down the add cannot be undone: in a single-voter set the new
+configuration has two voters of which one is reachable, the primary steps
+down after `electionTimeoutMillis`, and the removal of SHARD-017 has no
+primary to run against. The probe is the only check available before the add,
+so an arbiter is added only when the probe has confirmed a mongod with
+`--replSet` and no configuration.
 
 ## Arbiters, State Order and Duplicate Hosts
 
@@ -219,5 +235,5 @@ after the first add.
 ## Initialization
 
 The initialization flow hands over to this reconciliation after
-`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-027
+`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-028
 apply unchanged.

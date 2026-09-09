@@ -104,75 +104,94 @@ func needsPromotion(o MemberOverride) bool {
 	return !o.ArbiterOnly && (o.Votes != 0 || o.Priority != 0)
 }
 
-// addTargetVerdict is what a candidate host's own replSetGetStatus says about
+// addTargetVerdict is what a candidate host's own isMaster answer says about
 // adding it. SHARD-027
 type addTargetVerdict int
 
 const (
-	// addTargetOK is a fresh mongod started with --replSet, or one removed
-	// from a set earlier: adding it is what the block asks for.
+	// addTargetOK is a mongod started with --replSet that holds no
+	// configuration it belongs to, because it was never initiated or was
+	// removed from a set earlier: adding it is what the block asks for.
 	addTargetOK addTargetVerdict = iota
-	// addTargetRefused is a host that is already an active member of this set
-	// under another name, belongs to a different set, or does not run
+	// addTargetRefused is a host that is already a member of this set under
+	// another name, belongs to a different set, is a mongos, or does not run
 	// replication at all.
 	addTargetRefused
-	// addTargetUnknown is a host that could not be inspected, because it is
-	// unreachable from here or accepts none of the credentials tried. The add
-	// proceeds and the wait after it decides (SHARD-016, SHARD-017).
+	// addTargetUnknown is a host that could not be inspected because it is
+	// unreachable from here. A data-bearing add proceeds and the wait after
+	// it decides (SHARD-016, SHARD-017); an arbiter is refused (SHARD-028).
 	addTargetUnknown
 )
 
-// CheckAddTarget decides from replSetGetStatus run against a candidate host
-// whether it may be added to set. The case this exists for is a host that
-// is already an active member under another name, such as an FQDN for a
-// member configured by its short name: the reconfig would give that node two
-// entries, the node would remove itself until an acceptable configuration
-// arrives, and in a two-voter set the primary would lose its majority with no
-// rollback able to run. A fresh node has no users yet, so an authenticated
-// probe fails there and reads as unknown; a live member has replicated users,
-// answers, and is refused. SHARD-027
-func CheckAddTarget(set string, status *ReplSetStatus, statusErr error) (addTargetVerdict, string) {
-	if statusErr != nil {
-		switch {
-		case IsNotYetInitialized(statusErr):
-			return addTargetOK, "not yet initialized"
-		case IsInvalidReplicaSetConfig(statusErr):
-			return addTargetOK, "removed from a replica set earlier"
-		case IsNoReplicationEnabled(statusErr):
-			return addTargetRefused, "mongod is not running with --replSet"
-		default:
-			return addTargetUnknown, statusErr.Error()
+// CheckAddTarget decides from isMaster run against a candidate host whether
+// it may be added to set. The case this exists for is a host that is already
+// a member under another name, such as an FQDN for a member configured by its
+// short name: the reconfig would give that node two entries, the node would
+// remove itself until an acceptable configuration arrives, and in a two-voter
+// set the primary would lose its majority with no rollback able to run.
+// isMaster needs no authentication, so a fresh node that has no users yet
+// answers it as readily as a live member does. SHARD-027
+func CheckAddTarget(set string, resp *IsMasterResp, err error) (addTargetVerdict, string) {
+	if err != nil {
+		return addTargetUnknown, err.Error()
+	}
+	switch {
+	case classifyConnectionType(resp) == ConnTypeMongos:
+		return addTargetRefused, "it is a mongos"
+	case resp.SetName == set:
+		as := "under another name"
+		if resp.Me != "" {
+			as = "as " + resp.Me
 		}
+		return addTargetRefused, fmt.Sprintf("it is already a member of this replica set %s (%s); use that host in the member block", as, isMasterRole(resp))
+	case resp.SetName != "":
+		return addTargetRefused, fmt.Sprintf("it is a member of replica set %q", resp.SetName)
+	case resp.IsReplicaSet:
+		return addTargetOK, "not yet initialized, or removed from a replica set earlier"
+	default:
+		return addTargetRefused, "mongod is not running with --replSet"
 	}
-	if status.Set != set {
-		return addTargetRefused, fmt.Sprintf("it is a member of replica set %q", status.Set)
-	}
-	if status.MyState == MemberStateRemoved {
-		return addTargetOK, "removed from this replica set earlier"
-	}
-	as := "under another name"
-	if self := status.GetSelf(); self != nil {
-		as = "as " + self.Name
-	}
-	return addTargetRefused, fmt.Sprintf("it is already a member of this replica set %s (state %s); use that host in the member block",
-		as, MemberStateStrings[status.MyState])
 }
 
-// memberProbe runs replSetGetStatus against a host over a direct connection.
-type memberProbe func(ctx context.Context, host string) (*ReplSetStatus, error)
+// isMasterRole names what a live member reports itself as, for the refusal.
+func isMasterRole(resp *IsMasterResp) string {
+	switch {
+	case resp.IsArbiter:
+		return "ARBITER"
+	case resp.IsMaster:
+		return "PRIMARY"
+	case resp.Secondary:
+		return "SECONDARY"
+	default:
+		return "neither PRIMARY nor SECONDARY"
+	}
+}
+
+// memberProbe runs isMaster against a host over a direct connection.
+type memberProbe func(ctx context.Context, host string) (*IsMasterResp, error)
 
 // PreflightAddTargets probes every host about to be added and refuses the
-// first one that must not be, before any reconfig is sent. Hosts that cannot
-// be inspected are logged and allowed through. SHARD-027
+// first one that must not be, before any reconfig is sent. A data-bearing
+// host that cannot be inspected is logged and allowed through: it is added as
+// a non-voter and removed again if it never answers (SHARD-022, SHARD-017).
+// An arbiter that cannot be inspected is refused. It is added with its vote,
+// so in a single-voter set an arbiter host that is down costs the primary its
+// majority, after which no reconfig can remove the member again.
+// SHARD-027, SHARD-028
 func PreflightAddTargets(ctx context.Context, set string, overrides []MemberOverride, probe memberProbe) error {
 	for _, o := range overrides {
-		status, err := probe(ctx, o.Host)
-		verdict, reason := CheckAddTarget(set, status, err)
+		resp, err := probe(ctx, o.Host)
+		verdict, reason := CheckAddTarget(set, resp, err)
 		fields := map[string]interface{}{"host": o.Host, "set": set, "reason": reason}
 		switch verdict {
 		case addTargetRefused:
 			return fmt.Errorf("member %s cannot be added to replica set %s: %s", o.Host, set, reason)
 		case addTargetUnknown:
+			if o.ArbiterOnly {
+				return fmt.Errorf("arbiter %s cannot be added to replica set %s: the host could not be inspected (%s). "+
+					"An arbiter is added with its vote and cannot be staged as a non-voter, so if the host is down the primary can lose its majority and the member cannot be removed again. "+
+					"Make the host reachable from the Terraform runner, or add the arbiter by hand", o.Host, set, reason)
+			}
 			tflog.Warn(ctx, "could not inspect member before adding it; relying on the wait after the add", fields)
 		default:
 			tflog.Debug(ctx, "member inspected before add", fields)

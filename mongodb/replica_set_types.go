@@ -155,14 +155,23 @@ type ShardRemoveResp struct {
 	OKResponse `bson:",inline"`
 }
 
+// IsMasterResp is the isMaster (hello) response. A member of a replica set
+// reports setName and me; a mongod started with --replSet that holds no
+// configuration it belongs to, because it was never initiated or was removed
+// from a set, reports isreplicaset true and no setName; a standalone reports
+// neither; a mongos reports msg "isdbgrid". The command needs no
+// authentication on any version.
 type IsMasterResp struct {
-	IsMaster   bool   `bson:"ismaster" json:"ismaster"`
-	IsArbiter  bool   `bson:"arbiterOnly" json:"arbiterOnly"`
-	SetName    string `bson:"setName,omitempty" json:"setName,omitempty"`
-	Primary    string `bson:"primary" json:"primary"`
-	Me         string `bson:"me" json:"me"`
-	Msg        string `bson:"msg" json:"msg"`
-	OKResponse `bson:",inline"`
+	IsMaster     bool   `bson:"ismaster" json:"ismaster"`
+	Secondary    bool   `bson:"secondary,omitempty" json:"secondary,omitempty"`
+	IsArbiter    bool   `bson:"arbiterOnly" json:"arbiterOnly"`
+	IsReplicaSet bool   `bson:"isreplicaset,omitempty" json:"isreplicaset,omitempty"`
+	SetName      string `bson:"setName,omitempty" json:"setName,omitempty"`
+	Primary      string `bson:"primary" json:"primary"`
+	Me           string `bson:"me" json:"me"`
+	Msg          string `bson:"msg" json:"msg"`
+	Info         string `bson:"info,omitempty" json:"info,omitempty"`
+	OKResponse   `bson:",inline"`
 }
 
 type ReplSetStatus struct {
@@ -325,6 +334,24 @@ func GetReplSetStatus(ctx context.Context, client *mongo.Client) (*ReplSetStatus
 		return nil, err
 	}
 
+	return &resp, nil
+}
+
+// GetIsMaster runs isMaster over the given client. Unlike replSetGetStatus it
+// needs no authentication, so it can be asked of a fresh mongod that has no
+// users yet as well as of a live member. SHARD-027
+func GetIsMaster(ctx context.Context, client *mongo.Client) (*IsMasterResp, error) {
+	resp := IsMasterResp{}
+	res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "isMaster", Value: 1}})
+	if res.Err() != nil {
+		return nil, errors.Wrap(res.Err(), "isMaster")
+	}
+	if err := res.Decode(&resp); err != nil {
+		return nil, errors.Wrap(err, "failed to decode isMaster")
+	}
+	if resp.OK != 1 {
+		return nil, errors.Errorf("mongo says: %s", resp.Errmsg)
+	}
 	return &resp, nil
 }
 
