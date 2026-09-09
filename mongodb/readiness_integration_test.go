@@ -17,10 +17,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// authRS is one mongod started with --replSet and a keyfile, which turns
-// access control on, that is neither initiated nor holds any user: a seed
-// host whose bootstrap has not run yet. Started lazily; tests skip if it
-// cannot start. TestMain tears it down.
+// authRS is one mongod with --replSet and a keyfile, neither initiated nor
+// holding a user: a seed whose bootstrap has not run. Started lazily; tests
+// skip if it cannot start. TestMain tears it down.
 var authRS struct {
 	once      sync.Once
 	err       error
@@ -31,9 +30,8 @@ var authRS struct {
 
 const authRSName = "rsauth"
 
-// authRSCommand writes a keyfile the mongodb user can read and re-enters the
-// image's entrypoint, which drops privileges, with mongod. A replica set with
-// authorization requires a keyfile, and the image copies files in as root.
+// authRSCommand writes a keyfile the mongodb user can read, then re-enters the
+// image's entrypoint so it drops privileges as usual.
 const authRSCommand = "printf terraformprovidermongodbtestkeyfile0123456789 > /tmp/keyfile" +
 	" && chown mongodb /tmp/keyfile && chmod 400 /tmp/keyfile" +
 	" && exec docker-entrypoint.sh mongod --replSet " + authRSName + " --port 27017 --bind_ip_all --keyFile /tmp/keyfile"
@@ -96,8 +94,8 @@ func authRSProviderConf(username, password string) *MongoDatabaseConfiguration {
 	}
 }
 
-// bootstrapAuthRS does what a seed host's bootstrap does: initiates the set
-// and creates the first user, both through the localhost exception.
+// bootstrapAuthRS initiates the set and creates the first user through the
+// localhost exception, as a seed host's bootstrap would.
 func bootstrapAuthRS(ctx context.Context) error {
 	if err := initRS(ctx, authRS.container, authRSName, "localhost", "27017"); err != nil {
 		return fmt.Errorf("initiate: %w", err)
@@ -112,17 +110,14 @@ func bootstrapAuthRS(ctx context.Context) error {
 	return nil
 }
 
-// INTEG-029: INIT-034, INIT-035 — the live answers classify as the wait
-// expects: a refused login is not a connection error, and the unauthenticated
-// probe tells a host with access control (Unauthorized) from one without
-// (answered), although the provider user exists on neither.
+// INTEG-029: INIT-034, INIT-035 — a live refused login is not a connection
+// error, and the probe tells a host with access control from one without.
 func TestIntegration_Readiness_ClassifiesLiveAnswers(t *testing.T) {
 	ensureAuthRS(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// A user that no bootstrap ever creates, so the outcome does not depend
-	// on whether INTEG-030 has run.
+	// A user no bootstrap creates, so the outcome does not depend on INTEG-030.
 	withAuth := authRSProviderConf("ghost", "nope")
 	_, err := MongoClientInit(ctx, withAuth)
 	if err == nil {
@@ -149,11 +144,9 @@ func TestIntegration_Readiness_ClassifiesLiveAnswers(t *testing.T) {
 	}
 }
 
-// INTEG-030: INIT-033 through INIT-036 — Create against a keyfile seed host
-// whose bootstrap runs while Create is already waiting. The provider user is
-// refused until the bootstrap initiates the set and creates the user through
-// the localhost exception; Create keeps waiting because the probe is refused
-// as Unauthorized, then connects and applies the settings.
+// INTEG-030: INIT-033 through INIT-036 — Create waits while the seed's
+// bootstrap initiates the set and creates the provider user, then applies the
+// settings.
 func TestIntegration_ShardConfigCreate_WaitsForBootstrap(t *testing.T) {
 	ensureAuthRS(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)

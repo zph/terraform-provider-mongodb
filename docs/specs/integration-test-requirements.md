@@ -325,10 +325,10 @@ After INTEG-022, call `updateWithClient` with the three-member configuration plu
 **INTEG-028:** Unwanted Behaviour
 
 **Requirement:**
-When `updateWithClient` runs against the grown set, without `host_override` and under a context that expires after 15 seconds, with a fourth block naming a host that does not resolve, the Integration Test Suite SHALL verify that the call waits until the context expires, then returns an error naming the host and saying it did not accept connections within the operation timeout, that no `replSetReconfig` was sent, and that the resource recorded no ID.
+When `updateWithClient` runs against the grown set without `host_override`, under a context that expires after 15 seconds, with a fourth block naming a host that does not resolve, the Integration Test Suite SHALL verify that the call waits until the context expires, returns an error naming the host and the operation timeout, sends no `replSetReconfig`, and records no ID.
 
 **Rationale:**
-A new member host that does not answer is waited for up to the operation timeout (SHARD-029), so a node that is still starting counts as not ready yet; a host that never answers fails the apply before anything is sent, instead of being added and rolled back as under `host_override` (INTEG-025).
+A silent new member host is waited for up to the operation timeout (SHARD-029) and then refused before anything is sent, instead of being added and rolled back as under `host_override` (INTEG-025).
 
 **Verification:**
 After INTEG-022, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017`, `host_override` removed, under a 15-second context, and assert on the elapsed time, the diagnostics, `GetReplSetConfig` and `data.Id()`.
@@ -338,10 +338,10 @@ After INTEG-022, call `updateWithClient` with the three-member configuration plu
 **INTEG-029:** Event Driven
 
 **Requirement:**
-Against a mongod started with `--replSet` and a keyfile (which turns access control on) that holds no user, the Integration Test Suite SHALL verify that connecting as an unknown user fails with an error that `IsAuthError` accepts and `IsConnectionError` rejects, and that the unauthenticated probe classifies as `authRequired`; and against the shared replica set, which runs without access control, that connecting as an unknown user fails the same way while the probe classifies as `authNotEnforced`.
+Against a mongod started with `--replSet` and a keyfile that holds no user, the Integration Test Suite SHALL verify that connecting as an unknown user fails with an error that `IsAuthError` accepts and `IsConnectionError` rejects, and that the unauthenticated probe classifies as `authRequired`; and against the shared replica set, which has no access control, that the same login fails while the probe classifies as `authNotEnforced`.
 
 **Rationale:**
-The readiness wait decides from these classifications whether to keep waiting for a bootstrap to create the user (INIT-035) or to initialize without credentials (INIT-029); pinning them against real servers on every version in the matrix guards the string matching in `IsAuthError` and the error shapes `IsConnectionError` relies on.
+These classifications decide between waiting for the user (INIT-035) and initializing without credentials (INIT-029); pinning them against real servers on every version in the matrix guards the error shapes `IsAuthError` and `IsConnectionError` rely on.
 
 **Verification:**
 Start the keyfile container lazily, call `MongoClientInit`, `authProbeFor` and `classifyAuthProbe` against both containers with a user that is never created, and assert on the results.
@@ -351,10 +351,10 @@ Start the keyfile container lazily, call `MongoClientInit`, `authProbeFor` and `
 **INTEG-030:** Event Driven
 
 **Requirement:**
-When `Create` runs against the keyfile mongod before any bootstrap has run, and the bootstrap (initiate the set with `localhost:27017`, wait for PRIMARY, create the provider user through the localhost exception) runs a few seconds later, the Integration Test Suite SHALL verify that `Create` does not return before the bootstrap, then returns without error, records the replica set name as the ID, and applies the configured `election_timeout_millis` to the set.
+When `Create` runs against the keyfile mongod before its bootstrap (initiate the set with `localhost:27017`, wait for PRIMARY, create the provider user through the localhost exception), and the bootstrap runs a few seconds later, the Integration Test Suite SHALL verify that `Create` does not return before the bootstrap, then returns without error, records the replica set name as the ID, and applies the configured `election_timeout_millis`.
 
 **Rationale:**
-This is the one-apply workflow: the resource is applied while the seed host is still bootstrapping. The provider user is refused until the bootstrap creates it, the probe is refused as Unauthorized so Create keeps waiting (INIT-034 through INIT-036), and once the user exists Create continues into the reconciliation.
+The resource is applied while the seed host is still bootstrapping: the login is refused, the probe is refused as Unauthorized so Create keeps waiting (INIT-034 through INIT-036), and once the user exists Create continues into the reconciliation.
 
 **Verification:**
 Run `Create` in a goroutine, assert it has not returned after three seconds, run the bootstrap through container exec, then assert on the diagnostics, `data.Id()` and `GetReplSetConfig` read through an authenticated client.

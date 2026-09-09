@@ -79,8 +79,7 @@ resource "mongodb_shard_config" "shards" {
   heartbeat_timeout_secs    = each.value.heartbeat_timeout_secs
   election_timeout_millis   = each.value.election_timeout_millis
 
-  # The whole apply, including waiting for hosts that are still starting and
-  # for the provider user to exist, is bounded by these (default 20m each).
+  # Bounds the whole apply, including waits for hosts still starting (default 20m).
   timeouts {
     create = "30m"
     update = "30m"

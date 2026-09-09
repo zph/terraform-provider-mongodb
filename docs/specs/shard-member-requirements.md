@@ -213,18 +213,15 @@ primary to run against. The probe is the only check available before the add,
 so an arbiter is added only when the probe has confirmed a mongod with
 `--replSet` and no configuration.
 
-**SHARD-029** (Event Driven): WHEN one or more `member` blocks name hosts
-that are not in the replica set and `host_override` is not set, the resource
-SHALL, before the pre-flight of SHARD-027 and before sending any
-`replSetReconfig`, wait for each such host to accept a connection, retrying
-every 10 seconds while the dial is refused or unanswered, until the create or
-update timeout (INIT-033) elapses. A host that is still starting therefore
-counts as not ready yet rather than as unreachable. IF the timeout elapses
-with a host still not answering, THEN the resource SHALL return an error
-naming the host, how long it waited and the last error, without sending any
-reconfig. Probe failures other than a failed connection are left to SHARD-027
-to judge. WHEN `host_override` is set, the member hosts are known to be
-unreachable from the runner (DISC-008), so the wait is not attempted.
+**SHARD-029** (Event Driven): WHEN `member` blocks name hosts that are not in
+the replica set and `host_override` is not set, the resource SHALL, before
+the pre-flight of SHARD-027 and any `replSetReconfig`, wait for each such
+host to accept a connection, retrying every 10 seconds until the create or
+update timeout (INIT-033) elapses. IF the timeout elapses with a host still
+not answering, THEN the resource SHALL return an error naming the host, the
+elapsed time and the last error, without sending any reconfig. Probe failures
+other than a failed connection are left to SHARD-027. WHEN `host_override` is
+set, the wait is not attempted (DISC-008).
 
 ## Arbiters, State Order and Duplicate Hosts
 

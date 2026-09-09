@@ -14,16 +14,15 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// errNotListening is the shape the driver gives a host that is not listening
-// or does not resolve: a server selection that ran into the connect deadline,
-// with the dial error only in the text.
+// errNotListening is the driver's shape for a host that is not listening or
+// does not resolve.
 var errNotListening = fmt.Errorf("server selection error: %w, current topology: { Type: Single, Servers: [{ Addr: rs2-1:27017, Type: Unknown, Last error: dial tcp: connect: connection refused }, ] }", context.DeadlineExceeded)
 
 // errRefusedLogin is the shape of a SCRAM failure during the handshake.
 var errRefusedLogin = errors.New("connection() error occurred during connection handshake: auth error: sasl conversation error: unable to authenticate using mechanism \"SCRAM-SHA-256\": (AuthenticationFailed) Authentication failed.")
 
-// errUnauthorizedProbe is what replSetGetStatus without credentials returns
-// from a host with access control.
+// errUnauthorizedProbe is replSetGetStatus without credentials on a host with
+// access control.
 var errUnauthorizedProbe = fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrUnauthorized, Name: "Unauthorized", Message: "command replSetGetStatus requires authentication"})
 
 type fakeNetTimeout struct{}
@@ -35,8 +34,7 @@ func (fakeNetTimeout) Temporary() bool { return true }
 // testPoll keeps the waits under test fast.
 const testPoll = time.Millisecond
 
-// READY-T01: INIT-034 — IsConnectionError tells a host that did not answer
-// from one that did.
+// READY-T01: INIT-034 — IsConnectionError.
 func TestIsConnectionError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -63,8 +61,7 @@ func TestIsConnectionError(t *testing.T) {
 	}
 }
 
-// READY-T02: INIT-034 — against the real driver, a refused dial is a
-// connection error and not a refused login.
+// READY-T02: INIT-034 — a real refused dial is a connection error.
 func TestIsConnectionError_RefusedDial(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -90,8 +87,7 @@ func TestIsConnectionError_RefusedDial(t *testing.T) {
 	}
 }
 
-// READY-T03: INIT-035 — classifyAuthProbe reads the unauthenticated
-// replSetGetStatus.
+// READY-T03: INIT-035 — classifyAuthProbe.
 func TestClassifyAuthProbe(t *testing.T) {
 	cases := []struct {
 		name string
@@ -112,8 +108,8 @@ func TestClassifyAuthProbe(t *testing.T) {
 	}
 }
 
-// scriptedConnector fails with errs in turn, then with then for good; a nil
-// then means the connection succeeds once errs run out.
+// scriptedConnector fails with errs in turn, then with then for good (nil
+// means success).
 type scriptedConnector struct {
 	errs  []error
 	then  error
@@ -143,8 +139,7 @@ func waitForShardClientWith(ctx context.Context, c *scriptedConnector, p *script
 	return noAuth, err
 }
 
-// READY-T04: INIT-034 — a host that refuses connections is retried until it
-// answers, without probing.
+// READY-T04: INIT-034 — connection errors are retried without probing.
 func TestWaitForShardClient_RetriesRefusedConnections(t *testing.T) {
 	c := &scriptedConnector{errs: []error{errNotListening, errNotListening}}
 	p := &scriptedProbe{}
@@ -163,8 +158,7 @@ func TestWaitForShardClient_RetriesRefusedConnections(t *testing.T) {
 	}
 }
 
-// READY-T05: INIT-035 — a refused login on a host with access control is
-// retried until the user exists.
+// READY-T05: INIT-035 — a refused login on an auth host waits for the user.
 func TestWaitForShardClient_WaitsForUserOnAuthHost(t *testing.T) {
 	c := &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}}
 	p := &scriptedProbe{err: errUnauthorizedProbe}
@@ -180,9 +174,8 @@ func TestWaitForShardClient_WaitsForUserOnAuthHost(t *testing.T) {
 	}
 }
 
-// READY-T06: INIT-029, INIT-035 — a refused login on a host without access
-// control enters the initialization path at once, whether the probe is
-// answered or fails as NotYetInitialized.
+// READY-T06: INIT-029, INIT-035 — a refused login on a no-auth host enters
+// the init path at once.
 func TestWaitForShardClient_NoAuthHostEntersInit(t *testing.T) {
 	for _, probeErr := range []error{nil, fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrNotYetInitialized})} {
 		c := &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}}
@@ -213,8 +206,7 @@ func TestWaitForShardClient_UnansweredProbeKeepsWaiting(t *testing.T) {
 	}
 }
 
-// READY-T08: any error other than a failed connection or a refused login is
-// returned at once.
+// READY-T08: other errors are returned at once.
 func TestWaitForShardClient_OtherErrorsReturnAtOnce(t *testing.T) {
 	want := errors.New("Error resolving shard client: shard \"rs9\" not found; available shards: [rs2]")
 	c := &scriptedConnector{then: want}
@@ -228,8 +220,7 @@ func TestWaitForShardClient_OtherErrorsReturnAtOnce(t *testing.T) {
 	}
 }
 
-// READY-T09: INIT-036 — at the deadline the error names the host, the user
-// whose credentials were refused, and the last error.
+// READY-T09: INIT-036 — the deadline error names host, user and last error.
 func TestWaitForShardClient_DeadlineNamesUser(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -256,8 +247,7 @@ func TestWaitForShardClient_DeadlineNamesUser(t *testing.T) {
 	}
 }
 
-// READY-T10: INIT-036 — at the deadline a host that never answered is named
-// with its last error.
+// READY-T10: INIT-036 — the deadline error names a silent host.
 func TestWaitForShardClient_DeadlineNamesHost(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -277,8 +267,7 @@ func TestWaitForShardClient_DeadlineNamesHost(t *testing.T) {
 	}
 }
 
-// READY-T11: an interrupted apply ends the wait with the interruption as the
-// cause.
+// READY-T11: an interrupted apply ends the wait with the cancellation.
 func TestWaitForShardClient_Interrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -293,8 +282,8 @@ func TestWaitForShardClient_Interrupted(t *testing.T) {
 	}
 }
 
-// hostProbe fails each host with its errs in turn, then with then for good; a
-// host with neither answers as a fresh mongod.
+// hostProbe fails each host with its errs in turn, then with then for good;
+// otherwise it answers as a fresh mongod.
 type hostProbe struct {
 	errs  map[string][]error
 	then  map[string]error
@@ -315,8 +304,7 @@ func (p *hostProbe) probe(_ context.Context, host string) (*IsMasterResp, error)
 	return &IsMasterResp{IsReplicaSet: true}, nil
 }
 
-// READY-T12: SHARD-029 — hosts that refuse connections are waited for, in
-// block order, until each answers.
+// READY-T12: SHARD-029 — each host is waited for in block order.
 func TestWaitForAddTargets_WaitsForEachHost(t *testing.T) {
 	p := &hostProbe{errs: map[string][]error{
 		"rs2-2:27017": {errNotListening, errNotListening},
@@ -331,8 +319,7 @@ func TestWaitForAddTargets_WaitsForEachHost(t *testing.T) {
 	}
 }
 
-// READY-T13: SHARD-029 — probe errors other than a failed connection,
-// including the host_override sentinel, are left for the pre-flight.
+// READY-T13: SHARD-029 — other probe errors are left to the pre-flight.
 func TestWaitForAddTargets_LeavesOtherErrorsToPreflight(t *testing.T) {
 	p := &hostProbe{then: map[string]error{
 		"rs2-2:27017": errMemberProbeSkipped,
@@ -347,8 +334,7 @@ func TestWaitForAddTargets_LeavesOtherErrorsToPreflight(t *testing.T) {
 	}
 }
 
-// READY-T14: SHARD-029 — at the deadline the host still not answering is
-// named, and the hosts after it are not probed.
+// READY-T14: SHARD-029 — the deadline error names the silent host.
 func TestWaitForAddTargets_DeadlineNamesHost(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -382,9 +368,7 @@ func TestWaitForAddTargets_NoHosts(t *testing.T) {
 	}
 }
 
-// READY-T16: INIT-033 — the resource accepts timeouts { create, update },
-// defaults both to DefaultShardConfigTimeout, and a configured value decodes
-// the way the SDK applies it.
+// READY-T16: INIT-033 — timeouts { create, update } with the default.
 func TestShardConfigSchema_Timeouts(t *testing.T) {
 	res := resourceShardConfig()
 	if res.Timeouts == nil {

@@ -18,18 +18,14 @@ import (
 type ResourceShardConfig struct {
 }
 
-// Create waits for the replica set to accept the provider connection, then
-// detects whether it is initialized. The wait is bounded by the create
-// timeout: a host that refuses connections, or that enforces authentication
-// but has not created the provider user yet, is retried (INIT-034, INIT-035),
-// so the resource can be applied in the same run as the instances it
-// configures.
+// Create waits, up to the create timeout, for the replica set to accept the
+// provider connection (INIT-034, INIT-035), then detects whether it is
+// initialized.
 // INIT-001: If replSetGetConfig returns code 94, enter init flow.
 // INIT-002: If replSetGetConfig returns a valid config, delegate to Update.
 // INIT-015: If replSetGetConfig returns code 23, delegate to Update.
 // INIT-029: If the provider user cannot log in and the host does not enforce
-// authentication, enter init flow (the user does not exist yet on a fresh
-// instance; ConnectForInit has a no-auth fallback).
+// authentication, enter init flow (ConnectForInit has a no-auth fallback).
 func (r *ResourceShardConfig) Create(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	providerConf := i.(*MongoDatabaseConfiguration)
 	target := providerConf.Config.Host + ":" + providerConf.Config.Port
@@ -88,8 +84,8 @@ func (r *ResourceShardConfig) initializeReplicaSet(ctx context.Context, data *sc
 		return diag.FromErr(fmt.Errorf("invalid first member host %q: %w", firstHost, err))
 	}
 
-	// INIT-006/017/018/022: Direct connect with auth fallback, retried while
-	// the host is still starting (INIT-034).
+	// INIT-006/017/018/022/034: Direct connect with auth fallback, retried
+	// while the host is starting.
 	var initClient *mongo.Client
 	initCleanup := func() {}
 	err = waitUntilReachable(ctx, "replica set member "+firstHost, readyPollInterval, func(ctx context.Context) error {
@@ -665,14 +661,11 @@ func (r *ResourceShardConfig) updateWithClient(ctx context.Context, data *schema
 			return errD
 		}
 		existing, missing := PartitionMemberOverrides(config.Members, overrides)
-		// SHARD-029: a host that is still starting is waited for, up to the
-		// operation timeout, before it is inspected.
-		// SHARD-027: a host that is already a member under another name must
-		// be refused before anything is sent. Under host_override the member
-		// hosts are not reachable from here (DISC-008), so neither the wait
-		// nor the probe is attempted and every host reads as uninspectable:
-		// data-bearing adds go ahead with the wait after each add as the only
-		// check, and arbiters are refused (SHARD-028).
+		// SHARD-029: wait for hosts that are still starting. SHARD-027: refuse
+		// a host that is already a member under another name before anything
+		// is sent. Under host_override the member hosts are not reachable from
+		// here (DISC-008), so neither runs: data-bearing adds rely on the wait
+		// after the add, and arbiters are refused (SHARD-028).
 		if len(missing) > 0 {
 			probe := memberProbeFor(providerConf)
 			if _, overridden := data.GetOk("host_override"); overridden {
@@ -868,8 +861,7 @@ func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceD
 // If the provider is connected to a mongos, it auto-discovers the shard via
 // listShards and creates a temporary direct connection. The returned cleanup
 // function MUST be called via defer to disconnect temporary clients. Errors
-// wrap the driver's so callers can tell a refused connection from a refused
-// login (INIT-034, INIT-035).
+// wrap the driver's so Create can classify them (INIT-034, INIT-035).
 // DISC-001 through DISC-010
 func (r *ResourceShardConfig) getShardClient(ctx context.Context, data *schema.ResourceData, i interface{}) (*mongo.Client, func(), error) {
 	providerConf := i.(*MongoDatabaseConfiguration)
@@ -943,9 +935,7 @@ func resourceShardConfig() *schema.Resource {
 			requireFeature("mongodb_shard_config"),
 			previewCommands(shardConfigCommandPreview),
 		),
-		// INIT-033: the create and update timeouts bound the whole operation,
-		// including the waits for hosts that are still starting (INIT-034,
-		// SHARD-029) and for the provider user to be created (INIT-035).
+		// INIT-033: bounds the whole operation, readiness waits included.
 		Timeouts: &schema.ResourceTimeout{
 			Create: schema.DefaultTimeout(DefaultShardConfigTimeout),
 			Update: schema.DefaultTimeout(DefaultShardConfigTimeout),

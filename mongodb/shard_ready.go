@@ -12,26 +12,19 @@ import (
 )
 
 const (
-	// DefaultShardConfigTimeout is the default create and update timeout of
-	// mongodb_shard_config: the SDK's own default, declared so that a
-	// `timeouts` block is accepted. It bounds the whole operation, including
-	// the readiness waits below. INIT-033
+	// DefaultShardConfigTimeout is the default create and update timeout,
+	// the SDK's own, declared so a timeouts block is accepted. INIT-033
 	DefaultShardConfigTimeout = 20 * time.Minute
 
-	// readyPollInterval is the pause between attempts in the readiness waits.
-	// An attempt against a host that is not answering already takes
-	// MaxConnLifetime, so such a host is retried roughly every 20 seconds.
-	// INIT-034, SHARD-029
+	// readyPollInterval is the pause between readiness attempts. An attempt
+	// against a silent host already takes MaxConnLifetime. INIT-034, SHARD-029
 	readyPollInterval = 10 * time.Second
 )
 
 // IsConnectionError reports whether err says a server could not be reached,
-// as opposed to having answered. A refused dial, a name that does not
-// resolve, or a handshake that never completes all surface from the driver as
-// a server selection that ran into the connect deadline; a connection that
-// dropped mid-command carries the NetworkError label. An answer the server
-// gave, including a refused authentication or a command error, is not a
-// connection error. INIT-034
+// as opposed to having answered: the driver surfaces a refused dial, an
+// unresolvable name or a hung handshake as a server selection that hit the
+// connect deadline. A refused login or a command error is an answer. INIT-034
 func IsConnectionError(err error) bool {
 	if err == nil || IsAuthError(err) {
 		return false
@@ -44,14 +37,10 @@ func IsConnectionError(err error) bool {
 }
 
 // notReadyError ends a readiness wait whose target was still not answering
-// when the operation's deadline passed or the apply was interrupted.
-// INIT-036, SHARD-029
+// when ctx ended. INIT-036, SHARD-029
 type notReadyError struct {
-	// Msg says what did not happen, such as `rs2-1:27017 did not accept
-	// connections`.
-	Msg string
-	// Detail, when set, explains what the wait was for.
-	Detail  string
+	Msg     string // what did not happen, e.g. `rs2-1:27017 did not accept connections`
+	Detail  string // optional explanation
 	Elapsed time.Duration
 	Cause   error // the context's error
 	Last    error // the last answer the target gave, if any
@@ -76,10 +65,9 @@ func (e *notReadyError) Error() string {
 
 func (e *notReadyError) Unwrap() error { return e.Cause }
 
-// waitUntilReachable calls attempt until it succeeds or fails for a reason
-// other than a failed connection, pausing poll between attempts, and returns
-// that result. When ctx ends first it returns a *notReadyError naming what,
-// with the last connection error. INIT-034, SHARD-029
+// waitUntilReachable retries attempt while it fails with a connection error,
+// pausing poll between attempts. Other errors are returned as they are; when
+// ctx ends first the result is a *notReadyError for what. INIT-034, SHARD-029
 func waitUntilReachable(ctx context.Context, what string, poll time.Duration, attempt func(ctx context.Context) error) error {
 	start := time.Now()
 	var last error
@@ -114,23 +102,18 @@ type shardConnector func(ctx context.Context) (*mongo.Client, func(), error)
 // credentials and returns the command's error, if any.
 type authProbe func(ctx context.Context) error
 
-// authRequirement is what an unauthenticated replSetGetStatus against the
-// provider host says about why the provider's credentials were refused.
-// INIT-035
+// authRequirement is what an unauthenticated replSetGetStatus says about why
+// the provider's credentials were refused. INIT-035
 type authRequirement int
 
 const (
-	// authRequired: the command was refused as Unauthorized. The server
-	// enforces authentication, so either the user has not been created yet
-	// or the credentials are wrong; SCRAM does not tell the two apart.
+	// authRequired: refused as Unauthorized. The host enforces authentication;
+	// the user is not created yet or the password is wrong (SCRAM does not say).
 	authRequired authRequirement = iota
-	// authNotEnforced: the server answered the command, or failed it for a
-	// reason of its own such as NotYetInitialized, without asking for
-	// credentials. It runs without access control and the provider user
-	// simply does not exist, which is the fresh instance of INIT-029.
+	// authNotEnforced: answered, or failed for a reason of its own such as
+	// NotYetInitialized. No access control; the user simply does not exist.
 	authNotEnforced
-	// authUnknown: the probe got no answer, for instance because the server
-	// is restarting.
+	// authUnknown: no answer, e.g. the host is restarting.
 	authUnknown
 )
 
@@ -148,9 +131,8 @@ func classifyAuthProbe(err error) authRequirement {
 	}
 }
 
-// authProbeFor returns a probe that connects directly to the provider host
-// without credentials and runs replSetGetStatus, which every server with
-// access control refuses as Unauthorized. INIT-035
+// authProbeFor connects directly to the provider host without credentials and
+// runs replSetGetStatus. INIT-035
 func authProbeFor(providerConf *MongoDatabaseConfiguration) authProbe {
 	return func(ctx context.Context) error {
 		probeCtx, cancel := context.WithTimeout(ctx, memberPreflightTimeout)
@@ -168,17 +150,13 @@ func authProbeFor(providerConf *MongoDatabaseConfiguration) authProbe {
 	}
 }
 
-// WaitForShardClient is the first step of Create. It retries connect, which
-// connects as the provider user, until it succeeds, until the provider host
-// turns out not to enforce authentication (noAuth true, and the caller runs
-// the initialization path of INIT-029), or until ctx ends. A host that
-// refuses connections or does not answer is retried. A host that refuses the
-// credentials is probed without them: if the probe is refused as Unauthorized
-// the host enforces authentication and its bootstrap has not created the
-// user yet, so the wait goes on; if the probe is answered the host runs
-// without access control and Create can initialize it at once. Any other
-// error is returned as it is. When ctx ends, the error names target and, when
-// the credentials were being refused, the user. INIT-034, INIT-035, INIT-036
+// WaitForShardClient retries connect until it succeeds, until the host turns
+// out not to enforce authentication (noAuth true, the caller runs the init
+// path of INIT-029), or until ctx ends. A connection error is retried; a
+// refused login is probed without credentials and retried while the probe is
+// refused as Unauthorized. Other errors are returned as they are. The error at
+// the deadline names target and, for a refused login, username.
+// INIT-034, INIT-035, INIT-036
 func WaitForShardClient(ctx context.Context, target, username string, connect shardConnector, probe authProbe, poll time.Duration) (*mongo.Client, func(), bool, error) {
 	start := time.Now()
 	notReady := &notReadyError{Msg: target + " did not accept connections"}
@@ -226,12 +204,9 @@ func WaitForShardClient(ctx context.Context, target, username string, connect sh
 	}
 }
 
-// WaitForAddTargets waits until every host about to be added answers a
-// connection, so a node that is still starting counts as not ready yet rather
-// than unreachable when the pre-flight of SHARD-027 inspects it. Probe errors
-// other than a failed connection are left for the pre-flight to judge. When
-// ctx ends it returns a *notReadyError naming the host still unreachable.
-// SHARD-029
+// WaitForAddTargets waits for each host to be added to accept a connection
+// before the pre-flight of SHARD-027 inspects it. Probe errors other than a
+// connection error are left to the pre-flight. SHARD-029
 func WaitForAddTargets(ctx context.Context, overrides []MemberOverride, probe memberProbe, poll time.Duration) error {
 	for _, o := range overrides {
 		err := waitUntilReachable(ctx, "replica set member "+o.Host, poll, func(ctx context.Context) error {
