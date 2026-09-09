@@ -167,6 +167,22 @@ func memberAddResourceData(t *testing.T, thirdVotes int) *schema.ResourceData {
 	})
 }
 
+// ensureMemberAddClusterGrown brings the set to the three-member shape
+// INTEG-022 produces, so the later tests do not depend on it having run.
+func ensureMemberAddClusterGrown(ctx context.Context, t *testing.T, client *mongo.Client) {
+	t.Helper()
+	cfg, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		t.Fatalf("GetReplSetConfig: %v", err)
+	}
+	if len(cfg.Members) == 3 {
+		return
+	}
+	if diags := RShardConfig.updateWithClient(ctx, memberAddResourceData(t, 0), client, memberAddProviderConf(), true); diags.HasError() {
+		t.Fatalf("growing the set to three members: %v", diags)
+	}
+}
+
 func waitForAllMembersHealthy(ctx context.Context, client *mongo.Client, want int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	last := "no status yet"
@@ -268,12 +284,10 @@ func TestIntegration_ShardConfigUpdate_SecondApplyAddsNothing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	ensureMemberAddClusterGrown(ctx, t, client)
 	before, err := GetReplSetConfig(ctx, client)
 	if err != nil {
 		t.Fatalf("GetReplSetConfig before: %v", err)
-	}
-	if len(before.Members) != 3 {
-		t.Skipf("precondition: runs after the set has grown to 3 members, got %d", len(before.Members))
 	}
 
 	data := memberAddResourceData(t, 0)
@@ -303,15 +317,22 @@ func TestIntegration_ShardConfigUpdate_PromotesLiveMember(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	ensureMemberAddClusterGrown(ctx, t, client)
+	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// An earlier run may have left the third member voting; the votes-0
+	// configuration demotes it through the settings reconfig so the
+	// promotion below has something to do.
+	if diags := RShardConfig.updateWithClient(ctx, memberAddResourceData(t, 0), client, memberAddProviderConf(), true); diags.HasError() {
+		t.Fatalf("resetting the third member to a non-voter: %v", diags)
+	}
 	before, err := GetReplSetConfig(ctx, client)
 	if err != nil {
 		t.Fatalf("GetReplSetConfig before: %v", err)
 	}
-	if len(before.Members) != 3 || derefInt(before.Members[2].Votes) != 0 {
-		t.Skipf("precondition: runs after the set has grown to 3 members with a non-voting third, got %v", before.Members)
-	}
-	if err := waitForAllMembersHealthy(ctx, client, 3, 3*time.Minute); err != nil {
-		t.Fatal(err)
+	if derefInt(before.Members[2].Votes) != 0 {
+		t.Fatalf("precondition: third member should be a non-voter, got %+v", before.Members[2])
 	}
 
 	data := memberAddResourceData(t, 1)

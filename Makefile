@@ -8,7 +8,7 @@ PROVIDER_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 default: help
 
 # Supported MongoDB versions for integration test matrix
-MONGO_VERSIONS := 3.6 7
+MONGO_VERSIONS := 3.6 4.4 7
 
 .PHONY: help setup dev-overrides build install re-install lint lint-noforceenew prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
 

@@ -199,3 +199,19 @@ func TestShardConfigSchema_InitTimeoutSecs(t *testing.T) {
 		t.Errorf("init_timeout_secs default: want %d, got %v", DefaultInitTimeoutSecs, field.Default)
 	}
 }
+
+// INIT-T13: INIT-032 — IsCurrentConfigNotCommitted matches code 308 only
+func TestIsCurrentConfigNotCommitted(t *testing.T) {
+	if !IsCurrentConfigNotCommitted(mongo.CommandError{Code: 308, Name: "CurrentConfigNotCommittedYet"}) {
+		t.Error("code 308 should match")
+	}
+	if !IsCurrentConfigNotCommitted(fmt.Errorf("replSetReconfig: %w", mongo.CommandError{Code: 308})) {
+		t.Error("a wrapped code 308 should match")
+	}
+	if IsCurrentConfigNotCommitted(mongo.CommandError{Code: 103}) {
+		t.Error("code 103 should not match")
+	}
+	if IsCurrentConfigNotCommitted(errors.New("plain")) {
+		t.Error("a plain error should not match")
+	}
+}

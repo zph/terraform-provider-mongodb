@@ -218,6 +218,10 @@ func WaitForMemberState(ctx context.Context, getStatus func(context.Context) (*R
 	}
 }
 
+// rollbackGrace bounds the removal of a never-reachable member when the apply
+// itself has been cancelled. SHARD-017
+const rollbackGrace = 30 * time.Second
+
 // memberAddOps abstracts the server calls the add and promote sequences make
 // so they can be unit tested.
 type memberAddOps struct {
@@ -313,6 +317,19 @@ func settleMember(ctx context.Context, o MemberOverride, ops memberAddOps, added
 	target := waitTargetFor(o)
 	res, err := ops.Wait(ctx, o.Host, target)
 	if err != nil {
+		// The apply is being interrupted. A member added just now that has
+		// not answered a single heartbeat is most likely a typo, so remove it
+		// on a context that outlives the cancelled one; anything else stays
+		// as a non-voter for the next apply to finish.
+		if addedNow && !res.EverReachable {
+			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackGrace)
+			defer cancel()
+			if _, rbErr := removeMemberByHost(rbCtx, o.Host, ops); rbErr != nil {
+				return fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable and removing it again also failed: %v",
+					o.Host, target, err, rbErr)
+			}
+			return fmt.Errorf("waiting for member %s to become %s: %w; it was never reachable, so it was removed again", o.Host, target, err)
+		}
 		return fmt.Errorf("waiting for member %s to become %s: %w", o.Host, target, err)
 	}
 	if !res.Met {

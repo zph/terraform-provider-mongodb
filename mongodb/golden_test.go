@@ -555,6 +555,10 @@ func normalizeReplSetBody(output string) string {
 	reTerm := regexp.MustCompile(`"term":\s*\d+`)
 	output = reTerm.ReplaceAllString(output, `"term": <TERM>`)
 
+	// maxTimeMS carries the time left on the retry deadline (INIT-031)
+	reMaxTime := regexp.MustCompile(`"maxTimeMS":\s*\d+`)
+	output = reMaxTime.ReplaceAllString(output, `"maxTimeMS": <MAX_TIME_MS>`)
+
 	return output
 }
 

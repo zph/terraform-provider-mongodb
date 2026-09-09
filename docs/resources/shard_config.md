@@ -94,15 +94,15 @@ resource "mongodb_shard_config" "shard01" {
 
 ### Member
 
-Each `member` block configures an individual replica set member. Blocks are matched to live members by `host`. A block whose host is already a member updates that member in place. A block whose host is not in the set adds a new member (see [Adding members](#adding-members)). Members that are in the set but have no block are left untouched, and the resource never removes a member.
+Each `member` block configures an individual replica set member. Blocks are matched to live members by `host`, and two blocks may not name the same host. A block whose host is already a member updates that member in place. A block whose host is not in the set adds a new member (see [Adding members](#adding-members)). Members that are in the set but have no block are left untouched, and the resource never removes a member. State lists members in the order of the blocks.
 
-`priority` and `votes` are always sent, including `priority = 0`, so the defaults below are applied by the resource rather than by the server and hidden members (which require priority 0) can be configured.
+`priority` and `votes` are always sent, including `priority = 0`, so the defaults below are applied by the resource rather than by the server. Hidden members and non-voting members require `priority = 0`, so set it explicitly for them. Arbiters always have priority 0 on the server; the resource sends 0 for them and a `priority` on an arbiter block is ignored. A replica set has at most seven voting members, so any further member needs `votes = 0` and `priority = 0`. Before 0.4.0 an omitted `votes` sent 0; a configuration that relied on that will see the member become a voter on the next apply.
 
 * `host` - (Required) `host:port` address of the replica set member.
 * `arbiter_only` - (Optional) Whether the member is an arbiter. Default: `false`.
 * `build_indexes` - (Optional) Whether the member builds indexes. Default: `true`.
 * `hidden` - (Optional) Whether the member is hidden from client connections. Default: `false`.
-* `priority` - (Optional) Election priority. `0` means the member can never become primary. Default: `1`.
+* `priority` - (Optional) Election priority. `0` means the member can never become primary. Always `0` for arbiters. Default: `1`.
 * `tags` - (Optional) Map of string key-value pairs for replica set tags.
 * `votes` - (Optional) Number of votes the member has in elections (`0` or `1`). Default: `1`.
 
@@ -157,6 +157,8 @@ A member that will vote is added in two steps. The first reconfig adds it with `
 If a new member does not become reachable at all within `init_timeout_secs`, the resource removes it again and fails the apply, so a mistyped host does not stay in the configuration. If it is reachable but has not reached `SECONDARY` in time, which happens when initial sync of a data-bearing set takes longer than the timeout, the member stays in the set as a non-voter with priority 0 and the apply fails with a message saying so. Apply again once the member is `SECONDARY`, or raise `init_timeout_secs`: the next apply finds the member in the set and performs only the promotion.
 
 The same two-step path applies to a block that raises the `votes` of a member already in the set: its votes and priority are left out of the settings reconfig, the resource waits for it to be `SECONDARY`, and one reconfig per member applies the new values. Lowering votes or changing any other field goes out in the settings reconfig as before.
+
+Every wait is bounded by `init_timeout_secs`, and each `replSetReconfig` is sent with `maxTimeMS` set to the time remaining, so an apply cannot hang in a server-side wait for a member that is still syncing; MongoDB 4.4 and later otherwise wait indefinitely for the previous configuration to be committed. An apply that adds several members can take a multiple of the timeout. If the apply is interrupted while waiting, a member added in that apply that has not yet answered a heartbeat is removed again, and any other member stays in the set as a non-voter for the next apply to finish.
 
 State is read back from the server after the last reconfig. A failed step leaves the settings and every earlier step in place; the next apply does only what is still missing.
 

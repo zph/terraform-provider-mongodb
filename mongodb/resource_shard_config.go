@@ -172,8 +172,9 @@ func derefInt(p *int) int {
 }
 
 // MergeMembers applies Terraform member overrides onto RSConfig members,
-// matching by host. Returns error if any override host is not found.
-// SHARD-004: Error when host not found.
+// matching by host. Update partitions unknown hosts off as adds beforehand
+// (SHARD-012), so the not-found error here is a guard rather than a
+// user-facing path.
 // SHARD-005: All fields from the override are applied.
 // SHARD-006: Unlisted members are left unchanged.
 func MergeMembers(rsMembers ConfigMembers, overrides []MemberOverride) (ConfigMembers, error) {
@@ -217,18 +218,27 @@ func memberHosts(members ConfigMembers) []string {
 }
 
 // RSConfigMembersToState converts ConfigMembers to the []interface{} format
-// for Terraform state. If managedHosts is nil, returns nil (no member block
-// declared). Only members whose host is in managedHosts are included.
+// for Terraform state, in the order of managedHosts (the member blocks), so
+// the list compares position by position with the configuration instead of
+// diffing forever when the server orders members differently. Hosts not in
+// the replica set are skipped. If managedHosts is nil, returns nil (no member
+// block declared).
 // SHARD-007: Read-back for drift detection.
 // SHARD-008: Only managed hosts returned.
-func RSConfigMembersToState(members ConfigMembers, managedHosts map[string]bool) []interface{} {
+// SHARD-025: Block order, not server order.
+func RSConfigMembersToState(members ConfigMembers, managedHosts []string) []interface{} {
 	if managedHosts == nil {
 		return nil
 	}
 
-	result := make([]interface{}, 0, len(managedHosts))
+	byHost := make(map[string]ConfigMember, len(members))
 	for _, m := range members {
-		if !managedHosts[m.Host] {
+		byHost[m.Host] = m
+	}
+	result := make([]interface{}, 0, len(managedHosts))
+	for _, host := range managedHosts {
+		m, ok := byHost[host]
+		if !ok {
 			continue
 		}
 
@@ -257,13 +267,20 @@ func RSConfigMembersToState(members ConfigMembers, managedHosts map[string]bool)
 	return result
 }
 
-// validateMemberOverrides returns diagnostics if any member has an empty or missing host.
-// Call this before using overrides so MergeMembers does not receive invalid hosts.
+// validateMemberOverrides returns diagnostics if any member has an empty or
+// missing host, or if two blocks name the same host: the second would be
+// merged twice or, for a new host, added a second time and rejected by the
+// server after the first add went through. SHARD-026
 func validateMemberOverrides(overrides []MemberOverride) diag.Diagnostics {
+	seen := make(map[string]int, len(overrides))
 	for i, o := range overrides {
 		if strings.TrimSpace(o.Host) == "" {
 			return diag.Errorf("member at index %d: host is required and must be non-empty (host:port)", i)
 		}
+		if first, dup := seen[o.Host]; dup {
+			return diag.Errorf("member at index %d: host %q is already declared by the member at index %d", i, o.Host, first)
+		}
+		seen[o.Host] = i
 	}
 	return nil
 }
@@ -302,14 +319,20 @@ func extractMemberOverrides(data *schema.ResourceData) ([]MemberOverride, bool) 
 				override.Tags[k] = v.(string)
 			}
 		}
+		// SHARD-024: the server forces an arbiter's priority to 0, so send 0
+		// rather than the schema default and let the read-back match.
+		if override.ArbiterOnly {
+			override.Priority = 0
+		}
 		overrides = append(overrides, override)
 	}
 	return overrides, true
 }
 
-// managedHostsFromState extracts the set of managed hosts from the current TF state.
-// Entries with missing or empty host are skipped so we do not panic on invalid state.
-func managedHostsFromState(data *schema.ResourceData) map[string]bool {
+// managedHostsFromState returns the hosts of the member blocks in block order,
+// without duplicates. Entries with a missing or empty host are skipped so
+// invalid state cannot panic. SHARD-025
+func managedHostsFromState(data *schema.ResourceData) []string {
 	v, ok := data.GetOk("member")
 	if !ok {
 		return nil
@@ -318,7 +341,8 @@ func managedHostsFromState(data *schema.ResourceData) map[string]bool {
 	if len(tfMembers) == 0 {
 		return nil
 	}
-	managed := make(map[string]bool, len(tfMembers))
+	managed := make([]string, 0, len(tfMembers))
+	seen := make(map[string]bool, len(tfMembers))
 	for _, raw := range tfMembers {
 		m := raw.(map[string]interface{})
 		var host string
@@ -327,11 +351,21 @@ func managedHostsFromState(data *schema.ResourceData) map[string]bool {
 				host = s
 			}
 		}
-		if strings.TrimSpace(host) != "" {
-			managed[host] = true
+		if strings.TrimSpace(host) != "" && !seen[host] {
+			seen[host] = true
+			managed = append(managed, host)
 		}
 	}
 	return managed
+}
+
+// suppressArbiterPriority hides priority diffs on arbiter blocks. The server
+// forces an arbiter's priority to 0, so the schema default of 1 would
+// otherwise diff against the read-back forever. k is "member.N.priority".
+// SHARD-024
+func suppressArbiterPriority(k, _, _ string, d *schema.ResourceData) bool {
+	arbiter, _ := d.Get(strings.TrimSuffix(k, "priority") + "arbiter_only").(bool)
+	return arbiter
 }
 
 // oplogConfigured returns true if oplog_size_mb is explicitly set.
@@ -870,11 +904,13 @@ func resourceShardConfig() *schema.Resource {
 							Description: "Whether this member is hidden from client discovery",
 						},
 						// SHARD-020: sent explicitly, including 0 (required for hidden members).
+						// SHARD-024: arbiters always have priority 0; the diff is suppressed for them.
 						"priority": {
-							Type:        schema.TypeFloat,
-							Optional:    true,
-							Default:     1.0,
-							Description: "Election priority for this member (0 = never primary). MongoDB accepts 0-1000 (integer or decimal). Default 1.",
+							Type:             schema.TypeFloat,
+							Optional:         true,
+							Default:          1.0,
+							DiffSuppressFunc: suppressArbiterPriority,
+							Description:      "Election priority for this member (0 = never primary). MongoDB accepts 0-1000 (integer or decimal). Always 0 for arbiters. Default 1.",
 						},
 						"tags": {
 							Type:     schema.TypeMap,

@@ -43,8 +43,8 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `provider_test.go` | 3 | Schema validation, resource map |
 | `resource_db_user_test.go` | 4 | ID parsing |
 | `resource_db_role_test.go` | 2 | ID parsing |
-| `resource_shard_config_test.go` | 32 | ID parsing, MergeMembers, RSConfigMembersToState, schema validation, member defaults, oplog fan-out helpers |
-| `shard_members_test.go` | 19 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback, PromoteMembersSequentially, observeMember, WaitForMemberState |
+| `resource_shard_config_test.go` | 36 | ID parsing, MergeMembers, RSConfigMembersToState (block order), schema validation, member defaults, arbiter priority, duplicate hosts, oplog fan-out helpers |
+| `shard_members_test.go` | 20 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback, PromoteMembersSequentially, observeMember, WaitForMemberState |
 | `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
@@ -81,7 +81,7 @@ Testcontainer-based tests against a live MongoDB replica set. Run with `make tes
 | INTEG-023 | Second apply against the grown set adds nothing |
 | INTEG-024 | Raising a live member's votes waits for SECONDARY and reconfigs once |
 
-Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-024), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-023)
+Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-024), `docs/specs/shard-member-requirements.md` (SHARD-001 through SHARD-026)
 
 ## Make Targets
 

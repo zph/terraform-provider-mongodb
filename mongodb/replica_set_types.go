@@ -269,10 +269,26 @@ func (s *ReplSetStatus) Primary() *Member {
 	}
 	return nil
 }
+
+// SetReplSetConfig runs replSetReconfig without a server-side time limit.
 func SetReplSetConfig(ctx context.Context, rsClient *mongo.Client, cfg *RSConfig) error {
+	return SetReplSetConfigWithMaxTime(ctx, rsClient, cfg, 0)
+}
+
+// SetReplSetConfigWithMaxTime runs replSetReconfig with maxTimeMS set to
+// maxTime (omitted when zero). Since 4.4 the command waits for the current
+// config to be majority committed before installing the new one, and for the
+// new one to reach a majority afterwards, indefinitely by default; a syncing
+// or unreachable voter can hold either wait. With maxTimeMS the server gives
+// up with CurrentConfigNotCommittedYet or MaxTimeMSExpired instead. INIT-031
+func SetReplSetConfigWithMaxTime(ctx context.Context, rsClient *mongo.Client, cfg *RSConfig, maxTime time.Duration) error {
 	resp := OKResponse{}
 
-	res := rsClient.Database("admin").RunCommand(ctx, bson.D{{Key: "replSetReconfig", Value: cfg}})
+	cmd := bson.D{{Key: "replSetReconfig", Value: cfg}}
+	if maxTime > 0 {
+		cmd = append(cmd, bson.E{Key: "maxTimeMS", Value: maxTime.Milliseconds()})
+	}
+	res := rsClient.Database("admin").RunCommand(ctx, cmd)
 	if res.Err() != nil {
 		err := errors.Wrap(res.Err(), "replSetReconfig")
 		return err

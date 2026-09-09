@@ -155,8 +155,29 @@ completes an add whose promotion did not fit in an earlier apply, and is the
 path for any block that turns a non-voter into a voter. Lowering votes and
 every other field change go out in the settings reconfig (SHARD-005).
 
+## Arbiters, State Order and Duplicate Hosts
+
+**SHARD-024** (Ubiquitous): The resource SHALL send `priority: 0` for a
+`member` block with `arbiter_only = true` regardless of the block's `priority`,
+and SHALL suppress plan diffs on `priority` for such blocks. The server forces
+an arbiter's priority to 0 (a value of 1 is reset to 0 on every supported
+version), so the schema default of 1 would otherwise diff against the
+read-back on every plan.
+
+**SHARD-025** (Ubiquitous): The `member` state list SHALL follow the order of
+the `member` blocks, not the order of the server's configuration, skipping
+blocks whose host is not in the set. `member` is a TypeList and is compared
+position by position, so a block for a new host placed before a block for an
+existing host would otherwise diff on every plan after the add.
+
+**SHARD-026** (Unwanted Behaviour): IF two `member` blocks name the same
+host, THEN the resource SHALL return a diagnostic error naming both block
+indexes before any command is sent. Otherwise the second block would merge
+twice or, for a new host, be added a second time and rejected by the server
+after the first add.
+
 ## Initialization
 
 The initialization flow hands over to this reconciliation after
-`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-023
+`replSetInitiate` of the first member (INIT-010); SHARD-012 through SHARD-026
 apply unchanged.

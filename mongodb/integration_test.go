@@ -789,7 +789,7 @@ func TestIntegration_ReadMembers_RoundTrip(t *testing.T) {
 	}
 
 	host := config.Members[0].Host
-	managed := map[string]bool{host: true}
+	managed := []string{host}
 	state := RSConfigMembersToState(config.Members, managed)
 	if len(state) != 1 {
 		t.Fatalf("expected 1 member in state, got %d", len(state))

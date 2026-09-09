@@ -61,13 +61,14 @@ func (f *fakeMemberAddServer) ops() memberAddOps {
 		},
 		Wait: func(_ context.Context, host string, target memberWaitTarget) (memberWaitResult, error) {
 			f.waited = append(f.waited, waitCall{host, target})
-			if f.waitErr != nil {
-				return memberWaitResult{}, f.waitErr
+			var res memberWaitResult
+			switch {
+			case f.wait != nil:
+				res = f.wait(host, target)
+			case f.waitErr == nil:
+				res = memberWaitResult{Met: true, EverReachable: true, Last: "health=1 state=" + target.String()}
 			}
-			if f.wait != nil {
-				return f.wait(host, target), nil
-			}
-			return memberWaitResult{Met: true, EverReachable: true, Last: "health=1 state=" + target.String()}, nil
+			return res, f.waitErr
 		},
 		Timeout: time.Minute,
 	}
@@ -661,4 +662,43 @@ func TestAddMembersSequentially_RemovesMemberInstalledByFailedReconfig(t *testin
 	if len(srv.waited) != 0 {
 		t.Errorf("no wait should run after a failed reconfig, got %v", srv.waited)
 	}
+}
+
+// SHARD-T34: SHARD-017 — an interrupted wait removes a member that never answered, keeps one that did
+func TestAddMembersSequentially_InterruptedWait(t *testing.T) {
+	t.Run("never reachable is removed on a detached context", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
+		srv.waitErr = context.Canceled
+		srv.wait = func(string, memberWaitTarget) memberWaitResult {
+			return memberWaitResult{Last: "not listed in replSetGetStatus"}
+		}
+
+		err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+
+		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "removed again") {
+			t.Fatalf("want the cancellation wrapped with a removal note, got %v", err)
+		}
+		if len(srv.reconfigs) != 2 {
+			t.Fatalf("want add then remove, got %d reconfigs", len(srv.reconfigs))
+		}
+		assertHosts(t, "live config", srv.current.Members, "mongo1:27017")
+	})
+
+	t.Run("reachable member stays", func(t *testing.T) {
+		srv := newFakeMemberAddServer(ConfigMember{ID: 0, Host: "mongo1:27017"})
+		srv.waitErr = context.Canceled
+		srv.wait = func(string, memberWaitTarget) memberWaitResult {
+			return memberWaitResult{EverReachable: true, Last: "health=1 state=STARTUP2"}
+		}
+
+		err := AddMembersSequentially(context.Background(), []MemberOverride{{Host: "mongo2:27017", Votes: 1, Priority: 1}}, srv.ops())
+
+		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "removed") {
+			t.Fatalf("want the bare cancellation, got %v", err)
+		}
+		if len(srv.reconfigs) != 1 {
+			t.Fatalf("want only the staged add, got %d reconfigs", len(srv.reconfigs))
+		}
+		assertHosts(t, "live config", srv.current.Members, "mongo1:27017", "mongo2:27017")
+	})
 }

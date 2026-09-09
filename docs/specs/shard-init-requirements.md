@@ -169,6 +169,23 @@ between `replSetGetConfig` and `replSetReconfig`.
 a version-conflict retry, the resource SHALL return an error immediately
 rather than retrying with stale data.
 
+## Reconfig Time Limits
+
+**INIT-031** (Ubiquitous): Every `replSetReconfig` the resource sends SHALL
+carry `maxTimeMS` set to the time remaining until the retry deadline (never
+less than one poll interval). Since MongoDB 4.4 the command waits for the
+current configuration to be majority committed before installing the new one
+and for the new one to propagate to a majority afterwards, indefinitely by
+default, and a voter that is unreachable or still in initial sync holds those
+waits; with `maxTimeMS` the server gives up instead of hanging the apply.
+
+**INIT-032** (Event Driven): WHEN `replSetReconfig` fails with MongoDB error
+code 308 (CurrentConfigNotCommittedYet), the resource SHALL treat it as
+transient and retry until `init_timeout_secs` elapses, then return the error
+per INIT-026. The condition clears on its own once the lagging member has
+caught up, and with staged adds (SHARD-022) only members that are already
+SECONDARY vote, so the retry is expected to succeed quickly.
+
 ## Auth Fallback on Create
 
 **INIT-029** (Event Driven): WHEN `getShardClient` fails with an
