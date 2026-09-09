@@ -244,11 +244,90 @@ Call `GetReplSetConfig`, set `ChainingAllowed=false`, `HeartbeatIntervalMillis=3
 
 ---
 
+**INTEG-022:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs against a one-member replica set with three `member` blocks, the Integration Test Suite SHALL verify that the pre-flight reads a node not yet added as addable (SHARD-027), that the two missing members are added with `_id` 1 and 2, that the voting member ends with its configured votes and priority after being staged as a non-voter, that every per-member field (priority, votes, hidden, tags) is applied, that the seed member's fields are merged in place, that the config version advanced by at least four (settings, staged add, promotion, second add), that the `member` state lists all three hosts in block order, and that all three members become PRIMARY or SECONDARY.
+
+**Rationale:**
+This is the host-side-seed workflow: something else initiates the set with one member and the provider grows it. It exercises SHARD-012 through SHARD-018, SHARD-020 and SHARD-022 against a real server on every version in the matrix, including the priority-0 hidden member that the `omitempty` tag used to break.
+
+**Verification:**
+Start three mongods on one Docker network, `rs.initiate` the first alone, probe the second node through its mapped port with `memberProbeFor` and assert `CheckAddTarget` returns the addable verdict, build a `ResourceData` with three blocks via `schema.TestResourceDataRaw`, call `RShardConfig.updateWithClient`, and assert on `GetReplSetConfig`, the resource state and `replSetGetStatus`.
+
+---
+
+**INTEG-023:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs a second time against the grown set with the same blocks, the Integration Test Suite SHALL verify that no member is added and that every member keeps its `_id` and host.
+
+**Rationale:**
+The partition is computed against the live configuration, so a repeated apply must converge without changing membership (SHARD-012, SHARD-019).
+
+**Verification:**
+Call `updateWithClient` again with the same configuration and compare `GetReplSetConfig` before and after.
+
+---
+
+**INTEG-024:** Event Driven
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with the hidden member's block changed from `votes = 0` to `votes = 1`, the Integration Test Suite SHALL verify that the member ends with votes 1, priority 0, hidden and the same `_id`, that the config version advanced by at least two (settings, promotion), and that the resource state shows the new votes.
+
+**Rationale:**
+Raising a live member's votes is the second half of a staged add and the path for turning a non-voter into a voter. It must wait for SECONDARY and go out in its own reconfig (SHARD-023).
+
+**Verification:**
+After INTEG-022 and INTEG-023, wait for all members to be PRIMARY or SECONDARY, call `updateWithClient` with the third block's votes set to 1, and assert on `GetReplSetConfig` and the resource state.
+
+---
+
+**INTEG-025:** Unwanted Behaviour
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with a fourth block naming a host that does not resolve and `init_timeout_secs` of 15, the Integration Test Suite SHALL verify that the call returns an error naming the host and saying it was removed again, that `GetReplSetConfig` still lists exactly the three live members with unchanged `_id` values, and that the resource's `member` state lists only those three hosts.
+
+**Rationale:**
+A member the primary reports down for the whole wait is rolled back (SHARD-017), and state must describe the members the server has even when the apply fails, because the SDK persists state on error (SHARD-021). The pre-flight of SHARD-027 cannot reach the container aliases from the test process, so this test also exercises its pass-through path.
+
+**Verification:**
+After INTEG-022, wait for all members to be PRIMARY or SECONDARY, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017`, and assert on the diagnostics, `GetReplSetConfig` and `data.Get("member")`.
+
+---
+
+**INTEG-026:** Unwanted Behaviour
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with a fourth block whose host is the address at which the test process reaches the first node (its mapped port), the Integration Test Suite SHALL verify that the call returns an error naming that address and the name the set knows the node by, that no `replSetReconfig` was sent (the config version is unchanged), and that the resource recorded no ID. It SHALL also verify that probing each node through its mapped port yields a refusal naming that node's network alias.
+
+**Rationale:**
+The mapped address is an alias of the network name the set knows the node by, which is exactly the FQDN-for-short-name case the pre-flight of SHARD-027 exists for. This exercises the refusal path, and the `isMaster` field names it depends on, against a real server on every version in the matrix.
+
+**Verification:**
+After INTEG-022, wait for all members to be PRIMARY or SECONDARY, run `memberProbeFor` and `CheckAddTarget` against each node's mapped address, then call `updateWithClient` with the three-member configuration plus the first node's mapped address and assert on the diagnostics, `GetReplSetConfig` and `data.Id()`.
+
+---
+
+**INTEG-027:** Unwanted Behaviour
+
+**Requirement:**
+When `updateWithClient` runs against the grown set with a fourth block that has `arbiter_only = true` and a host that does not resolve, the Integration Test Suite SHALL verify that the call returns an error naming the arbiter host and saying it could not be inspected and can be added by hand, and that no `replSetReconfig` was sent.
+
+**Rationale:**
+An arbiter is added with its vote and cannot be staged, so an arbiter host the pre-flight cannot inspect is refused before anything is sent (SHARD-028). A data-bearing block with the same host is added and rolled back instead (INTEG-025); the two tests together pin the difference.
+
+**Verification:**
+After INTEG-022, call `updateWithClient` with the three-member configuration plus `rsgrow-nope:27017` as an arbiter and assert on the diagnostics and `GetReplSetConfig`.
+
+---
+
 ## Test File Summary
 
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/integration_test.go` | INTEG-001 through INTEG-016 | `mongodb/config.go`, `mongodb/replica_set_types.go` |
+| `mongodb/member_add_integration_test.go` | INTEG-022 through INTEG-027 | `mongodb/shard_members.go`, `mongodb/resource_shard_config.go` |
 
 ## Testcontainer Configuration
 
@@ -258,3 +337,5 @@ The integration tests use a single shared MongoDB replica set container for all 
 - Replica set name: `rs0`
 - Authentication: enabled with admin user
 - Container lifecycle: started once per test suite via `TestMain`, torn down after all tests complete
+
+The member-add tests (INTEG-022 through INTEG-027) start their own three-node replica set on a dedicated Docker network the first time one of them runs, without authentication, and skip if it cannot start. `TestMain` tears it down with the rest.

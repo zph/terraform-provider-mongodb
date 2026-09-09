@@ -186,8 +186,10 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	// Tear down sharded cluster if it was started
+	// Tear down the sharded cluster and the member-add replica set if they
+	// were started
 	teardownShardedCluster()
+	teardownMemberAddCluster()
 
 	_ = client.Disconnect(ctx)
 	_ = container.Terminate(ctx)
@@ -787,7 +789,7 @@ func TestIntegration_ReadMembers_RoundTrip(t *testing.T) {
 	}
 
 	host := config.Members[0].Host
-	managed := map[string]bool{host: true}
+	managed := []string{host}
 	state := RSConfigMembersToState(config.Members, managed)
 	if len(state) != 1 {
 		t.Fatalf("expected 1 member in state, got %d", len(state))

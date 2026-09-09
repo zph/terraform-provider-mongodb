@@ -70,99 +70,6 @@ func TestIsAlreadyInitialized_PlainError(t *testing.T) {
 	}
 }
 
-// --- BuildInitialMembers tests ---
-
-// INIT-T08: BuildInitialMembers assigns sequential IDs 0,1,2
-func TestBuildInitialMembers_SequentialIDs(t *testing.T) {
-	overrides := []MemberOverride{
-		{Host: "mongo1:27017", Priority: 1, Votes: 1, BuildIndexes: true},
-		{Host: "mongo2:27017", Priority: 1, Votes: 1, BuildIndexes: true},
-		{Host: "mongo3:27017", Priority: 1, Votes: 1, BuildIndexes: true},
-	}
-	members := BuildInitialMembers(overrides)
-	if len(members) != 3 {
-		t.Fatalf("expected 3 members, got %d", len(members))
-	}
-	for i, m := range members {
-		if m.ID != i {
-			t.Errorf("member %d: expected _id=%d, got %d", i, i, m.ID)
-		}
-		if m.Host != overrides[i].Host {
-			t.Errorf("member %d: expected host=%s, got %s", i, overrides[i].Host, m.Host)
-		}
-	}
-}
-
-// INIT-T09: BuildInitialMembers applies all fields (priority, votes, hidden, arbiter_only, build_indexes, tags)
-func TestBuildInitialMembers_AllFields(t *testing.T) {
-	overrides := []MemberOverride{
-		{
-			Host:         "mongo1:27017",
-			Priority:     10,
-			Votes:        1,
-			Hidden:       true,
-			ArbiterOnly:  false,
-			BuildIndexes: false,
-			Tags:         map[string]string{"dc": "east", "rack": "r1"},
-		},
-	}
-	members := BuildInitialMembers(overrides)
-	if len(members) != 1 {
-		t.Fatalf("expected 1 member, got %d", len(members))
-	}
-	m := members[0]
-	if m.ID != 0 {
-		t.Errorf("_id: want 0, got %d", m.ID)
-	}
-	if m.Host != "mongo1:27017" {
-		t.Errorf("host: want mongo1:27017, got %s", m.Host)
-	}
-	if m.Priority != 10 {
-		t.Errorf("priority: want 10, got %v", m.Priority)
-	}
-	if derefInt(m.Votes) != 1 {
-		t.Errorf("votes: want 1, got %d", derefInt(m.Votes))
-	}
-	if derefBool(m.Hidden) != true {
-		t.Errorf("hidden: want true, got %v", derefBool(m.Hidden))
-	}
-	if derefBool(m.ArbiterOnly) != false {
-		t.Errorf("arbiterOnly: want false, got %v", derefBool(m.ArbiterOnly))
-	}
-	if derefBool(m.BuildIndexes) != false {
-		t.Errorf("buildIndexes: want false, got %v", derefBool(m.BuildIndexes))
-	}
-	if m.Tags["dc"] != "east" || m.Tags["rack"] != "r1" {
-		t.Errorf("tags: want {dc:east, rack:r1}, got %v", m.Tags)
-	}
-}
-
-// INIT-T10: BuildInitialMembers empty input returns empty ConfigMembers
-func TestBuildInitialMembers_EmptyInput(t *testing.T) {
-	members := BuildInitialMembers(nil)
-	if len(members) != 0 {
-		t.Errorf("expected 0 members for nil input, got %d", len(members))
-	}
-	members = BuildInitialMembers([]MemberOverride{})
-	if len(members) != 0 {
-		t.Errorf("expected 0 members for empty input, got %d", len(members))
-	}
-}
-
-// INIT-T11: BuildInitialMembers single member gets _id: 0
-func TestBuildInitialMembers_SingleMember(t *testing.T) {
-	overrides := []MemberOverride{
-		{Host: "mongo1:27017", Priority: 1, Votes: 1, BuildIndexes: true},
-	}
-	members := BuildInitialMembers(overrides)
-	if len(members) != 1 {
-		t.Fatalf("expected 1 member, got %d", len(members))
-	}
-	if members[0].ID != 0 {
-		t.Errorf("expected _id=0, got %d", members[0].ID)
-	}
-}
-
 // --- IsNotWriteReady tests ---
 
 // INIT-T12a: IsNotWriteReady true for mongo.CommandError{Code: 17405}
@@ -290,5 +197,21 @@ func TestShardConfigSchema_InitTimeoutSecs(t *testing.T) {
 	}
 	if field.Default != DefaultInitTimeoutSecs {
 		t.Errorf("init_timeout_secs default: want %d, got %v", DefaultInitTimeoutSecs, field.Default)
+	}
+}
+
+// INIT-T13: INIT-032 — IsCurrentConfigNotCommitted matches code 308 only
+func TestIsCurrentConfigNotCommitted(t *testing.T) {
+	if !IsCurrentConfigNotCommitted(mongo.CommandError{Code: 308, Name: "CurrentConfigNotCommittedYet"}) {
+		t.Error("code 308 should match")
+	}
+	if !IsCurrentConfigNotCommitted(fmt.Errorf("replSetReconfig: %w", mongo.CommandError{Code: 308})) {
+		t.Error("a wrapped code 308 should match")
+	}
+	if IsCurrentConfigNotCommitted(mongo.CommandError{Code: 103}) {
+		t.Error("code 103 should not match")
+	}
+	if IsCurrentConfigNotCommitted(errors.New("plain")) {
+		t.Error("a plain error should not match")
 	}
 }

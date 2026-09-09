@@ -102,11 +102,20 @@ PREVIEW-021: WHEN `mongodb_balancer_config` is previewed, the
 (balancerStart/Stop, config.settings writes, chunksize write).
 
 PREVIEW-022: WHEN `mongodb_shard_config` is previewed for Create (new RS),
-the `planned_commands` SHALL show `replSetInitiate` followed by
-`replSetReconfig`.
+the `planned_commands` SHALL show `replSetInitiate`, then `replSetReconfig`
+for the settings, then for each `member` block after the first one
+`replSetReconfig` line adding the host as a non-voter (or, for an arbiter, in
+final form) and, when the block gives it votes or a non-zero priority, a
+second line applying those once the member is SECONDARY (SHARD-013,
+SHARD-022).
 
 PREVIEW-023: WHEN `mongodb_shard_config` is previewed for Update, the
-`planned_commands` SHALL show `replSetReconfig`.
+`planned_commands` SHALL show `replSetReconfig` for the settings and the
+matched members, then the same add and promotion lines as PREVIEW-022 for
+each `member` block whose host is not in state, and one promotion line for
+each block that gives a member in state more votes than it has (SHARD-023).
+Whether an added host is already in the live set is only known at apply
+time, so the add line says the member is added unless it is already one.
 
 PREVIEW-024: WHEN `mongodb_original_user` is previewed for Create, the
 `planned_commands` SHALL show `createUser` with `pwd: [REDACTED]`.

@@ -32,6 +32,13 @@ const (
 	// sends a config version not greater than the current one. // INIT-027
 	MongoErrVersionConflict = 103
 
+	// MongoErrCurrentConfigNotCommitted is MongoDB error code 308
+	// (CurrentConfigNotCommittedYet), returned since 4.4 when replSetReconfig
+	// gives up waiting for the current config to be majority committed. With
+	// maxTimeMS set this is how a still-syncing voter surfaces instead of an
+	// indefinite wait. // INIT-032
+	MongoErrCurrentConfigNotCommitted = 308
+
 	// MongoErrUnauthorized is MongoDB error code 13, returned when an
 	// operation requires authentication but the client is not authorized. // INIT-029
 	MongoErrUnauthorized = 13
@@ -49,7 +56,7 @@ const (
 	DefaultInitTimeoutSecs = 60
 
 	// initPollInterval is the polling interval for WaitForPrimary and
-	// WaitForMajorityHealthy.
+	// WaitForMemberState, and the SetReplSetConfigWithRetry backoff.
 	initPollInterval = 500 * time.Millisecond
 )
 
@@ -137,28 +144,14 @@ func IsVersionConflict(err error) bool {
 	return false
 }
 
-// BuildInitialMembers converts MemberOverride slices into ConfigMembers with
-// sequential _id values starting from 0. // INIT-005
-func BuildInitialMembers(overrides []MemberOverride) ConfigMembers {
-	if len(overrides) == 0 {
-		return ConfigMembers{}
+// IsCurrentConfigNotCommitted returns true if err wraps a mongo.CommandError
+// with code 308 (CurrentConfigNotCommittedYet). // INIT-032
+func IsCurrentConfigNotCommitted(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == MongoErrCurrentConfigNotCommitted
 	}
-	members := make(ConfigMembers, len(overrides))
-	for i, o := range overrides {
-		members[i] = ConfigMember{
-			ID:           i,
-			Host:         o.Host,
-			Priority:     o.Priority,
-			Votes:        intPtr(o.Votes),
-			Hidden:       boolPtr(o.Hidden),
-			ArbiterOnly:  boolPtr(o.ArbiterOnly),
-			BuildIndexes: boolPtr(o.BuildIndexes),
-		}
-		if o.Tags != nil {
-			members[i].Tags = ReplsetTags(o.Tags)
-		}
-	}
-	return members
+	return false
 }
 
 // InitiateReplicaSet runs replSetInitiate with a single-member config on the
@@ -221,61 +214,29 @@ func WaitForPrimary(ctx context.Context, client *mongo.Client, timeout time.Dura
 	}
 }
 
-// WaitForMajorityHealthy polls replSetGetStatus until a majority of the
-// expected member count report a healthy state (PRIMARY or SECONDARY).
-// // INIT-013, INIT-014
-func WaitForMajorityHealthy(ctx context.Context, client *mongo.Client, expectedCount int, timeout time.Duration) error {
-	majority := (expectedCount / 2) + 1
-	deadline := time.Now().Add(timeout)
-
-	for {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("majority of members (%d/%d) did not reach healthy state within %s",
-				majority, expectedCount, timeout)
-		}
-
-		status, err := GetReplSetStatus(ctx, client)
-		if err == nil {
-			healthy := 0
-			for _, m := range status.Members {
-				if m.Health == MemberHealthUp &&
-					(m.State == MemberStatePrimary || m.State == MemberStateSecondary) {
-					healthy++
-				}
-			}
-			if healthy >= majority {
-				tflog.Info(ctx, "majority of members healthy", map[string]interface{}{
-					"healthy":  healthy,
-					"expected": expectedCount,
-				})
-				return nil
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(initPollInterval):
-		}
-	}
-}
-
-// SetReplSetConfigWithRetry wraps SetReplSetConfig with retry logic for
-// transient post-election errors:
+// SetReplSetConfigWithRetry wraps SetReplSetConfigWithMaxTime with retry
+// logic for transient errors:
 //   - Location17405: freshly elected PRIMARY cannot accept writes yet (INIT-025)
 //   - Code 103: config version conflict from internal auto-reconfig (INIT-027)
+//   - Code 308: the current config is not yet majority committed (INIT-032)
 //
 // On version conflicts, the function re-reads the current config version from
-// the server before retrying. Retries use initPollInterval backoff until the
-// timeout is exceeded. // INIT-025, INIT-026, INIT-027, INIT-028
+// the server before retrying. Each attempt carries a maxTimeMS of the time
+// left until the deadline, so the server's own commitment waits cannot
+// outlive the timeout (INIT-031). Retries use initPollInterval backoff until
+// the timeout is exceeded. // INIT-025, INIT-026, INIT-027, INIT-028
 func SetReplSetConfigWithRetry(ctx context.Context, client *mongo.Client, cfg *RSConfig, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		err := SetReplSetConfig(ctx, client, cfg)
+		maxTime := time.Until(deadline)
+		if maxTime < initPollInterval {
+			maxTime = initPollInterval
+		}
+		err := SetReplSetConfigWithMaxTime(ctx, client, cfg, maxTime)
 		if err == nil {
 			return nil
 		}
-		retryable := IsNotWriteReady(err) || IsVersionConflict(err)
+		retryable := IsNotWriteReady(err) || IsVersionConflict(err) || IsCurrentConfigNotCommitted(err)
 		if !retryable {
 			return err
 		}

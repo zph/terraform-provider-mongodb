@@ -54,7 +54,7 @@ type ConfigMember struct {
 	ArbiterOnly  *bool       `bson:"arbiterOnly,omitempty" json:"arbiterOnly,omitempty"`
 	BuildIndexes *bool       `bson:"buildIndexes,omitempty" json:"buildIndexes,omitempty"`
 	Hidden       *bool       `bson:"hidden,omitempty" json:"hidden,omitempty"`
-	Priority     float64     `bson:"priority,omitempty" json:"priority,omitempty"`
+	Priority     float64     `bson:"priority" json:"priority"`
 	Tags         ReplsetTags `bson:"tags,omitempty" json:"tags,omitempty"`
 	SlaveDelay   *int64      `bson:"slaveDelay,omitempty" json:"slaveDelay,omitempty"`
 	Votes        *int        `bson:"votes,omitempty" json:"votes,omitempty"`
@@ -155,14 +155,23 @@ type ShardRemoveResp struct {
 	OKResponse `bson:",inline"`
 }
 
+// IsMasterResp is the isMaster (hello) response. A member of a replica set
+// reports setName and me; a mongod started with --replSet that holds no
+// configuration it belongs to, because it was never initiated or was removed
+// from a set, reports isreplicaset true and no setName; a standalone reports
+// neither; a mongos reports msg "isdbgrid". The command needs no
+// authentication on any version.
 type IsMasterResp struct {
-	IsMaster   bool   `bson:"ismaster" json:"ismaster"`
-	IsArbiter  bool   `bson:"arbiterOnly" json:"arbiterOnly"`
-	SetName    string `bson:"setName,omitempty" json:"setName,omitempty"`
-	Primary    string `bson:"primary" json:"primary"`
-	Me         string `bson:"me" json:"me"`
-	Msg        string `bson:"msg" json:"msg"`
-	OKResponse `bson:",inline"`
+	IsMaster     bool   `bson:"ismaster" json:"ismaster"`
+	Secondary    bool   `bson:"secondary,omitempty" json:"secondary,omitempty"`
+	IsArbiter    bool   `bson:"arbiterOnly" json:"arbiterOnly"`
+	IsReplicaSet bool   `bson:"isreplicaset,omitempty" json:"isreplicaset,omitempty"`
+	SetName      string `bson:"setName,omitempty" json:"setName,omitempty"`
+	Primary      string `bson:"primary" json:"primary"`
+	Me           string `bson:"me" json:"me"`
+	Msg          string `bson:"msg" json:"msg"`
+	Info         string `bson:"info,omitempty" json:"info,omitempty"`
+	OKResponse   `bson:",inline"`
 }
 
 type ReplSetStatus struct {
@@ -269,10 +278,26 @@ func (s *ReplSetStatus) Primary() *Member {
 	}
 	return nil
 }
+
+// SetReplSetConfig runs replSetReconfig without a server-side time limit.
 func SetReplSetConfig(ctx context.Context, rsClient *mongo.Client, cfg *RSConfig) error {
+	return SetReplSetConfigWithMaxTime(ctx, rsClient, cfg, 0)
+}
+
+// SetReplSetConfigWithMaxTime runs replSetReconfig with maxTimeMS set to
+// maxTime (omitted when zero). Since 4.4 the command waits for the current
+// config to be majority committed before installing the new one, and for the
+// new one to reach a majority afterwards, indefinitely by default; a syncing
+// or unreachable voter can hold either wait. With maxTimeMS the server gives
+// up with CurrentConfigNotCommittedYet or MaxTimeMSExpired instead. INIT-031
+func SetReplSetConfigWithMaxTime(ctx context.Context, rsClient *mongo.Client, cfg *RSConfig, maxTime time.Duration) error {
 	resp := OKResponse{}
 
-	res := rsClient.Database("admin").RunCommand(ctx, bson.D{{Key: "replSetReconfig", Value: cfg}})
+	cmd := bson.D{{Key: "replSetReconfig", Value: cfg}}
+	if maxTime > 0 {
+		cmd = append(cmd, bson.E{Key: "maxTimeMS", Value: maxTime.Milliseconds()})
+	}
+	res := rsClient.Database("admin").RunCommand(ctx, cmd)
 	if res.Err() != nil {
 		err := errors.Wrap(res.Err(), "replSetReconfig")
 		return err
@@ -309,6 +334,24 @@ func GetReplSetStatus(ctx context.Context, client *mongo.Client) (*ReplSetStatus
 		return nil, err
 	}
 
+	return &resp, nil
+}
+
+// GetIsMaster runs isMaster over the given client. Unlike replSetGetStatus it
+// needs no authentication, so it can be asked of a fresh mongod that has no
+// users yet as well as of a live member. SHARD-027
+func GetIsMaster(ctx context.Context, client *mongo.Client) (*IsMasterResp, error) {
+	resp := IsMasterResp{}
+	res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "isMaster", Value: 1}})
+	if res.Err() != nil {
+		return nil, errors.Wrap(res.Err(), "isMaster")
+	}
+	if err := res.Decode(&resp); err != nil {
+		return nil, errors.Wrap(err, "failed to decode isMaster")
+	}
+	if resp.OK != 1 {
+		return nil, errors.Errorf("mongo says: %s", resp.Errmsg)
+	}
 	return &resp, nil
 }
 

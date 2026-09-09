@@ -258,7 +258,7 @@ func TestRSConfigMembersToState_AllFields(t *testing.T) {
 			Tags:         ReplsetTags{"dc": "east"},
 		},
 	}
-	managed := map[string]bool{"mongo1:27017": true}
+	managed := []string{"mongo1:27017"}
 	result := RSConfigMembersToState(members, managed)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 member, got %d", len(result))
@@ -295,7 +295,7 @@ func TestRSConfigMembersToState_ManagedFilter(t *testing.T) {
 		{ID: 1, Host: "mongo2:27017", Priority: 2},
 		{ID: 2, Host: "mongo3:27017", Priority: 3},
 	}
-	managed := map[string]bool{"mongo2:27017": true}
+	managed := []string{"mongo2:27017"}
 	result := RSConfigMembersToState(members, managed)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 member, got %d", len(result))
@@ -322,7 +322,7 @@ func TestRSConfigMembersToState_NilPointers(t *testing.T) {
 	members := ConfigMembers{
 		{ID: 0, Host: "mongo1:27017", Priority: 1},
 	}
-	managed := map[string]bool{"mongo1:27017": true}
+	managed := []string{"mongo1:27017"}
 	result := RSConfigMembersToState(members, managed)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 member, got %d", len(result))
@@ -719,5 +719,115 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 	}
 	if attempted {
 		t.Error("fan-out must not run with oplog_size_mb unchanged")
+	}
+}
+
+// SHARD-T26: SHARD-020 — priority and votes default to 1 in the schema, so the
+// documented defaults are sent explicitly instead of relying on the server.
+func TestShardConfigSchema_MemberDefaults(t *testing.T) {
+	elem := resourceShardConfig().Schema["member"].Elem.(*schema.Resource)
+
+	priority := elem.Schema["priority"]
+	if priority.Type != schema.TypeFloat {
+		t.Errorf("priority type: want TypeFloat, got %v", priority.Type)
+	}
+	if priority.Default != 1.0 {
+		t.Errorf("priority default: want 1.0, got %v", priority.Default)
+	}
+
+	votes := elem.Schema["votes"]
+	if votes.Type != schema.TypeInt {
+		t.Errorf("votes type: want TypeInt, got %v", votes.Type)
+	}
+	if votes.Default != 1 {
+		t.Errorf("votes default: want 1, got %v", votes.Default)
+	}
+}
+
+// SHARD-T35: SHARD-025 — state follows block order, skips hosts not in the set, dedupes blocks
+func TestRSConfigMembersToState_BlockOrder(t *testing.T) {
+	members := ConfigMembers{
+		{ID: 0, Host: "mongo1:27017", Priority: 1},
+		{ID: 1, Host: "mongo2:27017", Priority: 1},
+		{ID: 2, Host: "mongo3:27017", Priority: 1},
+	}
+	result := RSConfigMembersToState(members, []string{"mongo3:27017", "mongo1:27017", "gone:27017"})
+	if len(result) != 2 {
+		t.Fatalf("want the two live managed hosts, got %d: %v", len(result), result)
+	}
+	if h := result[0].(map[string]interface{})["host"]; h != "mongo3:27017" {
+		t.Errorf("first state entry should follow block order, got %v", h)
+	}
+	if h := result[1].(map[string]interface{})["host"]; h != "mongo1:27017" {
+		t.Errorf("second state entry should follow block order, got %v", h)
+	}
+
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name": "rs0",
+		"member": []interface{}{
+			map[string]interface{}{"host": "b:1"},
+			map[string]interface{}{"host": "a:1"},
+			map[string]interface{}{"host": "b:1"},
+			map[string]interface{}{"host": ""},
+		},
+	})
+	got := managedHostsFromState(data)
+	if len(got) != 2 || got[0] != "b:1" || got[1] != "a:1" {
+		t.Errorf("managedHostsFromState: want [b:1 a:1] in block order without duplicates, got %v", got)
+	}
+}
+
+// SHARD-T36: SHARD-026 — duplicate hosts are rejected before anything is sent
+func TestValidateMemberOverrides_DuplicateHost(t *testing.T) {
+	diags := validateMemberOverrides([]MemberOverride{{Host: "a:1"}, {Host: "b:1"}, {Host: "a:1"}})
+	if !diags.HasError() {
+		t.Fatal("want an error for the duplicate host")
+	}
+	msg := diags[0].Summary
+	for _, want := range []string{"index 2", `"a:1"`, "index 0"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %s, got: %s", want, msg)
+		}
+	}
+	if diags := validateMemberOverrides([]MemberOverride{{Host: "a:1"}, {Host: "b:1"}}); diags.HasError() {
+		t.Errorf("distinct hosts should pass, got %v", diags)
+	}
+}
+
+// SHARD-T37: SHARD-024 — an arbiter block sends priority 0 whatever the schema default says
+func TestExtractMemberOverrides_ArbiterPriorityZero(t *testing.T) {
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name": "rs0",
+		"member": []interface{}{
+			map[string]interface{}{"host": "data:1", "priority": 2.0},
+			map[string]interface{}{"host": "arb:1", "arbiter_only": true},
+		},
+	})
+	overrides, ok := extractMemberOverrides(data)
+	if !ok || len(overrides) != 2 {
+		t.Fatalf("want 2 overrides, got %v (ok=%v)", overrides, ok)
+	}
+	if overrides[0].Priority != 2 {
+		t.Errorf("data member priority: want 2, got %v", overrides[0].Priority)
+	}
+	if !overrides[1].ArbiterOnly || overrides[1].Priority != 0 || overrides[1].Votes != 1 {
+		t.Errorf("arbiter: want priority 0 with votes 1, got %+v", overrides[1])
+	}
+}
+
+// SHARD-T38: SHARD-024 — priority diffs are suppressed on arbiter blocks only
+func TestSuppressArbiterPriority(t *testing.T) {
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name": "rs0",
+		"member": []interface{}{
+			map[string]interface{}{"host": "data:1"},
+			map[string]interface{}{"host": "arb:1", "arbiter_only": true},
+		},
+	})
+	if suppressArbiterPriority("member.0.priority", "0", "1", data) {
+		t.Error("a data-bearing member's priority diff must not be suppressed")
+	}
+	if !suppressArbiterPriority("member.1.priority", "0", "1", data) {
+		t.Error("an arbiter's priority diff must be suppressed")
 	}
 }
