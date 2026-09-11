@@ -13,6 +13,8 @@
 
 ## Resources
 
+Experimental resources (every resource below except `mongodb_db_user`, `mongodb_db_role` and `mongodb_original_user`) are rejected at plan time until they are opted in. Each example does so with `features_enabled` in its provider block; the `TERRAFORM_PROVIDER_MONGODB_ENABLE` environment variable works the same way.
+
 ### mongodb_db_user
 
 | Example | Description |
@@ -35,14 +37,14 @@
 
 | Example | Description |
 |---|---|
-| [resources/original_user](resources/original_user) | Bootstrap admin users on mongos and shard primaries |
+| [resources/original_user](resources/original_user) | Bootstrap the first admin user on a no-auth instance |
 
 ### mongodb_shard_config
 
 | Example | Description |
 |---|---|
 | [modules/shard_config/basic](modules/shard_config/basic) | Minimal shard configuration (existing) |
-| [resources/shard_config/all-settings](resources/shard_config/all-settings) | All configurable settings explicitly set |
+| [resources/shard_config/all-settings](resources/shard_config/all-settings) | Every setting explicitly set, including members, oplog size and timeouts |
 | [resources/shard_config/multi-shard](resources/shard_config/multi-shard) | Multiple shards via provider aliases |
 | [resources/shard_config/mongos-discovery](resources/shard_config/mongos-discovery) | Mongos auto-discovery (single provider, multiple shards) |
 
@@ -51,8 +53,57 @@
 | Example | Description |
 |---|---|
 | [resources/shard/basic](resources/shard/basic) | Register a single shard with a mongos router |
-| [resources/shard/custom-timeout](resources/shard/custom-timeout) | Extended drain timeout for large shard removal |
+| [resources/shard/custom-timeout](resources/shard/custom-timeout) | Extended addShard retry and drain timeouts |
 | [resources/shard/multi-shard](resources/shard/multi-shard) | Register multiple shards with varying timeouts |
+
+### mongodb_profiler
+
+| Example | Description |
+|---|---|
+| [resources/profiler/basic](resources/profiler/basic) | Profile slow operations on one database |
+| [resources/profiler/multi-database](resources/profiler/multi-database) | Per-database levels and thresholds via for_each |
+
+### mongodb_server_parameter
+
+| Example | Description |
+|---|---|
+| [resources/server_parameter/basic](resources/server_parameter/basic) | Integer and boolean parameters with value coercion |
+| [resources/server_parameter/ignore-read](resources/server_parameter/ignore-read) | Write-only parameter with ignore_read |
+
+### mongodb_balancer_config
+
+| Example | Description |
+|---|---|
+| [resources/balancer_config/disabled](resources/balancer_config/disabled) | Stop the cluster balancer |
+| [resources/balancer_config/all-settings](resources/balancer_config/all-settings) | Active window, chunk size, throttle and wait_for_delete |
+
+### mongodb_collection_balancing
+
+| Example | Description |
+|---|---|
+| [resources/collection_balancing/disabled](resources/collection_balancing/disabled) | Disable balancing for one sharded collection |
+| [resources/collection_balancing/chunk-size](resources/collection_balancing/chunk-size) | Per-collection chunk size (MongoDB 6.0+) |
+
+### mongodb_feature_compatibility_version
+
+| Example | Description |
+|---|---|
+| [resources/feature_compatibility_version/basic](resources/feature_compatibility_version/basic) | Pin FCV with prevent_destroy |
+| [resources/feature_compatibility_version/upgrade](resources/feature_compatibility_version/upgrade) | Change FCV with danger_mode and command_preview |
+
+### mongodb_shard_zone
+
+| Example | Description |
+|---|---|
+| [resources/shard_zone/basic](resources/shard_zone/basic) | Assign two shards to two zones |
+| [resources/shard_zone/multi-zone](resources/shard_zone/multi-zone) | Shards in several zones via for_each |
+
+### mongodb_zone_key_range
+
+| Example | Description |
+|---|---|
+| [resources/zone_key_range/basic](resources/zone_key_range/basic) | Route one region per zone on a compound shard key |
+| [resources/zone_key_range/full-key-space](resources/zone_key_range/full-key-space) | Split a hashed key space with $minKey / $maxKey |
 
 ## Patterns
 

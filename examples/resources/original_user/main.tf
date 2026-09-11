@@ -7,15 +7,18 @@ terraform {
   }
 }
 
-# Bootstrap the original admin user on a fresh MongoDB instance
-# running without authentication enabled.
+# Bootstrap the original admin user on a fresh MongoDB instance that has no
+# users yet. The resource connects WITHOUT auth through MongoDB's localhost
+# exception, so it carries its own host/port instead of using the provider
+# connection. After this apply, point the provider at the credentials
+# created here.
 #
-# This resource connects WITHOUT auth to create the first user,
-# then subsequent resources use the provider's auth credentials.
+# Updates are refused, and destroy only removes the resource from state:
+# the user is never dropped, since that would lock out the cluster.
+# If the user already exists and the credentials authenticate, the resource
+# adopts it instead of failing.
 
-# The provider block is required but its credentials are unused during
-# bootstrap — auth doesn't exist yet. After bootstrap, replace these
-# with real credentials matching the user created below.
+# The provider block is required but no credentials exist yet, so none are given.
 provider "mongodb" {
   host = "127.0.0.1"
   port = "27017"
@@ -26,40 +29,22 @@ variable "admin_password" {
   sensitive = true
 }
 
-# mongos
-# resource "mongodb_original_user" "admin" {
-#   host     = "127.0.0.1"
-#   port     = "30109"
-#   username = "admin"
-#   password = var.admin_password
-#
-#   role {
-#     role = "root"
-#     db   = "admin"
-#   }
-# }
-
-resource "mongodb_original_user" "shard_01_admin" {
+# Every replica set keeps its own users: in a sharded cluster declare one
+# resource for the mongos (config servers) and one per shard primary.
+resource "mongodb_original_user" "shard01_admin" {
   host     = "127.0.0.1"
   port     = "27017"
   username = "admin"
+
+  # Optional. Leave it out and export MONGODB_ORIGINAL_USER_PASSWORD instead
+  # to keep the password out of Terraform state.
   password = var.admin_password
 
+  # replica_set is auto-discovered; set it only if discovery is not wanted.
+
+  # Defaults to root on admin when no role block is given.
   role {
     role = "root"
     db   = "admin"
   }
 }
-
-# resource "mongodb_original_user" "shard_02_admin" {
-#   host     = "127.0.0.1"
-#   port     = "27018"
-#   username = "admin"
-#   password = var.admin_password
-#
-#   role {
-#     role = "root"
-#     db   = "admin"
-#   }
-# }
-#

@@ -9,25 +9,29 @@ terraform {
 
 # Multiple shards require separate provider instances via aliases,
 # since each shard's replSetReconfig must target that shard's primary.
+# (Connecting to a mongos instead lets one provider manage every shard;
+# see the mongos-discovery example.)
 
 provider "mongodb" {
-  alias         = "shard01"
-  host          = "shard01-primary.example.com"
-  port          = "27018"
-  username      = "root"
-  password      = var.mongo_password
-  auth_database = "admin"
-  direct        = true
+  alias            = "shard01"
+  host             = "shard01-primary.example.com"
+  port             = "27018"
+  username         = "root"
+  password         = var.mongo_password
+  auth_database    = "admin"
+  direct           = true
+  features_enabled = ["mongodb_shard_config"]
 }
 
 provider "mongodb" {
-  alias         = "shard02"
-  host          = "shard02-primary.example.com"
-  port          = "27018"
-  username      = "root"
-  password      = var.mongo_password
-  auth_database = "admin"
-  direct        = true
+  alias            = "shard02"
+  host             = "shard02-primary.example.com"
+  port             = "27018"
+  username         = "root"
+  password         = var.mongo_password
+  auth_database    = "admin"
+  direct           = true
+  features_enabled = ["mongodb_shard_config"]
 }
 
 # Shard-level defaults; reference in each resource to avoid duplication.

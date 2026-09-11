@@ -10,16 +10,17 @@ terraform {
   required_providers {
     mongodb = {
       source  = "zph/mongodb"
-      version = ">= 9.9.9"
+      version = "9.9.9"
     }
   }
 }
 
 provider "mongodb" {
-  host     = "mongos.example.com"
-  port     = "27017"
-  username = "admin"
-  password = "secret"
+  host             = "mongos.example.com"
+  port             = "27017"
+  username         = "admin"
+  password         = var.mongo_password
+  features_enabled = ["mongodb_shard_config"]
 }
 
 # Shard-level defaults; per-shard overrides merge in.
@@ -54,7 +55,9 @@ resource "mongodb_shard_config" "shards" {
   heartbeat_timeout_secs    = each.value.heartbeat_timeout_secs
   election_timeout_millis   = each.value.election_timeout_millis
 
-  # Optional: when internal shard hostnames are unreachable from this host
+  # Optional: when internal shard hostnames are unreachable from this host.
+  # host_override conflicts with oplog_size_mb and skips the member-host
+  # waits, so arbiters cannot be added through it.
   # host_override = each.key == "shard03" ? "shard03-external.example.com:27018" : null
 }
 
@@ -68,6 +71,11 @@ resource "mongodb_db_user" "app_service" {
     role = "readWrite"
     db   = "app_db"
   }
+}
+
+variable "mongo_password" {
+  type      = string
+  sensitive = true
 }
 
 variable "app_password" {
