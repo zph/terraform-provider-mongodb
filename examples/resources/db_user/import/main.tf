@@ -26,8 +26,10 @@ provider "mongodb" {
 #
 # Import ID is "{auth_database}.{username}" (plain text).
 # After import, run `terraform plan` to verify state matches config.
-# Note: password cannot be read back from MongoDB, so set it to
-# the current password to avoid an unnecessary update.
+# Note: password cannot be read back from MongoDB, so either set it to
+# the current password (the first apply re-asserts it) or add
+# `lifecycle { ignore_changes = [password] }` and leave the credential
+# unmanaged. Either way it must be non-empty: "" is rejected at plan time.
 
 # import {
 #   to = mongodb_db_user.existing

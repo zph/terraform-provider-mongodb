@@ -9,10 +9,13 @@ terraform {
 
 # Connect to mongos (or a single shard's primary). For direct connect to each shard,
 # add provider aliases and set provider = mongodb[each.key] on the resource.
+# mongodb_shard_config is experimental: enable it here or via
+# TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config.
 provider "mongodb" {
-  host          = "localhost"
-  port          = "30109"
-  auth_database = "admin"
+  host             = "localhost"
+  port             = "30109"
+  auth_database    = "admin"
+  features_enabled = ["mongodb_shard_config"]
 }
 
 # Shard-level and member-level defaults; per-shard and per-member overrides merge in.
@@ -22,6 +25,9 @@ locals {
     heartbeat_interval_millis = 1000
     heartbeat_timeout_secs    = 10
     election_timeout_millis   = 10000
+    catch_up_timeout_millis   = -1 # -1 = unlimited (MongoDB default)
+    oplog_size_mb             = 2048
+    init_timeout_secs         = 120
   }
   member_defaults = {
     priority      = 1
@@ -59,17 +65,21 @@ locals {
         merge(local.member_defaults, local.analytical_node_defaults, { host = "localhost:30208" }),
       ]
       election_timeout_millis = 5000
+      oplog_size_mb           = 4096
     }
   }
   # Full config per shard: shard defaults + per-shard overrides (including members).
   shard_configs = { for name, shard in local.shards : name => merge(local.shard_config_defaults, shard) }
 }
 
-# All configurable shard settings explicitly set.
+# All configurable shard settings explicitly set. The one setting left out is
+# host_override: it conflicts with oplog_size_mb, which has to reach every
+# member directly (see the mongos-discovery example for host_override).
 #
 # Known limitations:
 # - Delete is a no-op: destroying this resource removes it from state
 #   but does not reset the MongoDB replica set configuration.
+# - Members without a member block are left untouched and never removed.
 resource "mongodb_shard_config" "shards" {
   for_each = local.shard_configs
 
@@ -78,6 +88,16 @@ resource "mongodb_shard_config" "shards" {
   heartbeat_interval_millis = each.value.heartbeat_interval_millis
   heartbeat_timeout_secs    = each.value.heartbeat_timeout_secs
   election_timeout_millis   = each.value.election_timeout_millis
+  catch_up_timeout_millis   = each.value.catch_up_timeout_millis
+
+  # Applied via replSetResizeOplog on every data-bearing member, so the
+  # member hostnames must be reachable from the Terraform runner.
+  oplog_size_mb = each.value.oplog_size_mb
+
+  # Per-step wait: replSetInitiate reaching PRIMARY, then each added or
+  # promoted member reaching SECONDARY (default 60). A member still syncing
+  # at the timeout stays a non-voter and is promoted by a later apply.
+  init_timeout_secs = each.value.init_timeout_secs
 
   # Bounds the whole apply, including waits for hosts still starting (default 20m).
   timeouts {
