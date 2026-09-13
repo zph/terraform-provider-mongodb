@@ -18,7 +18,9 @@ provider "mongodb" {
   features_enabled = ["mongodb_feature_compatibility_version"]
 }
 
-# Pin the cluster's featureCompatibilityVersion. Singleton (import ID "fcv").
+# Pin the cluster's featureCompatibilityVersion. Singleton: declare one per
+# cluster. Import is not supported; the first apply runs
+# setFeatureCompatibilityVersion with this version.
 #
 # Creating always proceeds. Once the resource exists, any change to version
 # is rejected at plan time until danger_mode = true (see the upgrade example),
