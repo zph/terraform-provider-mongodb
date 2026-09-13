@@ -154,53 +154,79 @@ Implementation: `mongodb/shard_discovery.go`.
 
 ## Examples
 
-Exhaustive standalone examples organized by capability. See [examples/README.md](examples/README.md) for full index.
+Standalone examples organized by capability. See [examples/README.md](examples/README.md) for the full index with descriptions. The attribute lists below are derived from the provider schema (`terraform providers schema -json`) matched against uncommented lines in each example; regenerate them when examples or schemas change.
 
 ### Provider Configuration (6 examples)
 
 | Example | Attributes Covered |
 |---|---|
-| `provider/basic` | host, port, username, password, auth_database |
-| `provider/ssl` | ssl, insecure_skip_verify, certificate |
-| `provider/env-vars` | MONGO_HOST, MONGO_PORT, MONGO_USR, MONGO_PWD, MONGODB_CERT, ALL_PROXY |
-| `provider/proxy` | proxy |
-| `provider/direct` | direct |
-| `provider/replica-set` | replica_set, retrywrites |
+| `provider/basic` | auth_database, host, password, port, username |
+| `provider/direct` | auth_database, direct, host, password, port, username |
+| `provider/env-vars` | auth_database |
+| `provider/proxy` | auth_database, host, password, port, proxy, username |
+| `provider/replica-set` | auth_database, host, password, port, replica_set, retrywrites, username |
+| `provider/ssl` | auth_database, certificate, host, insecure_skip_verify, password, port, ssl, username |
 
-### Resource Examples (11 examples)
+### Resource Examples (30 examples)
 
-| Example | Attributes Covered |
+| Example | Resources | Top-level Attributes Covered |
+|---|---|---|
+| `resources/balancer_config/all-settings` | mongodb_balancer_config | active_window_start, active_window_stop, chunk_size_mb, enabled, secondary_throttle, wait_for_delete |
+| `resources/balancer_config/disabled` | mongodb_balancer_config | enabled |
+| `resources/collection_balancing/chunk-size` | mongodb_collection_balancing | chunk_size_mb, enabled, namespace |
+| `resources/collection_balancing/disabled` | mongodb_collection_balancing | enabled, namespace |
+| `resources/db_role/basic` | mongodb_db_role | database, name, privilege |
+| `resources/db_role/cluster-privilege` | mongodb_db_role | database, name, privilege |
+| `resources/db_role/composite` | mongodb_db_role | database, inherited_role, name, privilege |
+| `resources/db_role/inherited` | mongodb_db_role | database, inherited_role, name, privilege |
+| `resources/db_user/basic` | mongodb_db_user | auth_database, name, password, role |
+| `resources/db_user/custom-role` | mongodb_db_role, mongodb_db_user | auth_database, database, name, password, privilege, role |
+| `resources/db_user/import` | mongodb_db_user | auth_database, name, password, role |
+| `resources/db_user/multiple-roles` | mongodb_db_user | auth_database, name, password, role |
+| `resources/feature_compatibility_version/basic` | mongodb_feature_compatibility_version | version |
+| `resources/feature_compatibility_version/upgrade` | mongodb_feature_compatibility_version | danger_mode, version |
+| `resources/original_user/basic` | mongodb_original_user | host, password, port, role, username |
+| `resources/original_user/tls` | mongodb_original_user | auth_database, certificate, host, insecure_skip_verify, port, replica_set, role, ssl, username |
+| `resources/profiler/basic` | mongodb_profiler | database, level, slowms |
+| `resources/profiler/multi-database` | mongodb_profiler | database, level, slowms |
+| `resources/server_parameter/basic` | mongodb_server_parameter | parameter, value |
+| `resources/server_parameter/ignore-read` | mongodb_server_parameter | ignore_read, parameter, value |
+| `resources/shard/basic` | mongodb_shard | hosts, shard_name |
+| `resources/shard/custom-timeout` | mongodb_shard | add_timeout_secs, hosts, remove_timeout_secs, shard_name |
+| `resources/shard/multi-shard` | mongodb_shard | hosts, remove_timeout_secs, shard_name |
+| `resources/shard_config/all-settings` | mongodb_shard_config | catch_up_timeout_millis, chaining_allowed, election_timeout_millis, heartbeat_interval_millis, heartbeat_timeout_secs, init_timeout_secs, member, oplog_size_mb, shard_name, timeouts |
+| `resources/shard_config/mongos-discovery` | mongodb_db_user, mongodb_shard_config | auth_database, chaining_allowed, election_timeout_millis, heartbeat_interval_millis, heartbeat_timeout_secs, name, password, role, shard_name |
+| `resources/shard_config/multi-shard` | mongodb_shard_config | chaining_allowed, election_timeout_millis, heartbeat_interval_millis, heartbeat_timeout_secs, shard_name |
+| `resources/shard_zone/basic` | mongodb_shard_zone | shard_name, zone |
+| `resources/shard_zone/multi-zone` | mongodb_shard_zone | shard_name, zone |
+| `resources/zone_key_range/basic` | mongodb_shard_zone, mongodb_zone_key_range | max, min, namespace, shard_name, zone |
+| `resources/zone_key_range/full-key-space` | mongodb_shard_zone, mongodb_zone_key_range | max, min, namespace, shard_name, zone |
+
+### Pattern Examples (5 examples)
+
+| Example | Resources Used |
 |---|---|
-| `resources/db_user/basic` | auth_database, name, password, role (single) |
-| `resources/db_user/multiple-roles` | role (multiple, cross-database) |
-| `resources/db_user/custom-role` | role referencing mongodb_db_role, depends_on |
-| `resources/db_user/import` | Import workflow (plaintext database.name ID) |
-| `resources/db_role/basic` | name, database, privilege (db/collection/actions) |
-| `resources/db_role/cluster-privilege` | privilege with cluster=true |
-| `resources/db_role/inherited` | inherited_role |
-| `resources/db_role/composite` | privilege + inherited_role + depends_on chain |
-| `resources/shard_config/all-settings` | All 5 shard_config attributes |
-| `resources/shard_config/multi-shard` | Provider aliases for multi-shard |
-| `resources/shard_config/mongos-discovery` | Mongos auto-discovery, host_override |
-| `resources/original_user` | Bootstrap admin user on no-auth instance |
-
-### Pattern Examples (3 examples)
-
-| Example | Demonstrates |
-|---|---|
-| `patterns/sharded-cluster` | mongos + 2 shards + roles + users + TLS |
-| `patterns/role-hierarchy` | 3-layer role inheritance: viewer -> editor -> admin |
-| `patterns/monitoring-user` | Least-privilege exporter role + user |
+| `patterns/add-replicaset-to-cluster` | mongodb_original_user (1), mongodb_shard (1), mongodb_shard_config (1), mongodb_shard_zone (1), mongodb_zone_key_range (1) |
+| `patterns/full-cluster-setup` | mongodb_balancer_config (1), mongodb_db_role (1), mongodb_db_user (1), mongodb_original_user (4), mongodb_shard (2), mongodb_shard_config (2), mongodb_shard_zone (2), mongodb_zone_key_range (2) |
+| `patterns/monitoring-user` | mongodb_db_role (1), mongodb_db_user (1) |
+| `patterns/role-hierarchy` | mongodb_db_role (3), mongodb_db_user (3) |
+| `patterns/sharded-cluster` | mongodb_db_role (2), mongodb_db_user (2), mongodb_shard_config (2) |
 
 ### Attribute Coverage
 
-Every provider attribute and resource attribute appears in at least one example:
-
-- **Provider:** host, port, username, password, auth_database, ssl, certificate, insecure_skip_verify, replica_set, retrywrites, direct, proxy
-- **mongodb_db_user:** auth_database, name, password, role.role, role.db
-- **mongodb_db_role:** name, database, privilege.db, privilege.collection, privilege.cluster, privilege.actions, inherited_role.role, inherited_role.db
-- **mongodb_shard_config:** shard_name, chaining_allowed, heartbeat_interval_millis, heartbeat_timeout_secs, election_timeout_millis, member.host, member.tags, member.priority, member.votes, member.hidden, member.arbiter_only, member.build_indexes, host_override
-- **mongodb_original_user:** host, port, username, password, auth_database, role.role, role.db, direct, ssl, certificate, insecure_skip_verify
+- **Provider:** auth_database, certificate, command_preview, direct, features_enabled, host, insecure_skip_verify, password, port, proxy, replica_set, retrywrites, ssl, username
+- **mongodb_balancer_config:** active_window_start, active_window_stop, chunk_size_mb, enabled, secondary_throttle, wait_for_delete
+- **mongodb_collection_balancing:** chunk_size_mb, enabled, namespace
+- **mongodb_db_role:** database, name, inherited_role, inherited_role.db, inherited_role.role, privilege, privilege.actions, privilege.cluster, privilege.collection, privilege.db
+- **mongodb_db_user:** auth_database, name, password, role, role.db, role.role
+- **mongodb_feature_compatibility_version:** danger_mode, version
+- **mongodb_original_user:** auth_database, certificate, host, insecure_skip_verify, password, port, replica_set, ssl, username, role, role.db, role.role
+- **mongodb_profiler:** database, level, slowms — not shown: `ratelimit` (honoured by Percona Server only; described in a comment in `profiler/multi-database`)
+- **mongodb_server_parameter:** ignore_read, parameter, value
+- **mongodb_shard:** add_timeout_secs, hosts, remove_timeout_secs, shard_name
+- **mongodb_shard_config:** catch_up_timeout_millis, chaining_allowed, election_timeout_millis, heartbeat_interval_millis, heartbeat_timeout_secs, init_timeout_secs, oplog_size_mb, shard_name, member, member.arbiter_only, member.build_indexes, member.hidden, member.host, member.priority, member.tags, member.votes, timeouts, timeouts.create, timeouts.update — not shown: `host_override` (conflicts with `oplog_size_mb`; shown commented out in `shard_config/mongos-discovery`)
+- **mongodb_shard_zone:** shard_name, zone
+- **mongodb_zone_key_range:** max, min, namespace, zone
 
 ### Cluster Configuration Audit Findings
 
@@ -208,7 +234,7 @@ Every provider attribute and resource attribute appears in at least one example:
 |---|---|---|---|
 | 1 | RESOLVED | `resource_shard_config.go` | Read now reads back settings and member config for drift detection. |
 | 2 | HIGH | `resource_shard_config.go:102-123` | Delete is a no-op (returns nil). Documented in shard_config.md. |
-| 3 | MED | `replica_set_types.go` | CatchUpTimeoutMillis in Settings type but not in resource schema |
+| 3 | RESOLVED | `resource_shard_config.go` | `catch_up_timeout_millis` is in the resource schema (default -1). |
 | 4 | RESOLVED | `resource_shard_config.go` | getShardClient now returns cleanup function; all CRUD methods defer cleanup(). |
 | 5 | MED | `resource_db_user.go:142`, `resource_db_role.go:179,202` | Wrong error variable in error messages (3 instances) |
 | 6 | LOW | `config.go:128` | MaxConnLifetime hardcoded to 10s |

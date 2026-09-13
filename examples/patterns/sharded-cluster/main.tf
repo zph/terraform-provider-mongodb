@@ -9,6 +9,8 @@ terraform {
 
 # Full sharded cluster management: mongos for users/roles, direct
 # connections to each shard primary for replica set configuration.
+# mongodb_shard_config is experimental, so the two shard providers opt in
+# with features_enabled (TERRAFORM_PROVIDER_MONGODB_ENABLE works too).
 
 # --- Provider: mongos router for user and role management ---
 provider "mongodb" {
@@ -23,28 +25,30 @@ provider "mongodb" {
 
 # --- Provider: shard01 primary (direct) ---
 provider "mongodb" {
-  alias         = "shard01"
-  host          = var.shard01_host
-  port          = var.shard_port
-  username      = "root"
-  password      = var.mongo_password
-  auth_database = "admin"
-  ssl           = true
-  certificate   = file(pathexpand(var.ca_cert_path))
-  direct        = true
+  alias            = "shard01"
+  host             = var.shard01_host
+  port             = var.shard_port
+  username         = "root"
+  password         = var.mongo_password
+  auth_database    = "admin"
+  ssl              = true
+  certificate      = file(pathexpand(var.ca_cert_path))
+  direct           = true
+  features_enabled = ["mongodb_shard_config"]
 }
 
 # --- Provider: shard02 primary (direct) ---
 provider "mongodb" {
-  alias         = "shard02"
-  host          = var.shard02_host
-  port          = var.shard_port
-  username      = "root"
-  password      = var.mongo_password
-  auth_database = "admin"
-  ssl           = true
-  certificate   = file(pathexpand(var.ca_cert_path))
-  direct        = true
+  alias            = "shard02"
+  host             = var.shard02_host
+  port             = var.shard_port
+  username         = "root"
+  password         = var.mongo_password
+  auth_database    = "admin"
+  ssl              = true
+  certificate      = file(pathexpand(var.ca_cert_path))
+  direct           = true
+  features_enabled = ["mongodb_shard_config"]
 }
 
 # --- Shard configurations ---

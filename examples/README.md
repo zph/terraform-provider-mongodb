@@ -37,7 +37,8 @@ Experimental resources (every resource below except `mongodb_db_user`, `mongodb_
 
 | Example | Description |
 |---|---|
-| [resources/original_user](resources/original_user) | Bootstrap the first admin user on a no-auth instance |
+| [resources/original_user/basic](resources/original_user/basic) | Bootstrap the first admin user on a no-auth instance |
+| [resources/original_user/tls](resources/original_user/tls) | Bootstrap over TLS with the password from the environment |
 
 ### mongodb_shard_config
 
@@ -111,7 +112,9 @@ Compositions combining multiple resources for real-world scenarios.
 
 | Example | Description |
 |---|---|
+| [patterns/full-cluster-setup](patterns/full-cluster-setup) | End to end from empty hosts: bootstrap users, replica sets, shards, balancer, zones, roles, users |
 | [patterns/sharded-cluster](patterns/sharded-cluster) | Full sharded cluster: mongos + 2 shards, roles, users |
+| [patterns/add-replicaset-to-cluster](patterns/add-replicaset-to-cluster) | Day-2 scale-out: bootstrap a new replica set and register it as a shard |
 | [patterns/role-hierarchy](patterns/role-hierarchy) | Layered role hierarchy: viewer -> editor -> admin |
 | [patterns/monitoring-user](patterns/monitoring-user) | Least-privilege Prometheus/Datadog exporter setup |
 

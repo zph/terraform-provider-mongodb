@@ -15,6 +15,10 @@ provider "mongodb" {
 
   host = "localhost"
   port = "27019"
+
+  # mongodb_shard_config is experimental; the env var
+  # TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config works as well.
+  features_enabled = ["mongodb_shard_config"]
 }
 
 resource "mongodb_shard_config" "shard01" {
