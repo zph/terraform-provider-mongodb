@@ -103,6 +103,7 @@ Spec: `docs/specs/integration-test-requirements.md` (INTEG-001 through INTEG-030
 | `test-integration` | Run integration tests (requires Docker) |
 | `test-plan` | Build + terraform plan against examples |
 | `test-shard-plan` | Build + terraform plan for shard_config |
+| `test-examples-plan` | Build + terraform plan every example directory, offline |
 | `lint` | Run all prek hooks on all files |
 | `prek` | Alias for lint |
 | `prek-install` | Install prek as git pre-commit hook |

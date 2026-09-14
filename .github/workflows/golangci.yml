@@ -55,4 +55,4 @@ jobs:
       - name: Golden file tests
         run: make test-golden
       - name: Terraform plan smoke tests
-        run: make test-plan test-shard-plan
+        run: make test-plan test-shard-plan test-examples-plan

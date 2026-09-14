@@ -10,7 +10,7 @@ default: help
 # Supported MongoDB versions for integration test matrix
 MONGO_VERSIONS := 3.6 4.4 7
 
-.PHONY: help setup dev-overrides build install re-install lint lint-noforceenew prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
+.PHONY: help setup dev-overrides build install re-install lint lint-noforceenew prek prek-install test test-all test-unit test-integration test-sharded-integration test-golden test-golden-update test-plan test-shard-plan test-examples-plan test-integration-matrix test-integration-all test-ci run cdktn-build cdktn-test cdktn-test-golden tag release
 
 OS_ARCH=linux_amd64
 #
@@ -85,9 +85,9 @@ prek: lint ## Alias for lint
 prek-install: ## Install prek git hooks (pre-commit + pre-push)
 	prek install -t pre-commit -t pre-push
 
-test: test-unit cdktn-test test-plan test-shard-plan ## Run all tests (unit + cdktn + plan)
+test: test-unit cdktn-test test-plan test-shard-plan test-examples-plan ## Run all tests (unit + cdktn + plan)
 
-test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
+test-all: test-unit cdktn-test test-integration test-sharded-integration test-golden test-plan test-shard-plan test-examples-plan ## Run every test suite (unit, cdktn, integration, sharded, golden, plan)
 
 test-ci: test-unit cdktn-test test-integration-matrix test-sharded-integration test-golden ## Unit + cdktn + integration matrix + sharded + golden tests
 
@@ -112,6 +112,32 @@ test-plan: re-install ## Build provider and run terraform plan against examples
 test-shard-plan: export TERRAFORM_PROVIDER_MONGODB_ENABLE=mongodb_shard_config,mongodb_shard
 test-shard-plan: re-install ## Build provider and run terraform plan for shard_config example
 	cd $(PROVIDER_ROOT)/examples/modules/shard_config/basic && rm -rf .terraform .terraform.lock.hcl && make init && terraform plan
+
+# Plans every example directory offline: the provider never connects during
+# plan, so this catches schema drift and missing features_enabled opt-ins
+# without a MongoDB. dev_overrides go in a throwaway CLI config so the user's
+# ~/.terraformrc is untouched; string variables get placeholder values.
+test-examples-plan: build ## Build provider and terraform plan every example directory (no MongoDB needed)
+	@set -eu; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	printf 'provider_installation {\n  dev_overrides {\n    "%s/%s" = "%s"\n  }\n  direct {}\n}\n' \
+		"$(NAMESPACE)" "$(NAME)" "$(TERRAFORM_PLUGINS_DIRECTORY)" > "$$tmp/terraformrc"; \
+	printf '%s\n' '-----BEGIN CERTIFICATE-----' 'MIIB' '-----END CERTIFICATE-----' > "$$tmp/ca.pem"; \
+	export TF_CLI_CONFIG_FILE="$$tmp/terraformrc" TF_IN_AUTOMATION=1; \
+	for v in $$(find $(PROVIDER_ROOT)/examples -name main.tf -exec awk \
+		'/^variable "/ { gsub(/"/, "", $$2); name = $$2 } /^[[:space:]]*type[[:space:]]*=/ { if ($$3 == "string") print name }' {} + | sort -u); do \
+		case "$$v" in *cert*) export "TF_VAR_$$v=$$tmp/ca.pem" ;; *) export "TF_VAR_$$v=placeholder" ;; esac; \
+	done; \
+	fail=0; \
+	for d in $$(find $(PROVIDER_ROOT)/examples -name main.tf -exec dirname {} \; | sort); do \
+		rel="$${d#$(PROVIDER_ROOT)/}"; \
+		if out=$$(terraform -chdir="$$d" plan -input=false -no-color 2>&1); then \
+			echo "ok    $$rel"; \
+		else \
+			fail=$$((fail + 1)); echo "FAIL  $$rel"; echo "$$out" | sed -n '/^Error:/,$$p' | sed 's/^/      /'; \
+		fi; \
+	done; \
+	[ "$$fail" -eq 0 ] || { echo "$$fail of the example directories failed to plan"; exit 1; }
 
 run: install ## Alias for install
 
