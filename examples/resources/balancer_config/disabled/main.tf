@@ -18,7 +18,8 @@ provider "mongodb" {
   features_enabled = ["mongodb_balancer_config"]
 }
 
-# Singleton: one resource per cluster (import ID "balancer").
+# Singleton: one resource per cluster. Import is not supported; the first
+# apply writes every configured setting to the cluster.
 # enabled = false runs balancerStop. Destroy re-enables the balancer and
 # clears the window, throttle, wait_for_delete and chunk size.
 resource "mongodb_balancer_config" "this" {
