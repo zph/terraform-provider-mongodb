@@ -1047,3 +1047,40 @@ func TestIntegration_Read_VanishedRole(t *testing.T) {
 
 // Ensure testcontainers import is used (compile guard).
 var _ testcontainers.Container = (*testcontainers.DockerContainer)(nil)
+
+// DANGER-026: MongoDB reports a role's actions in its own order, so a plan
+// against the state Read wrote after apply must be a no-op.
+func TestIntegration_DbRole_ActionOrderRoundTrip(t *testing.T) {
+	client := newTestClient(t)
+	roleName := "integorderrole"
+	t.Cleanup(func() { dropRoleSafe(client, roleName, testAdminDB) })
+
+	raw := map[string]interface{}{
+		"database": testAdminDB,
+		"name":     roleName,
+		"privilege": []interface{}{map[string]interface{}{
+			"db":         "testdb",
+			"collection": "",
+			"actions":    []interface{}{"listIndexes", "listCollections", "dbStats", "dbHash", "collStats", "find"},
+		}},
+	}
+	res := resourceDatabaseRole()
+	data := schema.TestResourceDataRaw(t, res.Schema, raw)
+	if diags := resourceDatabaseRoleCreate(context.Background(), data, newTestConfig()); diags.HasError() {
+		t.Fatalf("Create returned error: %+v", diags)
+	}
+
+	result, err := getRole(client, roleName, testAdminDB)
+	if err != nil || len(result.Roles) != 1 || len(result.Roles[0].Privileges) != 1 {
+		t.Fatalf("getRole: err=%v result=%+v", err, result)
+	}
+	t.Logf("server reports actions as %v", result.Roles[0].Privileges[0].Actions)
+
+	diff, err := res.Diff(context.Background(), data.State(), terraform.NewResourceConfigRaw(raw), newTestConfig())
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if diff != nil {
+		t.Fatalf("plan after apply must be a no-op, got attributes: %v", diff.Attributes)
+	}
+}

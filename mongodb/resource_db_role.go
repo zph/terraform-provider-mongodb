@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -53,8 +54,10 @@ func resourceDatabaseRole() *schema.Resource {
 							Type:     schema.TypeBool,
 							Optional: true,
 						},
+						// DANGER-026: MongoDB reports actions in its own order, so an
+						// ordered list would diff on every plan after apply.
 						"actions": {
-							Type:     schema.TypeList,
+							Type:     schema.TypeSet,
 							Optional: true,
 							Elem: &schema.Schema{
 								Type: schema.TypeString,
@@ -93,7 +96,6 @@ func resourceDatabaseRoleCreate(ctx context.Context, data *schema.ResourceData, 
 	var role = data.Get("name").(string)
 	var database = data.Get("database").(string)
 	var roleList []Role
-	var privileges []PrivilegeDto
 
 	privilege := data.Get("privilege").(*schema.Set).List()
 	roles := data.Get("inherited_role").(*schema.Set).List()
@@ -102,10 +104,7 @@ func resourceDatabaseRoleCreate(ctx context.Context, data *schema.ResourceData, 
 	if roleMapErr != nil {
 		return diag.Errorf("Error decoding map : %s ", roleMapErr)
 	}
-	privMapErr := mapstructure.Decode(privilege, &privileges)
-	if privMapErr != nil {
-		return diag.Errorf("Error decoding map : %s ", privMapErr)
-	}
+	privileges := expandPrivileges(privilege)
 
 	err := createRole(client, role, roleList, privileges, database)
 
@@ -153,7 +152,6 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 	}
 
 	var roleList []Role
-	var privileges []PrivilegeDto
 
 	privilege := data.Get("privilege").(*schema.Set).List()
 	roles := data.Get("inherited_role").(*schema.Set).List()
@@ -162,10 +160,7 @@ func resourceDatabaseRoleUpdate(ctx context.Context, data *schema.ResourceData, 
 	if roleMapErr != nil {
 		return diag.Errorf("Error decoding map : %s ", roleMapErr)
 	}
-	privMapErr := mapstructure.Decode(privilege, &privileges)
-	if privMapErr != nil {
-		return diag.Errorf("Error decoding map : %s ", privMapErr)
-	}
+	privileges := expandPrivileges(privilege)
 
 	if err := updateRole(client, roleName, roleList, privileges, database); err != nil {
 		return diag.Errorf("Could not update the role : %s ", err)
@@ -247,4 +242,48 @@ func resourceDatabaseRoleRead(ctx context.Context, data *schema.ResourceData, i 
 // IDFORMAT-005
 func resourceDatabaseRoleParseId(id string) (string, string, error) {
 	return parseResourceId(id)
+}
+
+// expandPrivileges converts privilege set elements into PrivilegeDto values.
+// MongoDB treats a privilege's actions as an unordered set and reports them in
+// its own canonical order, so actions is a set in the schema; sorting keeps the
+// createRole/updateRole commands and the command preview stable. DANGER-026
+func expandPrivileges(raw []interface{}) []PrivilegeDto {
+	privileges := make([]PrivilegeDto, 0, len(raw))
+	for _, p := range raw {
+		m, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		dto := PrivilegeDto{Actions: expandActions(m["actions"])}
+		if v, ok := m["db"].(string); ok {
+			dto.Db = v
+		}
+		if v, ok := m["collection"].(string); ok {
+			dto.Collection = v
+		}
+		if v, ok := m["cluster"].(bool); ok {
+			dto.Cluster = v
+		}
+		privileges = append(privileges, dto)
+	}
+	return privileges
+}
+
+func expandActions(raw interface{}) []string {
+	var items []interface{}
+	switch v := raw.(type) {
+	case *schema.Set:
+		items = v.List()
+	case []interface{}:
+		items = v
+	}
+	actions := make([]string, 0, len(items))
+	for _, a := range items {
+		if s, ok := a.(string); ok {
+			actions = append(actions, s)
+		}
+	}
+	sort.Strings(actions)
+	return actions
 }

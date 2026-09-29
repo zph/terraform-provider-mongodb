@@ -119,3 +119,7 @@ time, so the add line says the member is added unless it is already one.
 
 PREVIEW-024: WHEN `mongodb_original_user` is previewed for Create, the
 `planned_commands` SHALL show `createUser` with `pwd: [REDACTED]`.
+
+PREVIEW-025: WHEN `mongodb_db_role` is previewed, each privilege's actions
+SHALL be rendered in sorted order, independent of their order in
+configuration, so the preview is stable across plans (DANGER-026).

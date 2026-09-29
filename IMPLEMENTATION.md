@@ -42,14 +42,14 @@ All pure Go tests, no MongoDB required. Run with `make test-unit`.
 | `helpers_test.go` | 4 | validateDiagFunc warning/error propagation |
 | `provider_test.go` | 3 | Schema validation, resource map |
 | `resource_db_user_test.go` | 4 | ID parsing |
-| `resource_db_role_test.go` | 2 | ID parsing |
+| `resource_db_role_test.go` | 4 | ID parsing, privilege expansion, action order diff suppression |
 | `resource_shard_config_test.go` | 36 | ID parsing, MergeMembers, RSConfigMembersToState (block order), schema validation, member defaults, arbiter priority, duplicate hosts, oplog fan-out helpers |
 | `shard_members_test.go` | 25 | PartitionMemberOverrides, HoldPromotions, NextMemberID, BuildConfigMember, AddMembersSequentially staging/promotion/rollback/pending, PromoteMembersSequentially, ReconcileMembers, CheckAddTarget, PreflightAddTargets, observeMember, WaitForMemberState |
 | `shard_ready_test.go` | 16 | IsConnectionError (incl. a real refused dial), classifyAuthProbe, WaitForShardClient retry/probe/deadline paths, WaitForAddTargets, timeouts schema |
 | `shard_discovery_test.go` | 22 | ParseShardHost, FindShardByName, SplitHostPort, BuildShardClientConfig, DetectConnectionType, ConnectionType.String(), host_override schema |
 | `resource_original_user_test.go` | 11 | Schema validation, ID parsing, sensitive fields |
 
-Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-056), SHARD-011, `docs/specs/shard-discovery-requirements.md` (DISC-001 through DISC-010)
+Spec: `docs/specs/unit-test-requirements.md` (TEST-001 through TEST-058), SHARD-011, `docs/specs/shard-discovery-requirements.md` (DISC-001 through DISC-010)
 
 ### Integration Tests (21 tests)
 

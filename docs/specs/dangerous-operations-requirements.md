@@ -146,3 +146,11 @@ just-created user.
 DANGER-025: `mongodb_db_role` Read SHALL apply the same vanished-entity
 behavior as DANGER-024 to roles, so composite user+role stacks recover from
 out-of-band drops without manual state surgery.
+
+DANGER-026: `mongodb_db_role` SHALL treat `privilege.actions` as an unordered
+set. MongoDB stores a privilege's actions as a set and `rolesInfo` reports
+them in the server's own order, not the order `createRole` received, so an
+ordered list makes every plan after apply propose removing and re-adding each
+privilege and re-issues an identical `updateRole` on every apply. Create,
+Update, and the command preview SHALL sort the actions before sending or
+rendering them so the command is stable regardless of configuration order.
