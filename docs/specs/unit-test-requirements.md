@@ -805,6 +805,32 @@ Create a `ClientConfig` with known values, assert each field matches.
 
 ---
 
+**TEST-057:** Event Driven
+
+**Requirement:**
+When `expandPrivileges` receives privilege set elements whose `actions` is a `*schema.Set`, the Unit Test Suite SHALL return one `PrivilegeDto` per element with `db`, `collection`, and `cluster` copied and `Actions` sorted alphabetically.
+
+**Rationale:**
+`actions` is a set (DANGER-026); Create, Update, and the command preview need a deterministic order for the command they send or render.
+
+**Verification:**
+Build a `ResourceData` with a collection privilege and a cluster privilege whose actions are unsorted, call `expandPrivileges` on the set list, assert each DTO's fields and sorted actions.
+
+---
+
+**TEST-058:** Unwanted Behaviour
+
+**Requirement:**
+When state holds a privilege whose actions are in MongoDB's order and the configuration lists the same actions in a different order with `cluster` unset, the Unit Test Suite SHALL verify that `Resource.Diff` returns no diff.
+
+**Rationale:**
+This is the perpetual-diff regression: with an ordered list, every plan after apply proposed removing and re-adding the privilege (DANGER-026).
+
+**Verification:**
+Write state through `ResourceData.Set` exactly as Read does (actions as `[]string`), build a `ResourceConfig` with reordered actions, call `resourceDatabaseRole().Diff`, assert the returned diff is nil.
+
+---
+
 ### Original User Resource EARS (Behavioral)
 
 **Source file:** `mongodb/resource_original_user.go`
@@ -874,7 +900,7 @@ Cleanup MUST remove the user from MongoDB.
 | Test File | Requirements | Source File |
 |---|---|---|
 | `mongodb/resource_db_user_test.go` | TEST-001 through TEST-004 | `mongodb/resource_db_user.go` |
-| `mongodb/resource_db_role_test.go` | TEST-005, TEST-006 | `mongodb/resource_db_role.go` |
+| `mongodb/resource_db_role_test.go` | TEST-005, TEST-006, TEST-057, TEST-058 | `mongodb/resource_db_role.go` |
 | `mongodb/resource_shard_config_test.go` | TEST-007, TEST-008 | `mongodb/resource_shard_config.go` |
 | `mongodb/config_test.go` | TEST-009 through TEST-016, TEST-033, TEST-034, TEST-037 through TEST-045 | `mongodb/config.go` |
 | `mongodb/replica_set_types_test.go` | TEST-017 through TEST-025, TEST-035, TEST-036 | `mongodb/replica_set_types.go` |

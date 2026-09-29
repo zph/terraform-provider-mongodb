@@ -516,25 +516,17 @@ func extractPreviewRoles(roles []interface{}) []previewRole {
 }
 
 // extractPreviewPrivileges converts a schema Set list to previewPrivilege slice.
+// It shares expandPrivileges with Create/Update so the preview renders the
+// same sorted actions that will be sent. // PREVIEW-025
 func extractPreviewPrivileges(privs []interface{}) []previewPrivilege {
-	result := make([]previewPrivilege, 0, len(privs))
-	for _, p := range privs {
-		m := p.(map[string]interface{})
-		var actions []string
-		if actionsRaw, ok := m["actions"].([]interface{}); ok {
-			for _, a := range actionsRaw {
-				actions = append(actions, a.(string))
-			}
-		}
-		cluster := false
-		if c, ok := m["cluster"].(bool); ok {
-			cluster = c
-		}
+	dtos := expandPrivileges(privs)
+	result := make([]previewPrivilege, 0, len(dtos))
+	for _, p := range dtos {
 		result = append(result, previewPrivilege{
-			DB:         m["db"].(string),
-			Collection: m["collection"].(string),
-			Cluster:    cluster,
-			Actions:    actions,
+			DB:         p.Db,
+			Collection: p.Collection,
+			Cluster:    p.Cluster,
+			Actions:    p.Actions,
 		})
 	}
 	return result

@@ -128,7 +128,7 @@ resource "mongodb_db_role" "admin_composite" {
 
 Each privilege block grants a set of actions. Up to 20 privilege blocks are supported.
 
-* `actions` - (Required) List of privilege actions. See [Custom Role Actions](https://docs.mongodb.com/manual/reference/privilege-actions/).
+* `actions` - (Required) Set of privilege actions. See [Custom Role Actions](https://docs.mongodb.com/manual/reference/privilege-actions/). Order is not significant: MongoDB stores a privilege's actions as a set and reports them in its own order, so reordering them in configuration does not produce a diff.
 * `db` - (Optional) Database on which the actions are granted.
 * `collection` - (Optional) Collection on which the actions are granted. An empty string (`""`) grants actions on all collections in the database.
 * `cluster` - (Optional) When `true`, the privilege applies to cluster-wide operations. `db` and `collection` are ignored by MongoDB when this is set.

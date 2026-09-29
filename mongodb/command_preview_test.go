@@ -1,6 +1,7 @@
 package mongodb
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -375,5 +376,30 @@ func TestZoneKeyRangePreviewBuild(t *testing.T) {
 	}
 	if !strings.Contains(got, `"US-East"`) {
 		t.Errorf("should contain zone name, got: %s", got)
+	}
+}
+
+// PREVIEW-T26: PREVIEW-025 — db_role preview reads actions from the set and sorts them
+func TestDbRolePreview_ActionsFromSetAreSorted(t *testing.T) {
+	res := resourceDatabaseRole()
+	data := schema.TestResourceDataRaw(t, res.Schema, map[string]interface{}{
+		"name": "customRole",
+		"privilege": []interface{}{map[string]interface{}{
+			"db":         "mydb",
+			"collection": "users",
+			"actions":    []interface{}{"update", "find", "insert"},
+		}},
+	})
+	privs := extractPreviewPrivileges(data.Get("privilege").(*schema.Set).List())
+	if len(privs) != 1 {
+		t.Fatalf("expected 1 privilege, got %d", len(privs))
+	}
+	want := []string{"find", "insert", "update"}
+	if !reflect.DeepEqual(privs[0].Actions, want) {
+		t.Errorf("actions: got %v, want %v", privs[0].Actions, want)
+	}
+	got := buildDbRolePreview("admin", "customRole", privs, nil, true)
+	if !strings.Contains(got, `actions: ["find", "insert", "update"]`) {
+		t.Errorf("preview should list sorted actions, got: %s", got)
 	}
 }
