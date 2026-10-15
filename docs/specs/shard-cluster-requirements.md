@@ -32,6 +32,12 @@ read back state via `listShards`.
 **CLUS-005** (Unwanted Behaviour): IF the shard is not found in `listShards`,
 THEN the resource SHALL clear the resource ID to remove it from state.
 
+**CLUS-015** (State Driven): WHILE state holds no `hosts`, as after an import,
+Read SHALL set `hosts` from the matching shard's `host` field in `listShards`,
+in the order reported. Once state holds hosts, Read SHALL leave them
+unchanged: `hosts` is an identity field (CLUS-007), and rewriting it from the
+live set would turn every membership change into a plan error.
+
 ## Delete (removeShard)
 
 **CLUS-006** (Event Driven): WHEN Delete is called, the resource SHALL run
@@ -73,3 +79,8 @@ before `add_timeout_secs`, the resource SHALL return the last error.
 
 **CLUS-014** (Optional Feature): WHERE `add_timeout_secs` is set, the
 resource SHALL use the specified value as the addShard retry timeout.
+
+**CLUS-016** (Ubiquitous): A configuration that lists the same `hosts` as
+state in another order SHALL produce neither a diff nor the CLUS-007 error.
+The order carries no meaning for `addShard`, and an imported shard records
+the order mongos reports, which need not match the configuration.

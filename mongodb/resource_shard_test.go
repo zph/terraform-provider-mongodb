@@ -1,10 +1,12 @@
 package mongodb
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -131,5 +133,79 @@ func TestShardSchema_RemoveTimeoutSecs(t *testing.T) {
 	}
 	if field.Default != DefaultRemoveTimeoutSecs {
 		t.Errorf("remove_timeout_secs default: want %d, got %v", DefaultRemoveTimeoutSecs, field.Default)
+	}
+}
+
+// CLUS-016: hosts carries a diff suppressor for reorderings
+func TestShardSchema_HostsSuppressesReorder(t *testing.T) {
+	field := resourceShard().Schema["hosts"]
+	if field.DiffSuppressFunc == nil {
+		t.Fatal("hosts should have a DiffSuppressFunc")
+	}
+}
+
+// CLUS-016: the same hosts in another order are not a change
+func TestSameHostSet(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{"same order", []string{"a:1", "b:1"}, []string{"a:1", "b:1"}, true},
+		{"reordered", []string{"a:1", "b:1", "c:1"}, []string{"c:1", "a:1", "b:1"}, true},
+		{"both empty", nil, []string{}, true},
+		{"different host", []string{"a:1", "b:1"}, []string{"a:1", "c:1"}, false},
+		{"one missing", []string{"a:1", "b:1"}, []string{"a:1"}, false},
+		{"state empty on import", nil, []string{"a:1"}, false},
+		{"duplicate differs", []string{"a:1", "a:1"}, []string{"a:1", "b:1"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameHostSet(tc.a, tc.b); got != tc.want {
+				t.Errorf("sameHostSet(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+// CLUS-016: suppressHostsReorder reads the whole list, not the one element
+func TestSuppressHostsReorder(t *testing.T) {
+	res := resourceShard()
+	prior := schema.TestResourceDataRaw(t, res.Schema, map[string]interface{}{
+		"shard_name": "rs0",
+		"hosts":      []interface{}{"a:27017", "b:27017"},
+	})
+	prior.SetId("rs0")
+
+	reordered := map[string]interface{}{
+		"shard_name": "rs0",
+		"hosts":      []interface{}{"b:27017", "a:27017"},
+	}
+	diff, err := res.Diff(context.Background(), prior.State(), terraform.NewResourceConfigRaw(reordered), nil)
+	if err != nil {
+		t.Fatalf("Diff returned error: %v", err)
+	}
+	if diff != nil && len(diff.Attributes) > 0 {
+		t.Errorf("expected no diff for reordered hosts, got %v", diff.Attributes)
+	}
+
+	changed := map[string]interface{}{
+		"shard_name": "rs0",
+		"hosts":      []interface{}{"a:27017", "c:27017"},
+	}
+	_, err = res.Diff(context.Background(), prior.State(), terraform.NewResourceConfigRaw(changed), nil)
+	if err == nil {
+		t.Fatal("expected the hosts change to be blocked at plan time")
+	}
+}
+
+// CLUS-015: stringList tolerates a nil list and non-string elements
+func TestStringList(t *testing.T) {
+	if got := stringList(nil); len(got) != 0 {
+		t.Errorf("expected empty for nil, got %v", got)
+	}
+	got := stringList([]interface{}{"a:1", nil, "b:1"})
+	if len(got) != 2 || got[0] != "a:1" || got[1] != "b:1" {
+		t.Errorf("unexpected result %v", got)
 	}
 }

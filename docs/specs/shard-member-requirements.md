@@ -244,6 +244,16 @@ indexes before any command is sent. Otherwise the second block would merge
 twice or, for a new host, be added a second time and rejected by the server
 after the first add.
 
+## Import
+
+**SHARD-030** (Event Driven): WHEN the resource is imported, it SHALL set
+`shard_name` from the import ID, read the live configuration, and record
+every member in state as a managed member, in the server's order. Read keeps
+only the members already in state (SHARD-007), so without this seed an import
+would record none and the first plan would show every `member` block as an
+add. IF the replica set name the server reports differs from the import ID,
+THEN the import SHALL fail rather than let Read rename the resource.
+
 ## Initialization
 
 The initialization flow hands over to this reconciliation after

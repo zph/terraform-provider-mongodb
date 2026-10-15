@@ -106,11 +106,13 @@ MongoDB shards can be imported using the shard name:
 $ terraform import mongodb_shard.shard01 shard01
 ```
 
-Import runs `listShards` to read back the shard state. The shard must already exist in the cluster.
+Import runs `listShards` to read back the shard state and the `hosts` list, in the order mongos reports them. The shard must already exist in the cluster.
+
+After import, `hosts` is only ever read from state. The provider does not rewrite it from the live set, so a member added or removed with `mongodb_shard_config` does not show up as a change here. Listing the same hosts in a different order is not a change either.
 
 ## Known Limitations
 
-* **Immutable identity fields:** `shard_name` and `hosts` cannot be changed after creation. Attempts to change either are blocked at plan time. To re-register a shard under a different name or with different hosts, destroy and re-create the resource.
+* **Immutable identity fields:** `shard_name` and `hosts` cannot be changed after creation. Attempts to change either are blocked at plan time; reordering `hosts` is allowed. To re-register a shard under a different name or with different hosts, destroy and re-create the resource.
 * **Draining can be slow:** The `removeShard` operation drains data from the shard, which can take a long time for large datasets. Adjust `remove_timeout_secs` accordingly.
 * **Replica set must be pre-initialized:** The shard's replica set must already be initialized before using this resource. Use [`mongodb_shard_config`](shard_config.md) with `member` blocks to initialize replica sets, or initialize them manually before running `terraform apply`.
 * **Single mongos connection:** The provider connects to a single mongos instance. If that mongos is unavailable, all shard operations will fail.

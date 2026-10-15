@@ -832,6 +832,39 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 	return nil
 }
 
+// Import seeds state from the import ID, which is the shard name, and from
+// the live configuration: every member becomes a managed member. Read only
+// records the members already in state (SHARD-007), so without this seed an
+// import would record none, and the first plan would show every member block
+// as an add. SHARD-030
+func (r *ResourceShardConfig) Import(ctx context.Context, data *schema.ResourceData, i interface{}) ([]*schema.ResourceData, error) {
+	if err := data.Set("shard_name", data.Id()); err != nil {
+		return nil, err
+	}
+	client, cleanup, err := r.getShardClient(ctx, data, i)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	config, err := GetReplSetConfig(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	if config.ID != data.Id() {
+		return nil, fmt.Errorf("import ID %q does not match the replica set name %q reported by the server", data.Id(), config.ID)
+	}
+
+	hosts := make([]string, 0, len(config.Members))
+	for _, m := range config.Members {
+		hosts = append(hosts, m.Host)
+	}
+	if err := data.Set("member", RSConfigMembersToState(config.Members, hosts)); err != nil {
+		return nil, err
+	}
+	return []*schema.ResourceData{data}, nil
+}
+
 func (r *ResourceShardConfig) Delete(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
 	client, cleanup, err := r.getShardClient(ctx, data, i)
 	if err != nil {
@@ -927,7 +960,7 @@ func resourceShardConfig() *schema.Resource {
 		UpdateContext: RShardConfig.Update,
 		DeleteContext: RShardConfig.Delete,
 		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
+			StateContext: RShardConfig.Import,
 		},
 		// GATE-005: require feature opt-in
 		// PREVIEW-022, PREVIEW-023: command preview

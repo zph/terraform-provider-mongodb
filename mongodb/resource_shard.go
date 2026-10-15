@@ -53,7 +53,7 @@ func resourceShard() *schema.Resource {
 		CustomizeDiff: customdiff.All(
 			requireFeature("mongodb_shard"),
 			blockFieldChange("shard_name"),
-			blockFieldChange("hosts"),
+			blockHostSetChange,
 			previewCommands(shardCommandPreview),
 		),
 		Schema: map[string]*schema.Schema{
@@ -66,13 +66,15 @@ func resourceShard() *schema.Resource {
 				Description: "The replica set name of the shard to add.",
 			},
 			// CLUS-001, DANGER-016: hosts immutable via CustomizeDiff
+			// CLUS-016: a reordering of the same hosts is not a change
 			"hosts": {
 				Type:     schema.TypeList,
 				Required: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
-				Description: "List of host:port addresses for the shard replica set members.",
+				DiffSuppressFunc: suppressHostsReorder,
+				Description:      "List of host:port addresses for the shard replica set members.",
 			},
 			// CLUS-001: state Computed
 			"state": {
@@ -108,11 +110,7 @@ func (r *ResourceShard) Create(ctx context.Context, data *schema.ResourceData, i
 	defer func() { _ = client.Disconnect(ctx) }()
 
 	shardName := data.Get("shard_name").(string)
-	hostsRaw := data.Get("hosts").([]interface{})
-	hosts := make([]string, len(hostsRaw))
-	for i, h := range hostsRaw {
-		hosts[i] = h.(string)
-	}
+	hosts := stringList(data.Get("hosts"))
 
 	connStr := BuildShardConnectionString(shardName, hosts)
 
@@ -199,6 +197,20 @@ func (r *ResourceShard) Read(ctx context.Context, data *schema.ResourceData, i i
 			if err := data.Set("shard_name", s.ID); err != nil {
 				return diag.FromErr(err)
 			}
+			// CLUS-015: an imported shard has no hosts in state yet, so take
+			// them from listShards. Once state holds hosts they are left
+			// alone: hosts is an identity field (CLUS-007), and rewriting it
+			// from the live set would turn every membership change into a
+			// plan error.
+			if len(stringList(data.Get("hosts"))) == 0 {
+				_, hosts, err := ParseShardHost(s.Host)
+				if err != nil {
+					return diag.FromErr(err)
+				}
+				if err := data.Set("hosts", hosts); err != nil {
+					return diag.FromErr(err)
+				}
+			}
 			return nil
 		}
 	}
@@ -209,6 +221,61 @@ func (r *ResourceShard) Read(ctx context.Context, data *schema.ResourceData, i i
 	})
 	data.SetId("")
 	return nil
+}
+
+// blockHostSetChange is blockFieldChange for hosts, where a reordering of
+// the same hosts is not a change. The guard compares the configuration with
+// state directly, so suppressHostsReorder alone would not let a reordering
+// through. CLUS-007, CLUS-016
+func blockHostSetChange(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+	if d.Id() == "" {
+		return nil
+	}
+	oldRaw, newRaw := d.GetChange("hosts")
+	if sameHostSet(stringList(oldRaw), stringList(newRaw)) {
+		return nil
+	}
+	return immutableFieldError("hosts")
+}
+
+// suppressHostsReorder hides the diff on hosts when the configuration lists
+// the same hosts as state in another order. The order carries no meaning for
+// addShard, and an imported shard records the order mongos reports, which
+// need not match the configuration. CLUS-016
+func suppressHostsReorder(_, _, _ string, data *schema.ResourceData) bool {
+	oldRaw, newRaw := data.GetChange("hosts")
+	return sameHostSet(stringList(oldRaw), stringList(newRaw))
+}
+
+// sameHostSet reports whether a and b hold the same hosts with the same
+// multiplicity, ignoring order.
+func sameHostSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, h := range a {
+		counts[h]++
+	}
+	for _, h := range b {
+		if counts[h] == 0 {
+			return false
+		}
+		counts[h]--
+	}
+	return true
+}
+
+// stringList converts a TypeList of strings as read from ResourceData.
+func stringList(raw interface{}) []string {
+	items, _ := raw.([]interface{})
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Update handles changes to client-side-only fields (e.g. remove_timeout_secs).

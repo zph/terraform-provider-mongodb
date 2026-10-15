@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/go-connections/nat"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -617,5 +618,60 @@ func TestIntegration_ShardConfigUpdate_WaitsForUnreachableMemberUntilDeadline(t 
 	}
 	if data.Id() != "" {
 		t.Errorf("nothing may be recorded in state when the wait fails, got id %q", data.Id())
+	}
+}
+
+// SHARD-030: Import records every live member as managed, so the Read that
+// follows keeps them all and the first plan has nothing to add.
+func TestIntegration_ShardConfigImport_ReadsAllMembers(t *testing.T) {
+	ensureMemberAddCluster(t)
+	ctx := context.Background()
+	client := newMemberAddSeedClient(t)
+	ensureMemberAddClusterGrown(ctx, t, client)
+
+	data := resourceShardConfig().Data(&terraform.InstanceState{ID: memberAddRSName})
+	imported, err := RShardConfig.Import(ctx, data, memberAddProviderConf())
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(imported) != 1 {
+		t.Fatalf("Import returned %d states, want 1", len(imported))
+	}
+	data = resourceShardConfig().Data(imported[0].State())
+	if diags := RShardConfig.Read(ctx, data, memberAddProviderConf()); diags.HasError() {
+		t.Fatalf("Read returned error: %+v", diags)
+	}
+
+	if got := data.Get("shard_name").(string); got != memberAddRSName {
+		t.Errorf("shard_name = %q, want %q", got, memberAddRSName)
+	}
+	members := data.Get("member").([]interface{})
+	if len(members) != 3 {
+		t.Fatalf("got %d members in state, want 3: %v", len(members), members)
+	}
+	for i, raw := range members {
+		m := raw.(map[string]interface{})
+		if m["host"] != memberAddHost(i) {
+			t.Errorf("member %d host = %v, want %s", i, m["host"], memberAddHost(i))
+		}
+	}
+	second := members[1].(map[string]interface{})
+	if tags, _ := second["tags"].(map[string]interface{}); tags["role"] != "online" {
+		t.Errorf("member 1 tags = %v, want role=online", second["tags"])
+	}
+	third := members[2].(map[string]interface{})
+	if third["hidden"] != true || third["priority"] != 0.0 {
+		t.Errorf("member 2 = %v, want hidden with priority 0", third)
+	}
+}
+
+// SHARD-030: an import ID that is not the replica set's name is refused
+// rather than silently renamed by Read.
+func TestIntegration_ShardConfigImport_WrongNameRefused(t *testing.T) {
+	ensureMemberAddCluster(t)
+
+	data := resourceShardConfig().Data(&terraform.InstanceState{ID: "not-" + memberAddRSName})
+	if _, err := RShardConfig.Import(context.Background(), data, memberAddProviderConf()); err == nil {
+		t.Fatal("expected an error for a mismatched import ID")
 	}
 }

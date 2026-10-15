@@ -253,6 +253,12 @@ MongoDB shard configs can be imported using the shard name directly:
 $ terraform import mongodb_shard_config.shard01 shard01
 ```
 
+Import reads the live replica set configuration and records every member in state, in the server's order, along with the settings. The shard name must match the replica set name the server reports.
+
+Write one `member` block per live member, in that same order, for a clean first plan. A member you leave out of the configuration drops out of state on the next apply and stays in the set unmanaged. `init_timeout_secs` and `timeouts` are client-side and show up as additions on the first plan.
+
+Under mongos discovery the import connects to the first host that `listShards` reports, exactly as Read does; `host_override` is not in state yet at import time, so that host has to be reachable from the runner.
+
 ## Known Limitations
 
 * **Delete is a no-op:** Destroying this resource only removes it from Terraform state. The replica set configuration in MongoDB is not reverted.
