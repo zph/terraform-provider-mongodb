@@ -255,7 +255,9 @@ $ terraform import mongodb_shard_config.shard01 shard01
 
 Import reads the live replica set configuration and records every member in state, in the server's order, along with the settings. The shard name must match the replica set name the server reports.
 
-Write one `member` block per live member, in that same order, for a clean first plan. A member you leave out of the configuration drops out of state on the next apply and stays in the set unmanaged. `init_timeout_secs` and `timeouts` are client-side and show up as additions on the first plan.
+Write one `member` block per live member, in that same order, for a clean first plan. A member you leave out of the configuration drops out of state on the next apply and stays in the set unmanaged. `init_timeout_secs` is client-side and is recorded at its default on import, so a configuration that leaves it at the default plans clean; a `timeouts` block still shows up as an addition on the first plan, and applying it sends nothing to the server.
+
+An update whose only changes are to `init_timeout_secs`, `host_override` or `timeouts` records the new values in state without a `replSetReconfig`. Only a change to a setting, a `member` block or `oplog_size_mb` reconfigures the set.
 
 Under mongos discovery the import connects to the first host that `listShards` reports, exactly as Read does; `host_override` is not in state yet at import time, so that host has to be reachable from the runner.
 

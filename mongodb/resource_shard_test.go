@@ -209,3 +209,29 @@ func TestStringList(t *testing.T) {
 		t.Errorf("unexpected result %v", got)
 	}
 }
+
+// CLUS-017: Import seeds the client-side timeouts with their defaults so the
+// first plan after an import does not record them as a change.
+func TestShardImport_SeedsClientSideDefaults(t *testing.T) {
+	data := resourceShard().Data(&terraform.InstanceState{ID: "rs0"})
+	imported, err := RShard.Import(context.Background(), data, nil)
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	if len(imported) != 1 {
+		t.Fatalf("Import returned %d states, want 1", len(imported))
+	}
+	got := imported[0]
+	if got.Id() != "rs0" {
+		t.Errorf("id = %q, want rs0", got.Id())
+	}
+	if v := got.Get("add_timeout_secs").(int); v != DefaultAddTimeoutSecs {
+		t.Errorf("add_timeout_secs = %d, want %d", v, DefaultAddTimeoutSecs)
+	}
+	if v := got.Get("remove_timeout_secs").(int); v != DefaultRemoveTimeoutSecs {
+		t.Errorf("remove_timeout_secs = %d, want %d", v, DefaultRemoveTimeoutSecs)
+	}
+	if _, set := got.GetOk("hosts"); set {
+		t.Errorf("hosts must be left for Read to fill, got %v", got.Get("hosts"))
+	}
+}

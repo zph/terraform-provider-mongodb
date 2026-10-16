@@ -106,7 +106,7 @@ MongoDB shards can be imported using the shard name:
 $ terraform import mongodb_shard.shard01 shard01
 ```
 
-Import runs `listShards` to read back the shard state and the `hosts` list, in the order mongos reports them. The shard must already exist in the cluster.
+Import runs `listShards` to read back the shard state and the `hosts` list, in the order mongos reports them, and records `add_timeout_secs` and `remove_timeout_secs` at their defaults, so a configuration that leaves them at the defaults plans clean. The shard must already exist in the cluster.
 
 After import, `hosts` is only ever read from state. The provider does not rewrite it from the live set, so a member added or removed with `mongodb_shard_config` does not show up as a change here. Listing the same hosts in a different order is not a change either.
 
