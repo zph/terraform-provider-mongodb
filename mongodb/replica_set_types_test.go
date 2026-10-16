@@ -6,111 +6,89 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-// TEST-017: GetSelf returns member with Self=true
-func TestGetSelf_Found(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, Name: "node0", Self: false},
-			{ID: 1, Name: "node1", Self: true},
-			{ID: 2, Name: "node2", Self: false},
-		},
+func TestGetSelf(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []*Member
+		wantID  int
+		wantNil bool
+	}{
+		// TEST-017: returns the member with Self=true
+		{"found", []*Member{{ID: 0, Name: "node0"}, {ID: 1, Name: "node1", Self: true}, {ID: 2, Name: "node2"}}, 1, false},
+		// TEST-018: nil when no member has Self=true
+		{"not found", []*Member{{ID: 0}, {ID: 1}}, 0, true},
 	}
-	self := status.GetSelf()
-	if self == nil {
-		t.Fatal("expected non-nil member")
-	}
-	if self.ID != 1 {
-		t.Errorf("expected member ID 1, got %d", self.ID)
-	}
-}
-
-// TEST-018: GetSelf returns nil when no member has Self=true
-func TestGetSelf_NotFound(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, Self: false},
-			{ID: 1, Self: false},
-		},
-	}
-	self := status.GetSelf()
-	if self != nil {
-		t.Errorf("expected nil, got member ID %d", self.ID)
-	}
-}
-
-// TEST-019: GetMembersByState with limit=0 returns all matching
-func TestGetMembersByState_NoLimit(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, State: MemberStatePrimary},
-			{ID: 1, State: MemberStateSecondary},
-			{ID: 2, State: MemberStateSecondary},
-		},
-	}
-	members := status.GetMembersByState(MemberStateSecondary, 0)
-	if len(members) != 2 {
-		t.Errorf("expected 2 members, got %d", len(members))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			self := (&ReplSetStatus{Members: tc.members}).GetSelf()
+			if tc.wantNil {
+				if self != nil {
+					t.Errorf("expected nil, got member ID %d", self.ID)
+				}
+				return
+			}
+			if self == nil {
+				t.Fatal("expected non-nil member")
+			}
+			if self.ID != tc.wantID {
+				t.Errorf("expected member ID %d, got %d", tc.wantID, self.ID)
+			}
+		})
 	}
 }
 
-// TEST-020: GetMembersByState with positive limit caps results
-func TestGetMembersByState_WithLimit(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, State: MemberStateSecondary},
-			{ID: 1, State: MemberStateSecondary},
-			{ID: 2, State: MemberStateSecondary},
-		},
+func TestGetMembersByState(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []*Member
+		state   MemberState
+		limit   int
+		wantLen int
+	}{
+		// TEST-019: limit=0 returns all matching
+		{"no limit", []*Member{{ID: 0, State: MemberStatePrimary}, {ID: 1, State: MemberStateSecondary}, {ID: 2, State: MemberStateSecondary}}, MemberStateSecondary, 0, 2},
+		// TEST-020: positive limit caps results
+		{"with limit", []*Member{{ID: 0, State: MemberStateSecondary}, {ID: 1, State: MemberStateSecondary}, {ID: 2, State: MemberStateSecondary}}, MemberStateSecondary, 1, 1},
+		// TEST-021: no matches returns empty slice
+		{"no match", []*Member{{ID: 0, State: MemberStateSecondary}, {ID: 1, State: MemberStateSecondary}}, MemberStatePrimary, 0, 0},
 	}
-	members := status.GetMembersByState(MemberStateSecondary, 1)
-	if len(members) != 1 {
-		t.Errorf("expected 1 member, got %d", len(members))
-	}
-}
-
-// TEST-021: GetMembersByState with no matches returns empty slice
-func TestGetMembersByState_NoMatch(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, State: MemberStateSecondary},
-			{ID: 1, State: MemberStateSecondary},
-		},
-	}
-	members := status.GetMembersByState(MemberStatePrimary, 0)
-	if len(members) != 0 {
-		t.Errorf("expected 0 members, got %d", len(members))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			members := (&ReplSetStatus{Members: tc.members}).GetMembersByState(tc.state, tc.limit)
+			if len(members) != tc.wantLen {
+				t.Errorf("expected %d members, got %d", tc.wantLen, len(members))
+			}
+		})
 	}
 }
 
-// TEST-022: Primary returns the primary member when one exists
-func TestPrimary_Found(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, State: MemberStatePrimary},
-			{ID: 1, State: MemberStateSecondary},
-			{ID: 2, State: MemberStateSecondary},
-		},
+func TestPrimary(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []*Member
+		wantNil bool
+	}{
+		// TEST-022: returns the primary member when one exists
+		{"found", []*Member{{ID: 0, State: MemberStatePrimary}, {ID: 1, State: MemberStateSecondary}, {ID: 2, State: MemberStateSecondary}}, false},
+		// TEST-023: nil when no primary exists
+		{"not found", []*Member{{ID: 0, State: MemberStateSecondary}, {ID: 1, State: MemberStateSecondary}}, true},
 	}
-	primary := status.Primary()
-	if primary == nil {
-		t.Fatal("expected non-nil primary")
-	}
-	if primary.State != MemberStatePrimary {
-		t.Errorf("expected PRIMARY state, got %d", primary.State)
-	}
-}
-
-// TEST-023: Primary returns nil when no primary exists
-func TestPrimary_NotFound(t *testing.T) {
-	status := &ReplSetStatus{
-		Members: []*Member{
-			{ID: 0, State: MemberStateSecondary},
-			{ID: 1, State: MemberStateSecondary},
-		},
-	}
-	primary := status.Primary()
-	if primary != nil {
-		t.Errorf("expected nil, got member ID %d", primary.ID)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := (&ReplSetStatus{Members: tc.members}).Primary()
+			if tc.wantNil {
+				if primary != nil {
+					t.Errorf("expected nil, got member ID %d", primary.ID)
+				}
+				return
+			}
+			if primary == nil {
+				t.Fatal("expected non-nil primary")
+			}
+			if primary.State != MemberStatePrimary {
+				t.Errorf("expected PRIMARY state, got %d", primary.State)
+			}
+		})
 	}
 }
 
@@ -157,39 +135,66 @@ func TestReplicaSetConstants(t *testing.T) {
 	}
 }
 
-// TEST-035: ConfigMember BSON round-trip preserves values
-func TestConfigMemberBSONRoundTrip(t *testing.T) {
-	arbiter := false
-	votes := 1
-	original := ConfigMember{
-		ID:          0,
-		Host:        "localhost:27017",
-		ArbiterOnly: &arbiter,
-		Priority:    2.0,
-		Votes:       &votes,
+func TestConfigMemberBSON(t *testing.T) {
+	cases := []struct {
+		name   string
+		member ConfigMember
+		check  func(t *testing.T, original ConfigMember, raw bson.Raw)
+	}{
+		{
+			// TEST-035: round-trip preserves values
+			name:   "round trip",
+			member: ConfigMember{ID: 0, Host: "localhost:27017", ArbiterOnly: boolPtr(false), Priority: 2.0, Votes: intPtr(1)},
+			check: func(t *testing.T, original ConfigMember, raw bson.Raw) {
+				var decoded ConfigMember
+				if err := bson.Unmarshal(raw, &decoded); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if decoded.ID != original.ID {
+					t.Errorf("ID mismatch: got %d, want %d", decoded.ID, original.ID)
+				}
+				if decoded.Host != original.Host {
+					t.Errorf("Host mismatch: got %s, want %s", decoded.Host, original.Host)
+				}
+				if decoded.Priority != original.Priority {
+					t.Errorf("Priority mismatch: got %v, want %v", decoded.Priority, original.Priority)
+				}
+				if *decoded.ArbiterOnly != *original.ArbiterOnly {
+					t.Errorf("ArbiterOnly mismatch: got %v, want %v", *decoded.ArbiterOnly, *original.ArbiterOnly)
+				}
+				if *decoded.Votes != *original.Votes {
+					t.Errorf("Votes mismatch: got %d, want %d", *decoded.Votes, *original.Votes)
+				}
+			},
+		},
+		{
+			// SHARD-020: priority 0 must reach the server. With omitempty the field was
+			// dropped and MongoDB defaulted it to 1, which rejects hidden members and
+			// silently makes a priority-0 member electable.
+			name:   "priority zero is sent",
+			member: ConfigMember{ID: 2, Host: "mongo3:27017", Hidden: boolPtr(true), Priority: 0, Votes: intPtr(0)},
+			check: func(t *testing.T, _ ConfigMember, raw bson.Raw) {
+				val, err := raw.LookupErr("priority")
+				if err != nil {
+					t.Fatalf("priority missing from marshaled member: %s", raw.String())
+				}
+				if got := val.Double(); got != 0 {
+					t.Errorf("priority: want 0, got %v", got)
+				}
+				if v, err := raw.LookupErr("votes"); err != nil || v.Int32() != 0 {
+					t.Errorf("votes: want explicit 0, got %v (err %v)", v, err)
+				}
+			},
+		},
 	}
-	data, err := bson.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	var decoded ConfigMember
-	if err := bson.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if decoded.ID != original.ID {
-		t.Errorf("ID mismatch: got %d, want %d", decoded.ID, original.ID)
-	}
-	if decoded.Host != original.Host {
-		t.Errorf("Host mismatch: got %s, want %s", decoded.Host, original.Host)
-	}
-	if decoded.Priority != original.Priority {
-		t.Errorf("Priority mismatch: got %v, want %v", decoded.Priority, original.Priority)
-	}
-	if *decoded.ArbiterOnly != *original.ArbiterOnly {
-		t.Errorf("ArbiterOnly mismatch: got %v, want %v", *decoded.ArbiterOnly, *original.ArbiterOnly)
-	}
-	if *decoded.Votes != *original.Votes {
-		t.Errorf("Votes mismatch: got %d, want %d", *decoded.Votes, *original.Votes)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := bson.Marshal(tc.member)
+			if err != nil {
+				t.Fatalf("marshal error: %v", err)
+			}
+			tc.check(t, tc.member, bson.Raw(data))
+		})
 	}
 }
 
@@ -239,28 +244,5 @@ func TestRSConfigBSONRoundTrip(t *testing.T) {
 	if decoded.Settings.HeartbeatIntervalMillis != original.Settings.HeartbeatIntervalMillis {
 		t.Errorf("HeartbeatIntervalMillis mismatch: got %d, want %d",
 			decoded.Settings.HeartbeatIntervalMillis, original.Settings.HeartbeatIntervalMillis)
-	}
-}
-
-// SHARD-020: priority 0 must reach the server. With omitempty the field was
-// dropped and MongoDB defaulted it to 1, which rejects hidden members and
-// silently makes a priority-0 member electable.
-func TestConfigMemberBSON_PriorityZeroIsSent(t *testing.T) {
-	hidden := true
-	votes := 0
-	data, err := bson.Marshal(ConfigMember{ID: 2, Host: "mongo3:27017", Hidden: &hidden, Priority: 0, Votes: &votes})
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	raw := bson.Raw(data)
-	val, err := raw.LookupErr("priority")
-	if err != nil {
-		t.Fatalf("priority missing from marshaled member: %s", raw.String())
-	}
-	if got := val.Double(); got != 0 {
-		t.Errorf("priority: want 0, got %v", got)
-	}
-	if v, err := raw.LookupErr("votes"); err != nil || v.Int32() != 0 {
-		t.Errorf("votes: want explicit 0, got %v (err %v)", v, err)
 	}
 }

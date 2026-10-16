@@ -34,7 +34,17 @@ func (fakeNetTimeout) Temporary() bool { return true }
 // testPoll keeps the waits under test fast.
 const testPoll = time.Millisecond
 
+// deadlineCtx expires after d; the waits under test must stop on their own
+// before then.
+func deadlineCtx(t *testing.T, d time.Duration) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // READY-T01: INIT-034 — IsConnectionError.
+// READY-T02: INIT-034 — a real refused dial is a connection error.
 func TestIsConnectionError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -55,36 +65,35 @@ func TestIsConnectionError(t *testing.T) {
 		{"anything else", errors.New("shard \"rs9\" not found; available shards: [rs2]"), false},
 	}
 	for _, tc := range cases {
-		if got := IsConnectionError(tc.err); got != tc.want {
-			t.Errorf("%s: IsConnectionError = %v, want %v (%v)", tc.name, got, tc.want, tc.err)
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsConnectionError(tc.err); got != tc.want {
+				t.Errorf("IsConnectionError = %v, want %v (%v)", got, tc.want, tc.err)
+			}
+		})
+	}
+
+	t.Run("refused dial", func(t *testing.T) { // READY-T02
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-}
+		port := fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
+		_ = l.Close()
 
-// READY-T02: INIT-034 — a real refused dial is a connection error.
-func TestIsConnectionError_RefusedDial(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
-	_ = l.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	_, err = MongoClientInit(ctx, &MongoDatabaseConfiguration{
-		Config:          &ClientConfig{Host: "127.0.0.1", Port: port, DB: "admin", Username: "admin", Password: "pw", Direct: true},
-		MaxConnLifetime: 5,
+		_, err = MongoClientInit(deadlineCtx(t, 300*time.Millisecond), &MongoDatabaseConfiguration{
+			Config:          &ClientConfig{Host: "127.0.0.1", Port: port, DB: "admin", Username: "admin", Password: "pw", Direct: true},
+			MaxConnLifetime: 5,
+		})
+		if err == nil {
+			t.Fatal("connecting to a closed port should fail")
+		}
+		if !IsConnectionError(err) {
+			t.Errorf("want a connection error, got %T: %v", err, err)
+		}
+		if IsAuthError(err) {
+			t.Errorf("a refused dial must not read as a refused login: %v", err)
+		}
 	})
-	if err == nil {
-		t.Fatal("connecting to a closed port should fail")
-	}
-	if !IsConnectionError(err) {
-		t.Errorf("want a connection error, got %T: %v", err, err)
-	}
-	if IsAuthError(err) {
-		t.Errorf("a refused dial must not read as a refused login: %v", err)
-	}
 }
 
 // READY-T03: INIT-035 — classifyAuthProbe.
@@ -102,9 +111,11 @@ func TestClassifyAuthProbe(t *testing.T) {
 		{"undecodable", errors.New("failed to decode replSetGetStatus"), authUnknown},
 	}
 	for _, tc := range cases {
-		if got := classifyAuthProbe(tc.err); got != tc.want {
-			t.Errorf("%s: classifyAuthProbe = %d, want %d", tc.name, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyAuthProbe(tc.err); got != tc.want {
+				t.Errorf("classifyAuthProbe = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -134,151 +145,126 @@ func (p *scriptedProbe) probe(context.Context) error {
 	return p.err
 }
 
-func waitForShardClientWith(ctx context.Context, c *scriptedConnector, p *scriptedProbe) (bool, error) {
-	_, _, noAuth, err := WaitForShardClient(ctx, "rs2-1:27017", "admin", c.connect, p.probe, testPoll)
-	return noAuth, err
-}
-
-// READY-T04: INIT-034 — connection errors are retried without probing.
-func TestWaitForShardClient_RetriesRefusedConnections(t *testing.T) {
-	c := &scriptedConnector{errs: []error{errNotListening, errNotListening}}
-	p := &scriptedProbe{}
-	noAuth, err := waitForShardClientWith(context.Background(), c, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if noAuth {
-		t.Error("noAuth must be false when the connection succeeded")
-	}
-	if c.calls != 3 {
-		t.Errorf("want 3 attempts, got %d", c.calls)
-	}
-	if p.calls != 0 {
-		t.Errorf("the probe must not run for a connection error, ran %d times", p.calls)
-	}
-}
-
-// READY-T05: INIT-035 — a refused login on an auth host waits for the user.
-func TestWaitForShardClient_WaitsForUserOnAuthHost(t *testing.T) {
-	c := &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}}
-	p := &scriptedProbe{err: errUnauthorizedProbe}
-	noAuth, err := waitForShardClientWith(context.Background(), c, p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if noAuth {
-		t.Error("noAuth must be false once the user logs in")
-	}
-	if c.calls != 3 || p.calls != 2 {
-		t.Errorf("want 3 attempts and 2 probes, got %d and %d", c.calls, p.calls)
-	}
-}
-
-// READY-T06: INIT-029, INIT-035 — a refused login on a no-auth host enters
-// the init path at once.
-func TestWaitForShardClient_NoAuthHostEntersInit(t *testing.T) {
-	for _, probeErr := range []error{nil, fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrNotYetInitialized})} {
-		c := &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}}
-		p := &scriptedProbe{err: probeErr}
-		noAuth, err := waitForShardClientWith(context.Background(), c, p)
-		if err != nil {
-			t.Fatalf("probe %v: unexpected error: %v", probeErr, err)
-		}
-		if !noAuth {
-			t.Errorf("probe %v: want noAuth", probeErr)
-		}
-		if c.calls != 1 || p.calls != 1 {
-			t.Errorf("probe %v: want 1 attempt and 1 probe, got %d and %d", probeErr, c.calls, p.calls)
+// WaitForShardClient against a scripted connector and auth probe.
+func TestWaitForShardClient(t *testing.T) {
+	type check = func(t *testing.T, c *scriptedConnector, p *scriptedProbe, noAuth bool, err error)
+	// success is the shape of every wait that ends in a client: no error, the
+	// expected noAuth verdict, and exact attempt and probe counts.
+	success := func(wantNoAuth bool, connects, probes int) check {
+		return func(t *testing.T, c *scriptedConnector, p *scriptedProbe, noAuth bool, err error) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if noAuth != wantNoAuth {
+				t.Errorf("noAuth: want %v, got %v", wantNoAuth, noAuth)
+			}
+			if c.calls != connects || p.calls != probes {
+				t.Errorf("want %d attempts and %d probes, got %d and %d", connects, probes, c.calls, p.calls)
+			}
 		}
 	}
-}
+	errNotYetInitialized := fmt.Errorf("replSetGetStatus: %w", mongo.CommandError{Code: MongoErrNotYetInitialized})
+	errOther := errors.New("Error resolving shard client: shard \"rs9\" not found; available shards: [rs2]")
+	shortDeadline := func(t *testing.T) context.Context { return deadlineCtx(t, 30*time.Millisecond) }
 
-// READY-T07: INIT-035 — a probe that gets no answer keeps the wait going.
-func TestWaitForShardClient_UnansweredProbeKeepsWaiting(t *testing.T) {
-	c := &scriptedConnector{errs: []error{errRefusedLogin}}
-	p := &scriptedProbe{err: errNotListening}
-	noAuth, err := waitForShardClientWith(context.Background(), c, p)
-	if err != nil || noAuth {
-		t.Fatalf("want a plain success, got noAuth=%v err=%v", noAuth, err)
+	cases := []struct {
+		name      string
+		ctx       func(t *testing.T) context.Context
+		connector *scriptedConnector
+		probe     *scriptedProbe
+		check     check
+	}{
+		{name: "retries refused connections without probing", // READY-T04: INIT-034
+			connector: &scriptedConnector{errs: []error{errNotListening, errNotListening}},
+			probe:     &scriptedProbe{},
+			check:     success(false, 3, 0)},
+		{name: "refused login on an auth host waits for the user", // READY-T05: INIT-035
+			connector: &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}},
+			probe:     &scriptedProbe{err: errUnauthorizedProbe},
+			check:     success(false, 3, 2)},
+		{name: "refused login on a no-auth host enters init at once", // READY-T06: INIT-029, INIT-035
+			connector: &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}},
+			probe:     &scriptedProbe{},
+			check:     success(true, 1, 1)},
+		{name: "refused login on an uninitialized no-auth host enters init at once", // READY-T06: INIT-029, INIT-035
+			connector: &scriptedConnector{errs: []error{errRefusedLogin, errRefusedLogin}},
+			probe:     &scriptedProbe{err: errNotYetInitialized},
+			check:     success(true, 1, 1)},
+		{name: "unanswered probe keeps waiting", // READY-T07: INIT-035
+			connector: &scriptedConnector{errs: []error{errRefusedLogin}},
+			probe:     &scriptedProbe{err: errNotListening},
+			check:     success(false, 2, 1)},
+		{name: "other errors return at once", // READY-T08
+			connector: &scriptedConnector{then: errOther},
+			probe:     &scriptedProbe{},
+			check: func(t *testing.T, c *scriptedConnector, p *scriptedProbe, _ bool, err error) {
+				if !errors.Is(err, errOther) {
+					t.Fatalf("want the error as it is, got %v", err)
+				}
+				if c.calls != 1 || p.calls != 0 {
+					t.Errorf("want 1 attempt and no probe, got %d and %d", c.calls, p.calls)
+				}
+			}},
+		{name: "deadline names host, user and last error", // READY-T09: INIT-036
+			ctx:       shortDeadline,
+			connector: &scriptedConnector{then: errRefusedLogin},
+			probe:     &scriptedProbe{err: errUnauthorizedProbe},
+			check: func(t *testing.T, c *scriptedConnector, _ *scriptedProbe, _ bool, err error) {
+				if err == nil {
+					t.Fatal("want an error at the deadline")
+				}
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("the error should carry the deadline: %v", err)
+				}
+				var notReady *notReadyError
+				if !errors.As(err, &notReady) {
+					t.Errorf("want a *notReadyError, got %T", err)
+				}
+				assertErrorContains(t, err, `rs2-1:27017 did not accept the credentials of user "admin"`, "the operation timeout", "not been created yet", "AuthenticationFailed")
+				if c.calls < 2 {
+					t.Errorf("the wait should have retried before the deadline, made %d attempts", c.calls)
+				}
+			}},
+		{name: "deadline names a silent host", // READY-T10: INIT-036
+			ctx:       shortDeadline,
+			connector: &scriptedConnector{then: errNotListening},
+			probe:     &scriptedProbe{},
+			check: func(t *testing.T, _ *scriptedConnector, p *scriptedProbe, _ bool, err error) {
+				if err == nil {
+					t.Fatal("want an error at the deadline")
+				}
+				assertErrorContains(t, err, "rs2-1:27017 did not accept connections", "timeouts block", "connection refused")
+				if p.calls != 0 {
+					t.Errorf("the probe must not run for a connection error, ran %d times", p.calls)
+				}
+			}},
+		{name: "interrupted apply ends the wait with the cancellation", // READY-T11
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				time.AfterFunc(5*time.Millisecond, cancel)
+				return ctx
+			},
+			connector: &scriptedConnector{then: errNotListening},
+			probe:     &scriptedProbe{},
+			check: func(t *testing.T, _ *scriptedConnector, _ *scriptedProbe, _ bool, err error) {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("want the cancellation as the cause, got %v", err)
+				}
+				if !strings.Contains(err.Error(), "interrupted") {
+					t.Errorf("error should say the apply was interrupted, got: %v", err)
+				}
+			}},
 	}
-	if c.calls != 2 || p.calls != 1 {
-		t.Errorf("want 2 attempts and 1 probe, got %d and %d", c.calls, p.calls)
-	}
-}
-
-// READY-T08: other errors are returned at once.
-func TestWaitForShardClient_OtherErrorsReturnAtOnce(t *testing.T) {
-	want := errors.New("Error resolving shard client: shard \"rs9\" not found; available shards: [rs2]")
-	c := &scriptedConnector{then: want}
-	p := &scriptedProbe{}
-	_, err := waitForShardClientWith(context.Background(), c, p)
-	if !errors.Is(err, want) {
-		t.Fatalf("want the error as it is, got %v", err)
-	}
-	if c.calls != 1 || p.calls != 0 {
-		t.Errorf("want 1 attempt and no probe, got %d and %d", c.calls, p.calls)
-	}
-}
-
-// READY-T09: INIT-036 — the deadline error names host, user and last error.
-func TestWaitForShardClient_DeadlineNamesUser(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	c := &scriptedConnector{then: errRefusedLogin}
-	p := &scriptedProbe{err: errUnauthorizedProbe}
-	_, err := waitForShardClientWith(ctx, c, p)
-	if err == nil {
-		t.Fatal("want an error at the deadline")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("the error should carry the deadline: %v", err)
-	}
-	var notReady *notReadyError
-	if !errors.As(err, &notReady) {
-		t.Errorf("want a *notReadyError, got %T", err)
-	}
-	for _, want := range []string{`rs2-1:27017 did not accept the credentials of user "admin"`, "the operation timeout", "not been created yet", "AuthenticationFailed"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should contain %q, got: %v", want, err)
-		}
-	}
-	if c.calls < 2 {
-		t.Errorf("the wait should have retried before the deadline, made %d attempts", c.calls)
-	}
-}
-
-// READY-T10: INIT-036 — the deadline error names a silent host.
-func TestWaitForShardClient_DeadlineNamesHost(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	c := &scriptedConnector{then: errNotListening}
-	p := &scriptedProbe{}
-	_, err := waitForShardClientWith(ctx, c, p)
-	if err == nil {
-		t.Fatal("want an error at the deadline")
-	}
-	for _, want := range []string{"rs2-1:27017 did not accept connections", "timeouts block", "connection refused"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should contain %q, got: %v", want, err)
-		}
-	}
-	if p.calls != 0 {
-		t.Errorf("the probe must not run for a connection error, ran %d times", p.calls)
-	}
-}
-
-// READY-T11: an interrupted apply ends the wait with the cancellation.
-func TestWaitForShardClient_Interrupted(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	time.AfterFunc(5*time.Millisecond, cancel)
-	c := &scriptedConnector{then: errNotListening}
-	_, err := waitForShardClientWith(ctx, c, &scriptedProbe{})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("want the cancellation as the cause, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "interrupted") {
-		t.Errorf("error should say the apply was interrupted, got: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.ctx != nil {
+				ctx = tc.ctx(t)
+			}
+			_, _, noAuth, err := WaitForShardClient(ctx, "rs2-1:27017", "admin", tc.connector.connect, tc.probe.probe, testPoll)
+			tc.check(t, tc.connector, tc.probe, noAuth, err)
+		})
 	}
 }
 
@@ -304,67 +290,77 @@ func (p *hostProbe) probe(_ context.Context, host string) (*IsMasterResp, error)
 	return &IsMasterResp{IsReplicaSet: true}, nil
 }
 
-// READY-T12: SHARD-029 — each host is waited for in block order.
-func TestWaitForAddTargets_WaitsForEachHost(t *testing.T) {
-	p := &hostProbe{errs: map[string][]error{
-		"rs2-2:27017": {errNotListening, errNotListening},
-		"rs2-3:27017": {errNotListening},
-	}}
-	overrides := []MemberOverride{{Host: "rs2-2:27017"}, {Host: "rs2-3:27017"}}
-	if err := WaitForAddTargets(context.Background(), overrides, p.probe, testPoll); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p.calls["rs2-2:27017"] != 3 || p.calls["rs2-3:27017"] != 2 {
-		t.Errorf("want 3 and 2 probes, got %v", p.calls)
-	}
-}
-
-// READY-T13: SHARD-029 — other probe errors are left to the pre-flight.
-func TestWaitForAddTargets_LeavesOtherErrorsToPreflight(t *testing.T) {
-	p := &hostProbe{then: map[string]error{
-		"rs2-2:27017": errMemberProbeSkipped,
-		"rs2-3:27017": errors.New("invalid member host \"rs2-3:\": empty port"),
-	}}
-	overrides := []MemberOverride{{Host: "rs2-2:27017"}, {Host: "rs2-3:27017"}}
-	if err := WaitForAddTargets(context.Background(), overrides, p.probe, testPoll); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p.calls["rs2-2:27017"] != 1 || p.calls["rs2-3:27017"] != 1 {
-		t.Errorf("want one probe per host, got %v", p.calls)
-	}
-}
-
-// READY-T14: SHARD-029 — the deadline error names the silent host.
-func TestWaitForAddTargets_DeadlineNamesHost(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	p := &hostProbe{then: map[string]error{"rs2-3:27017": errNotListening}}
-	overrides := []MemberOverride{{Host: "rs2-2:27017"}, {Host: "rs2-3:27017"}, {Host: "rs2-4:27017"}}
-	err := WaitForAddTargets(ctx, overrides, p.probe, testPoll)
-	if err == nil {
-		t.Fatal("want an error at the deadline")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("the error should carry the deadline: %v", err)
-	}
-	for _, want := range []string{"replica set member rs2-3:27017 did not accept connections", "connection refused"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should contain %q, got: %v", want, err)
+// WaitForAddTargets against a scripted per-host probe.
+func TestWaitForAddTargets(t *testing.T) {
+	type check = func(t *testing.T, p *hostProbe, err error)
+	// probed is the shape of a wait that returns: no error and exactly these
+	// probes per host.
+	probed := func(want map[string]int) check {
+		return func(t *testing.T, p *hostProbe, err error) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(p.calls) != len(want) {
+				t.Fatalf("want probes %v, got %v", want, p.calls)
+			}
+			for host, n := range want {
+				if p.calls[host] != n {
+					t.Errorf("%s: want %d probes, got %v", host, n, p.calls)
+				}
+			}
 		}
 	}
-	if p.calls["rs2-2:27017"] != 1 || p.calls["rs2-4:27017"] != 0 {
-		t.Errorf("want rs2-2 probed once and rs2-4 not at all, got %v", p.calls)
-	}
-}
+	twoHosts := []MemberOverride{{Host: "rs2-2:27017"}, {Host: "rs2-3:27017"}}
 
-// READY-T15: SHARD-029 — nothing to add, nothing to wait for.
-func TestWaitForAddTargets_NoHosts(t *testing.T) {
-	p := &hostProbe{}
-	if err := WaitForAddTargets(context.Background(), nil, p.probe, testPoll); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	cases := []struct {
+		name      string
+		ctx       func(t *testing.T) context.Context
+		probe     *hostProbe
+		overrides []MemberOverride
+		check     check
+	}{
+		{name: "waits for each host in block order", // READY-T12: SHARD-029
+			probe: &hostProbe{errs: map[string][]error{
+				"rs2-2:27017": {errNotListening, errNotListening},
+				"rs2-3:27017": {errNotListening},
+			}},
+			overrides: twoHosts,
+			check:     probed(map[string]int{"rs2-2:27017": 3, "rs2-3:27017": 2})},
+		{name: "leaves other probe errors to the pre-flight", // READY-T13: SHARD-029
+			probe: &hostProbe{then: map[string]error{
+				"rs2-2:27017": errMemberProbeSkipped,
+				"rs2-3:27017": errors.New("invalid member host \"rs2-3:\": empty port"),
+			}},
+			overrides: twoHosts,
+			check:     probed(map[string]int{"rs2-2:27017": 1, "rs2-3:27017": 1})},
+		{name: "deadline names the silent host", // READY-T14: SHARD-029
+			ctx:       func(t *testing.T) context.Context { return deadlineCtx(t, 30*time.Millisecond) },
+			probe:     &hostProbe{then: map[string]error{"rs2-3:27017": errNotListening}},
+			overrides: []MemberOverride{{Host: "rs2-2:27017"}, {Host: "rs2-3:27017"}, {Host: "rs2-4:27017"}},
+			check: func(t *testing.T, p *hostProbe, err error) {
+				if err == nil {
+					t.Fatal("want an error at the deadline")
+				}
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("the error should carry the deadline: %v", err)
+				}
+				assertErrorContains(t, err, "replica set member rs2-3:27017 did not accept connections", "connection refused")
+				if p.calls["rs2-2:27017"] != 1 || p.calls["rs2-4:27017"] != 0 {
+					t.Errorf("want rs2-2 probed once and rs2-4 not at all, got %v", p.calls)
+				}
+			}},
+		{name: "nothing to add, nothing to wait for", // READY-T15: SHARD-029
+			probe: &hostProbe{},
+			check: probed(nil)},
 	}
-	if len(p.calls) != 0 {
-		t.Errorf("no host should be probed, got %v", p.calls)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.ctx != nil {
+				ctx = tc.ctx(t)
+			}
+			tc.check(t, tc.probe, WaitForAddTargets(ctx, tc.overrides, tc.probe.probe, testPoll))
+		})
 	}
 }
 

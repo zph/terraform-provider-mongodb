@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TEST-030: Provider schema passes InternalValidate
+// TEST-030: Provider schema passes InternalValidate (also DANGER-T10)
 func TestProviderSchemaValid(t *testing.T) {
 	p := Provider()
 	if err := p.InternalValidate(); err != nil {
@@ -22,7 +22,8 @@ func TestProviderResourceMap_AllRegistered(t *testing.T) {
 	}
 }
 
-// TEST-032: Each resource schema passes InternalValidate
+// TEST-032: Each resource schema passes InternalValidate. With TEST-031 this
+// covers the per-resource checks DANGER-T07, T08, T09, T17 and TEST-051.
 func TestProviderResourceSchemasValid(t *testing.T) {
 	p := Provider()
 	for name, resource := range p.ResourcesMap {

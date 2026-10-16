@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -15,218 +16,212 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// TEST-009: addArgs with empty arguments prepends "/?"
-func TestAddArgs_EmptyArguments(t *testing.T) {
-	result := addArgs("", "ssl=true")
-	expected := "/?ssl=true"
-	if result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
+func TestAddArgs(t *testing.T) {
+	cases := []struct {
+		name          string
+		args, newArgs string
+		want          string
+	}{
+		{"TEST-009 empty arguments prepend /?", "", "ssl=true", "/?ssl=true"},
+		{"TEST-010 existing arguments append with &", "/?ssl=true", "replicaSet=rs0", "/?ssl=true&replicaSet=rs0"},
 	}
-}
-
-// TEST-010: addArgs with existing arguments appends with "&"
-func TestAddArgs_ExistingArguments(t *testing.T) {
-	result := addArgs("/?ssl=true", "replicaSet=rs0")
-	expected := "/?ssl=true&replicaSet=rs0"
-	if result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
-	}
-}
-
-// TEST-011: proxyDialer with valid SOCKS5 URL returns non-nil dialer
-func TestProxyDialer_ValidSOCKS5(t *testing.T) {
-	c := &ClientConfig{Proxy: "socks5://127.0.0.1:1080"}
-	dialer, err := proxyDialer(c)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if dialer == nil {
-		t.Fatal("expected non-nil dialer")
-	}
-}
-
-// TEST-012: proxyDialer with unsupported scheme returns error
-func TestProxyDialer_InvalidScheme(t *testing.T) {
-	c := &ClientConfig{Proxy: "http://127.0.0.1:1080"}
-	_, err := proxyDialer(c)
-	if err == nil {
-		t.Fatal("expected error for unsupported proxy scheme, got nil")
-	}
-}
-
-// TEST-013: proxyDialer with empty proxy falls back to environment dialer
-func TestProxyDialer_EmptyFallback(t *testing.T) {
-	c := &ClientConfig{Proxy: ""}
-	dialer, err := proxyDialer(c)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if dialer == nil {
-		t.Fatal("expected non-nil dialer from environment fallback")
-	}
-}
-
-// TEST-014: Role.String() contains role and db values
-func TestRoleString(t *testing.T) {
-	r := Role{Role: "readWrite", Db: "admin"}
-	s := r.String()
-	if !strings.Contains(s, "readWrite") {
-		t.Errorf("expected string to contain 'readWrite', got %q", s)
-	}
-	if !strings.Contains(s, "admin") {
-		t.Errorf("expected string to contain 'admin', got %q", s)
-	}
-}
-
-// TEST-015: Privilege.String() contains resource and actions
-func TestPrivilegeString(t *testing.T) {
-	p := Privilege{
-		Resource: Resource{Db: "mydb", Collection: "mycol"},
-		Actions:  []string{"find", "insert"},
-	}
-	s := p.String()
-	if !strings.Contains(s, "mydb") {
-		t.Errorf("expected string to contain 'mydb', got %q", s)
-	}
-	if !strings.Contains(s, "find") {
-		t.Errorf("expected string to contain 'find', got %q", s)
-	}
-}
-
-// TEST-016: Resource.String() contains db and collection
-func TestResourceString(t *testing.T) {
-	r := Resource{Db: "mydb", Collection: "mycol"}
-	s := r.String()
-	if !strings.Contains(s, "mydb") {
-		t.Errorf("expected string to contain 'mydb', got %q", s)
-	}
-	if !strings.Contains(s, "mycol") {
-		t.Errorf("expected string to contain 'mycol', got %q", s)
-	}
-}
-
-// TEST-033: Role JSON round-trip preserves values
-func TestRoleJSONRoundTrip(t *testing.T) {
-	original := Role{Role: "readWrite", Db: "admin"}
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	var decoded Role
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if decoded != original {
-		t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, original)
-	}
-}
-
-// TEST-034: Resource JSON round-trip respects omitempty
-func TestResourceJSONOmitEmpty(t *testing.T) {
-	original := Resource{Db: "test", Collection: ""}
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	jsonStr := string(data)
-	if strings.Contains(jsonStr, "collection") {
-		t.Errorf("expected 'collection' to be omitted from JSON, got: %s", jsonStr)
-	}
-	var decoded Resource
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if decoded != original {
-		t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, original)
-	}
-}
-
-// TEST-037: PrivilegeDto with Cluster=true omits db and collection
-func TestPrivilegeDtoClusterOmitsDbCollection(t *testing.T) {
-	p := PrivilegeDto{Cluster: true, Actions: []string{"find"}}
-	data, err := json.Marshal(p)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	jsonStr := string(data)
-	if strings.Contains(jsonStr, `"db"`) {
-		t.Errorf("expected 'db' to be omitted, got: %s", jsonStr)
-	}
-	if strings.Contains(jsonStr, `"collection"`) {
-		t.Errorf("expected 'collection' to be omitted, got: %s", jsonStr)
-	}
-}
-
-// TEST-064: buildPrivilegeDocs includes both db and collection when collection is empty string.
-// Regression test: MongoDB rejects privileges with only one of db/collection set.
-// The old code used JSON omitempty which dropped collection="" from the BSON.
-func TestBuildPrivilegeDocs_EmptyCollectionIncluded(t *testing.T) {
-	privs := []PrivilegeDto{
-		{Db: "orders", Collection: "", Actions: []string{"find", "insert"}},
-	}
-	docs, err := buildPrivilegeDocs("test_role", privs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(docs) != 1 {
-		t.Fatalf("expected 1 privilege doc, got %d", len(docs))
-	}
-	privDoc := docs[0].(bson.D)
-	resource := privDoc[0].Value.(bson.D)
-
-	var hasDb, hasCollection bool
-	for _, elem := range resource {
-		if elem.Key == "db" {
-			hasDb = true
-			if elem.Value != "orders" {
-				t.Errorf("expected db='orders', got %v", elem.Value)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := addArgs(tc.args, tc.newArgs); got != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
 			}
-		}
-		if elem.Key == "collection" {
-			hasCollection = true
-			if elem.Value != "" {
-				t.Errorf("expected collection='', got %v", elem.Value)
+		})
+	}
+}
+
+func TestProxyDialer(t *testing.T) {
+	cases := []struct {
+		name    string
+		proxy   string
+		wantErr bool
+	}{
+		{"TEST-011 valid SOCKS5 URL", "socks5://127.0.0.1:1080", false},
+		{"TEST-012 unsupported scheme", "http://127.0.0.1:1080", true},
+		{"TEST-013 empty proxy falls back to environment dialer", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dialer, err := proxyDialer(&ClientConfig{Proxy: tc.proxy})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error for unsupported proxy scheme, got nil")
+				}
+				return
 			}
-		}
-	}
-	if !hasDb {
-		t.Error("resource document missing 'db' key")
-	}
-	if !hasCollection {
-		t.Error("resource document missing 'collection' key — MongoDB requires both db and collection")
-	}
-}
-
-// TEST-065: buildPrivilegeDocs with cluster=true omits db and collection.
-func TestBuildPrivilegeDocs_ClusterOmitsDbCollection(t *testing.T) {
-	privs := []PrivilegeDto{
-		{Cluster: true, Actions: []string{"serverStatus"}},
-	}
-	docs, err := buildPrivilegeDocs("test_role", privs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resource := docs[0].(bson.D)[0].Value.(bson.D)
-	for _, elem := range resource {
-		if elem.Key == "db" || elem.Key == "collection" {
-			t.Errorf("cluster privilege should not have %q key", elem.Key)
-		}
-	}
-	if resource[0].Key != "cluster" || resource[0].Value != true {
-		t.Errorf("expected {cluster: true}, got %v", resource)
+			if err != nil {
+				t.Fatalf("expected nil error, got: %v", err)
+			}
+			if dialer == nil {
+				t.Fatal("expected non-nil dialer")
+			}
+		})
 	}
 }
 
-// TEST-066: buildPrivilegeDocs rejects db + cluster=true combination.
-func TestBuildPrivilegeDocs_RejectsDbWithCluster(t *testing.T) {
-	privs := []PrivilegeDto{
-		{Db: "orders", Cluster: true, Actions: []string{"find"}},
+func TestStringers(t *testing.T) {
+	cases := []struct {
+		name     string
+		got      string
+		contains []string
+	}{
+		{"TEST-014 Role", Role{Role: "readWrite", Db: "admin"}.String(), []string{"readWrite", "admin"}},
+		{"TEST-015 Privilege", Privilege{
+			Resource: Resource{Db: "mydb", Collection: "mycol"},
+			Actions:  []string{"find", "insert"},
+		}.String(), []string{"mydb", "find"}},
+		{"TEST-016 Resource", Resource{Db: "mydb", Collection: "mycol"}.String(), []string{"mydb", "mycol"}},
 	}
-	_, err := buildPrivilegeDocs("test_role", privs)
-	if err == nil {
-		t.Fatal("expected error for db + cluster=true, got nil")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, s := range tc.contains {
+				if !strings.Contains(tc.got, s) {
+					t.Errorf("expected string to contain %q, got %q", s, tc.got)
+				}
+			}
+		})
+	}
+}
+
+func TestJSONEncoding(t *testing.T) {
+	cases := []struct {
+		name  string
+		value interface{}
+		check func(t *testing.T, data []byte)
+	}{
+		{
+			name:  "TEST-033 Role round-trip preserves values",
+			value: Role{Role: "readWrite", Db: "admin"},
+			check: func(t *testing.T, data []byte) {
+				var decoded Role
+				if err := json.Unmarshal(data, &decoded); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if want := (Role{Role: "readWrite", Db: "admin"}); decoded != want {
+					t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, want)
+				}
+			},
+		},
+		{
+			name:  "TEST-034 Resource round-trip respects omitempty",
+			value: Resource{Db: "test", Collection: ""},
+			check: func(t *testing.T, data []byte) {
+				if strings.Contains(string(data), "collection") {
+					t.Errorf("expected 'collection' to be omitted from JSON, got: %s", data)
+				}
+				var decoded Resource
+				if err := json.Unmarshal(data, &decoded); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if want := (Resource{Db: "test", Collection: ""}); decoded != want {
+					t.Errorf("round-trip mismatch: got %+v, want %+v", decoded, want)
+				}
+			},
+		},
+		{
+			name:  "TEST-037 PrivilegeDto with Cluster=true omits db and collection",
+			value: PrivilegeDto{Cluster: true, Actions: []string{"find"}},
+			check: func(t *testing.T, data []byte) {
+				for _, key := range []string{`"db"`, `"collection"`} {
+					if strings.Contains(string(data), key) {
+						t.Errorf("expected %s to be omitted, got: %s", key, data)
+					}
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatalf("marshal error: %v", err)
+			}
+			tc.check(t, data)
+		})
+	}
+}
+
+func TestBuildPrivilegeDocs(t *testing.T) {
+	cases := []struct {
+		name    string
+		priv    PrivilegeDto
+		wantErr bool
+		check   func(t *testing.T, resource bson.D)
+	}{
+		{
+			// TEST-064: Regression test: MongoDB rejects privileges with only one of
+			// db/collection set. The old code used JSON omitempty which dropped
+			// collection="" from the BSON.
+			name: "TEST-064 empty collection is included",
+			priv: PrivilegeDto{Db: "orders", Collection: "", Actions: []string{"find", "insert"}},
+			check: func(t *testing.T, resource bson.D) {
+				var hasDb, hasCollection bool
+				for _, elem := range resource {
+					if elem.Key == "db" {
+						hasDb = true
+						if elem.Value != "orders" {
+							t.Errorf("expected db='orders', got %v", elem.Value)
+						}
+					}
+					if elem.Key == "collection" {
+						hasCollection = true
+						if elem.Value != "" {
+							t.Errorf("expected collection='', got %v", elem.Value)
+						}
+					}
+				}
+				if !hasDb {
+					t.Error("resource document missing 'db' key")
+				}
+				if !hasCollection {
+					t.Error("resource document missing 'collection' key — MongoDB requires both db and collection")
+				}
+			},
+		},
+		{
+			name: "TEST-065 cluster=true omits db and collection",
+			priv: PrivilegeDto{Cluster: true, Actions: []string{"serverStatus"}},
+			check: func(t *testing.T, resource bson.D) {
+				for _, elem := range resource {
+					if elem.Key == "db" || elem.Key == "collection" {
+						t.Errorf("cluster privilege should not have %q key", elem.Key)
+					}
+				}
+				if resource[0].Key != "cluster" || resource[0].Value != true {
+					t.Errorf("expected {cluster: true}, got %v", resource)
+				}
+			},
+		},
+		{
+			name:    "TEST-066 rejects db with cluster=true",
+			priv:    PrivilegeDto{Db: "orders", Cluster: true, Actions: []string{"find"}},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			docs, err := buildPrivilegeDocs("test_role", []PrivilegeDto{tc.priv})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error for db + cluster=true, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(docs) != 1 {
+				t.Fatalf("expected 1 privilege doc, got %d", len(docs))
+			}
+			tc.check(t, docs[0].(bson.D)[0].Value.(bson.D))
+		})
 	}
 }
 
@@ -252,267 +247,219 @@ func generateTestPEM(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 }
 
-// TEST-038: Invalid PEM returns error
-func TestGetTLSConfig_InvalidPEM(t *testing.T) {
-	_, err := getTLSConfigWithAllServerCertificates([]byte("not-a-pem-cert"), false)
-	if err == nil {
-		t.Fatal("expected error for invalid PEM, got nil")
-	}
-}
-
-// TEST-039: Valid PEM with verify=true sets InsecureSkipVerify=true
-func TestGetTLSConfig_VerifyFlag(t *testing.T) {
+func TestGetTLSConfig(t *testing.T) {
 	pemData := generateTestPEM(t)
-	tlsConfig, err := getTLSConfigWithAllServerCertificates(pemData, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	cases := []struct {
+		name    string
+		pem     []byte
+		verify  bool
+		wantErr bool
+		check   func(t *testing.T, cfg *tls.Config)
+	}{
+		{name: "TEST-038 invalid PEM returns error", pem: []byte("not-a-pem-cert"), wantErr: true},
+		{
+			name: "TEST-039 verify=true sets InsecureSkipVerify", pem: pemData, verify: true,
+			check: func(t *testing.T, cfg *tls.Config) {
+				if !cfg.InsecureSkipVerify {
+					t.Error("expected InsecureSkipVerify=true")
+				}
+			},
+		},
+		{
+			name: "TEST-040 valid PEM populates RootCAs", pem: pemData,
+			check: func(t *testing.T, cfg *tls.Config) {
+				if cfg.RootCAs == nil {
+					t.Error("expected non-nil RootCAs")
+				}
+			},
+		},
 	}
-	if !tlsConfig.InsecureSkipVerify {
-		t.Error("expected InsecureSkipVerify=true")
-	}
-}
-
-// TEST-040: Valid PEM populates RootCAs
-func TestGetTLSConfig_RootCAsPopulated(t *testing.T) {
-	pemData := generateTestPEM(t)
-	tlsConfig, err := getTLSConfigWithAllServerCertificates(pemData, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tlsConfig.RootCAs == nil {
-		t.Error("expected non-nil RootCAs")
-	}
-}
-
-// TEST-041: mongoClientOptions builds correct URI with all params
-func TestMongoClientOptions_FullParams(t *testing.T) {
-	c := &ClientConfig{
-		Host:        "myhost",
-		Port:        "27018",
-		Ssl:         true,
-		ReplicaSet:  "rs0",
-		RetryWrites: true,
-		Direct:      false,
-	}
-	opts, err := c.mongoClientOptions(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts == nil {
-		t.Fatal("expected non-nil options")
-	}
-}
-
-// TEST-042: mongoClientOptions with Direct=true omits replicaSet
-func TestMongoClientOptions_DirectMode(t *testing.T) {
-	c := &ClientConfig{
-		Host:        "myhost",
-		Port:        "27017",
-		ReplicaSet:  "rs0",
-		Direct:      true,
-		RetryWrites: false,
-	}
-	opts, err := c.mongoClientOptions(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts == nil {
-		t.Fatal("expected non-nil options")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := getTLSConfigWithAllServerCertificates(tc.pem, tc.verify)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error for invalid PEM, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			tc.check(t, cfg)
+		})
 	}
 }
 
-// TEST-067: ssl=true + insecure_skip_verify=true without a certificate applies
-// a TLS config that skips verification. Regression test: the flag was
-// previously honored only when a custom CA certificate was also provided, so
-// the driver's default TLS config verified (and rejected) certificates the
-// user had opted out of verifying, e.g. legacy CN-only certificates.
-func TestMongoClientOptions_InsecureSkipVerifyWithoutCertificate(t *testing.T) {
-	c := &ClientConfig{
-		Host:               "myhost",
-		Port:               "27017",
-		Ssl:                true,
-		InsecureSkipVerify: true,
+func TestMongoClientOptions(t *testing.T) {
+	cases := []struct {
+		name  string
+		cfg   ClientConfig
+		check func(t *testing.T, opts *options.ClientOptions)
+	}{
+		{
+			name: "TEST-041 full params",
+			cfg:  ClientConfig{Host: "myhost", Port: "27018", Ssl: true, ReplicaSet: "rs0", RetryWrites: true, Direct: false},
+		},
+		{
+			name: "TEST-042 Direct=true omits replicaSet",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", ReplicaSet: "rs0", Direct: true, RetryWrites: false},
+		},
+		{
+			// TEST-067: Regression test: the flag was previously honored only when a
+			// custom CA certificate was also provided, so the driver's default TLS
+			// config verified (and rejected) certificates the user had opted out of
+			// verifying, e.g. legacy CN-only certificates.
+			name: "TEST-067 ssl + insecure_skip_verify without certificate skips verification",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", Ssl: true, InsecureSkipVerify: true},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig == nil {
+					t.Fatal("expected TLS config to be set")
+				}
+				if !opts.TLSConfig.InsecureSkipVerify {
+					t.Error("expected InsecureSkipVerify=true on client TLS config")
+				}
+			},
+		},
+		{
+			name: "TEST-068 insecure_skip_verify without ssl does not enable TLS",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", InsecureSkipVerify: true},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig != nil {
+					t.Error("expected no TLS config when ssl=false and no certificate is set")
+				}
+			},
+		},
+		{
+			name: "TEST-069 certificate + insecure_skip_verify sets RootCAs and skip flag",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", Ssl: true, InsecureSkipVerify: true, Certificate: string(generateTestPEM(t))},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig == nil {
+					t.Fatal("expected TLS config to be set")
+				}
+				if !opts.TLSConfig.InsecureSkipVerify {
+					t.Error("expected InsecureSkipVerify=true on client TLS config")
+				}
+				if opts.TLSConfig.RootCAs == nil {
+					t.Error("expected RootCAs to be populated from certificate")
+				}
+			},
+		},
 	}
-	opts, err := c.mongoClientOptions(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts.TLSConfig == nil {
-		t.Fatal("expected TLS config to be set")
-	}
-	if !opts.TLSConfig.InsecureSkipVerify {
-		t.Error("expected InsecureSkipVerify=true on client TLS config")
-	}
-}
-
-// TEST-068: insecure_skip_verify without ssl or certificate does not enable TLS
-func TestMongoClientOptions_InsecureSkipVerifyWithoutSsl(t *testing.T) {
-	c := &ClientConfig{
-		Host:               "myhost",
-		Port:               "27017",
-		InsecureSkipVerify: true,
-	}
-	opts, err := c.mongoClientOptions(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts.TLSConfig != nil {
-		t.Error("expected no TLS config when ssl=false and no certificate is set")
-	}
-}
-
-// TEST-069: certificate + insecure_skip_verify sets both RootCAs and the skip flag
-func TestMongoClientOptions_CertificateWithInsecureSkipVerify(t *testing.T) {
-	c := &ClientConfig{
-		Host:               "myhost",
-		Port:               "27017",
-		Ssl:                true,
-		InsecureSkipVerify: true,
-		Certificate:        string(generateTestPEM(t)),
-	}
-	opts, err := c.mongoClientOptions(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts.TLSConfig == nil {
-		t.Fatal("expected TLS config to be set")
-	}
-	if !opts.TLSConfig.InsecureSkipVerify {
-		t.Error("expected InsecureSkipVerify=true on client TLS config")
-	}
-	if opts.TLSConfig.RootCAs == nil {
-		t.Error("expected RootCAs to be populated from certificate")
-	}
-}
-
-// TEST-043: MongoClientNoAuth returns client without auth credentials
-func TestMongoClientNoAuth_NoError(t *testing.T) {
-	c := &ClientConfig{
-		Host:        "localhost",
-		Port:        "27017",
-		RetryWrites: false,
-		Direct:      true,
-	}
-	client, err := c.MongoClientNoAuth(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := tc.cfg.mongoClientOptions(context.Background())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts == nil {
+				t.Fatal("expected non-nil options")
+			}
+			if tc.check != nil {
+				tc.check(t, opts)
+			}
+		})
 	}
 }
 
-// TEST-044: MongoClient returns client with auth credentials
-func TestMongoClient_NoError(t *testing.T) {
-	c := &ClientConfig{
-		Host:        "localhost",
-		Port:        "27017",
-		Username:    "admin",
-		Password:    "secret",
-		DB:          "admin",
-		RetryWrites: false,
-		Direct:      true,
+func TestMongoClientConstructors(t *testing.T) {
+	cases := []struct {
+		name   string
+		cfg    ClientConfig
+		noAuth bool
+	}{
+		{
+			name:   "TEST-043 MongoClientNoAuth",
+			cfg:    ClientConfig{Host: "localhost", Port: "27017", RetryWrites: false, Direct: true},
+			noAuth: true,
+		},
+		{
+			name: "TEST-044 MongoClient with credentials",
+			cfg:  ClientConfig{Host: "localhost", Port: "27017", Username: "admin", Password: "secret", DB: "admin", RetryWrites: false, Direct: true},
+		},
+		{
+			name: "TEST-046 SHARD-011 MongoClient with empty credentials skips auth",
+			cfg:  ClientConfig{Host: "localhost", Port: "27017", Username: "", Password: "", DB: "admin", RetryWrites: false, Direct: true},
+		},
+		{
+			name:   "TEST-045 MongoClientNoAuth with certificate uses TLS without auth",
+			cfg:    ClientConfig{Host: "localhost", Port: "27017", RetryWrites: false, Direct: true, Certificate: string(generateTestPEM(t))},
+			noAuth: true,
+		},
 	}
-	client, err := c.MongoClient(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
-	}
-}
-
-// TEST-046: SHARD-011 — MongoClient with empty credentials skips auth (behaves like MongoClientNoAuth)
-func TestMongoClient_NoAuth_EmptyCredentials(t *testing.T) {
-	c := &ClientConfig{
-		Host:        "localhost",
-		Port:        "27017",
-		Username:    "",
-		Password:    "",
-		DB:          "admin",
-		RetryWrites: false,
-		Direct:      true,
-	}
-	client, err := c.MongoClient(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
-	}
-}
-
-// TEST-045: MongoClientNoAuth with certificate uses TLS without auth
-func TestMongoClientNoAuth_WithCertificate(t *testing.T) {
-	pemData := generateTestPEM(t)
-	c := &ClientConfig{
-		Host:        "localhost",
-		Port:        "27017",
-		RetryWrites: false,
-		Direct:      true,
-		Certificate: string(pemData),
-	}
-	client, err := c.MongoClientNoAuth(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client, err := tc.cfg.MongoClient(ctx)
+			if tc.noAuth {
+				client, err = tc.cfg.MongoClientNoAuth(ctx)
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if client == nil {
+				t.Fatal("expected non-nil client")
+			}
+		})
 	}
 }
 
-// DANGER-021: pwd included only when includePassword is true
-func TestBuildUpdateUserCmd_IncludePassword(t *testing.T) {
-	cmd := buildUpdateUserCmd("alice", "s3cret", true, []Role{{Role: "read", Db: "app"}})
-	keys := make([]string, len(cmd))
-	for i, e := range cmd {
-		keys[i] = e.Key
+// DANGER-021: pwd is sent only when includePassword is true; roles always render
+func TestBuildUpdateUserCmd(t *testing.T) {
+	roles := []Role{{Role: "read", Db: "app"}}
+	cases := []struct {
+		name            string
+		password        string
+		includePassword bool
+		roles           []Role
+		wantKeys        []string
+		check           func(t *testing.T, cmd bson.D)
+	}{
+		{
+			name: "include password", password: "s3cret", includePassword: true, roles: roles,
+			wantKeys: []string{"updateUser", "pwd", "roles"},
+			check: func(t *testing.T, cmd bson.D) {
+				if cmd[1].Value != "s3cret" {
+					t.Errorf("expected pwd value 's3cret', got %v", cmd[1].Value)
+				}
+			},
+		},
+		{
+			name: "omit password", password: "", includePassword: false, roles: roles,
+			wantKeys: []string{"updateUser", "roles"},
+		},
+		{
+			name: "empty role list renders as explicit empty array", roles: nil,
+			wantKeys: []string{"updateUser", "roles"},
+			check: func(t *testing.T, cmd bson.D) {
+				roles, ok := cmd[len(cmd)-1].Value.([]bson.M)
+				if !ok {
+					t.Fatalf("expected roles value type []bson.M, got %T", cmd[len(cmd)-1].Value)
+				}
+				if len(roles) != 0 {
+					t.Errorf("expected empty roles array, got %v", roles)
+				}
+			},
+		},
+		{
+			// kills the "send whenever password is non-empty" mutant
+			name: "non-empty password still omitted", password: "still-secret", includePassword: false, roles: roles,
+			wantKeys: []string{"updateUser", "roles"},
+		},
 	}
-	want := []string{"updateUser", "pwd", "roles"}
-	if strings.Join(keys, ",") != strings.Join(want, ",") {
-		t.Fatalf("expected keys %v, got %v", want, keys)
-	}
-	if cmd[1].Value != "s3cret" {
-		t.Errorf("expected pwd value 's3cret', got %v", cmd[1].Value)
-	}
-}
-
-// DANGER-021: pwd omitted when includePassword is false
-func TestBuildUpdateUserCmd_OmitPassword(t *testing.T) {
-	cmd := buildUpdateUserCmd("alice", "", false, []Role{{Role: "read", Db: "app"}})
-	keys := make([]string, len(cmd))
-	for i, e := range cmd {
-		keys[i] = e.Key
-	}
-	want := []string{"updateUser", "roles"}
-	if strings.Join(keys, ",") != strings.Join(want, ",") {
-		t.Fatalf("expected keys %v, got %v", want, keys)
-	}
-}
-
-// DANGER-021: empty role list renders as an explicit empty array
-func TestBuildUpdateUserCmd_EmptyRoles(t *testing.T) {
-	cmd := buildUpdateUserCmd("alice", "", false, nil)
-	last := cmd[len(cmd)-1]
-	if last.Key != "roles" {
-		t.Fatalf("expected final key 'roles', got %q", last.Key)
-	}
-	roles, ok := last.Value.([]bson.M)
-	if !ok {
-		t.Fatalf("expected roles value type []bson.M, got %T", last.Value)
-	}
-	if len(roles) != 0 {
-		t.Errorf("expected empty roles array, got %v", roles)
-	}
-}
-
-// DANGER-021: a non-empty password is still omitted when includePassword is
-// false — kills the "send whenever password is non-empty" mutant
-func TestBuildUpdateUserCmd_OmitPasswordNonEmpty(t *testing.T) {
-	cmd := buildUpdateUserCmd("alice", "still-secret", false, []Role{{Role: "read", Db: "app"}})
-	for _, e := range cmd {
-		if e.Key == "pwd" {
-			t.Fatalf("pwd must not be present when includePassword is false, got %v", cmd)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := buildUpdateUserCmd("alice", tc.password, tc.includePassword, tc.roles)
+			keys := make([]string, len(cmd))
+			for i, e := range cmd {
+				keys[i] = e.Key
+			}
+			if strings.Join(keys, ",") != strings.Join(tc.wantKeys, ",") {
+				t.Fatalf("expected keys %v, got %v", tc.wantKeys, keys)
+			}
+			if tc.check != nil {
+				tc.check(t, cmd)
+			}
+		})
 	}
 }
