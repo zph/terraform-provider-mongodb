@@ -7,8 +7,10 @@ This document defines EARS requirements for oplog size configuration via the
 ## Schema
 
 **OPLOG-001** (Ubiquitous): The `mongodb_shard_config` resource schema SHALL
-define an Optional `oplog_size_mb` field of TypeFloat with no default value,
-representing the maximum oplog size in megabytes.
+define an Optional, Computed `oplog_size_mb` field of TypeFloat with no
+default value, representing the maximum oplog size in megabytes. It is
+Computed because the read-back (OPLOG-005) records the live size whether or
+not the configuration sets one.
 
 **OPLOG-002** (Ubiquitous): The `oplog_size_mb` field SHALL have a ValidateFunc
 that rejects values less than or equal to zero.
@@ -20,14 +22,19 @@ that rejects values less than or equal to zero.
 the configured size AFTER the `replSetReconfig` call completes.
 
 **OPLOG-004** (Event Driven): WHEN `oplog_size_mb` is NOT configured in the HCL,
-the Update method SHALL NOT execute `replSetResizeOplog`.
+the Update method SHALL NOT execute `replSetResizeOplog`. The planned value is
+then the one the read-back recorded, or unknown on create, so there is
+nothing to apply.
 
 ## Read Path
 
-**OPLOG-005** (Event Driven): WHEN the Read method runs and `oplog_size_mb`
-exists in Terraform state, it SHALL read the current oplog size via `collStats`
-on `local.oplog.rs` on every data-bearing member and convert the `maxSize`
-field from bytes to megabytes by dividing by 1048576.
+**OPLOG-005** (Event Driven): WHEN the Read method runs, including the Read
+that follows an import, it SHALL read the current oplog size via `collStats`
+on `local.oplog.rs` on every data-bearing member, whether or not
+`oplog_size_mb` is configured or in state, and convert the `maxSize` field
+from bytes to megabytes by dividing by 1048576. IF `host_override` is set,
+THEN the read-back SHALL be skipped and `oplog_size_mb` left unset, because
+the member hosts are not reachable from the Terraform runner (DISC-008).
 
 ## Initialization
 
@@ -117,3 +124,13 @@ read-back and a resize was attempted in the same apply, THEN
 the configured value, so an unconfirmed resize surfaces as drift on the next
 plan. On refresh, where no resize was attempted, the value in state is kept
 (OPLOG-008).
+
+**OPLOG-021** (State Driven): WHILE `oplog_size_mb` is not configured, the
+resource SHALL keep the size the read-back recorded, `-1` included, without
+planning a change. An import followed by a configuration that omits the
+attribute therefore plans clean; one that sets it plans a change only when
+the value differs from the recorded size; and removing a configured value
+leaves the live size unmanaged rather than planning a change. Without this,
+adding the attribute to an imported resource plans an add that says nothing
+about the live size, and a divergence among a legacy shard's members would
+surface only on the plan after that apply.

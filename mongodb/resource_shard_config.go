@@ -384,13 +384,6 @@ func suppressArbiterPriority(k, _, _ string, d *schema.ResourceData) bool {
 	return arbiter
 }
 
-// oplogConfigured returns true if oplog_size_mb is explicitly set.
-// OPLOG-004
-func oplogConfigured(data *schema.ResourceData) bool {
-	_, ok := data.GetOk("oplog_size_mb")
-	return ok
-}
-
 // oplogResizeMemberTimeout bounds each per-member connect+resize so one wedged
 // member (e.g. fsyncLock, stalled storage) cannot hang an apply indefinitely.
 const oplogResizeMemberTimeout = 60 * time.Second
@@ -401,8 +394,10 @@ const oplogResizeMemberTimeout = 60 * time.Second
 // better part of a minute. OPLOG-018
 const oplogReadMemberTimeout = 20 * time.Second
 
-// applyOplogConfig applies oplog size via replSetResizeOplog if configured
-// and changed. replSetResizeOplog only resizes the member it is issued
+// applyOplogConfig applies oplog size via replSetResizeOplog when the planned
+// size is known and changed. With no configured value the planned size is the
+// one the read-back stored, or unknown on create, so nothing is applied
+// (OPLOG-021). replSetResizeOplog only resizes the member it is issued
 // against, so the command is fanned out to every data-bearing member over a
 // direct connection, secondaries first and the primary last. Members that
 // are not PRIMARY or SECONDARY (e.g. still in initial sync) are skipped;
@@ -412,17 +407,20 @@ const oplogReadMemberTimeout = 20 * time.Second
 // OPLOG-003, OPLOG-004, OPLOG-006, OPLOG-009, OPLOG-010, OPLOG-012,
 // OPLOG-014, OPLOG-016, OPLOG-019
 func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool) (bool, error) {
-	if !oplogConfigured(data) {
+	// OPLOG-004/021: unset, or unknown on create, means nothing to apply.
+	size, known := data.GetOk("oplog_size_mb")
+	if !known {
 		return false, nil
 	}
 	// OPLOG-014: the resize is idempotent but not free (one direct connection
 	// per member); skip the fan-out when the configured size cannot have
-	// changed. Pending convergence always shows as a change because the
-	// read-back stores OplogSizeMismatch or a divergent size.
+	// changed. While a size is configured, pending convergence always shows
+	// as a change because the read-back stores OplogSizeMismatch or a
+	// divergent size.
 	if !data.IsNewResource() && !data.HasChange("oplog_size_mb") {
 		return false, nil
 	}
-	sizeMB := data.Get("oplog_size_mb").(float64)
+	sizeMB := size.(float64)
 
 	primaryHost := ""
 	var resizableHosts map[string]bool
@@ -488,15 +486,19 @@ func applyOplogConfig(ctx context.Context, client *mongo.Client, data *schema.Re
 // readOplogConfig reads the oplog size of every data-bearing member and
 // stores the common size into Terraform state, or OplogSizeMismatch when
 // members disagree, so both undersized and oversized members surface as
-// drift in the next plan. Unreachable members are skipped with a warning so
-// a single down member does not fail refresh; when no member can be read,
+// drift in the next plan. It runs whether or not oplog_size_mb is configured,
+// so an import records the live size and an unconfigured attribute tracks it
+// (OPLOG-021). Under host_override the member hosts are by definition not
+// reachable from here (DISC-008), so it stores nothing rather than cost every
+// refresh a timeout per member. Unreachable members are skipped with a
+// warning so a single down member does not fail refresh; when no member can be read,
 // the value already in state is kept — unless a resize was just attempted,
 // in which case OplogSizeMismatch is stored so an apply whose outcome could
 // not be confirmed surfaces as drift instead of recording the configured
 // size as achieved.
 // OPLOG-005, OPLOG-008, OPLOG-011, OPLOG-013, OPLOG-020
 func readOplogConfig(ctx context.Context, data *schema.ResourceData, members ConfigMembers, providerConf *MongoDatabaseConfiguration, allowNoAuthFallback bool, resizeAttempted bool) error {
-	if !oplogConfigured(data) {
+	if _, overridden := data.GetOk("host_override"); overridden {
 		return nil
 	}
 	size, err := OplogSizeAcrossMembers(ctx, members, func(ctx context.Context, host string) (float64, error) {
@@ -872,7 +874,8 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 // records the members already in state (SHARD-007), so without this seed an
 // import would record none, and the first plan would show every member block
 // as an add. SHARD-030. Client-side attributes with defaults are seeded too,
-// so an import followed by a matching configuration plans clean. SHARD-031
+// so an import followed by a matching configuration plans clean. SHARD-031.
+// The Read that follows the import records the live oplog size. OPLOG-021
 func (r *ResourceShardConfig) Import(ctx context.Context, data *schema.ResourceData, i interface{}) ([]*schema.ResourceData, error) {
 	if err := data.Set("shard_name", data.Id()); err != nil {
 		return nil, err
@@ -1104,10 +1107,13 @@ func resourceShardConfig() *schema.Resource {
 				Default:     DefaultInitTimeoutSecs,
 				Description: "Timeout in seconds for replica set initialization, and separately for each added or promoted member to reach its required state. A member still syncing at the timeout stays a non-voter and is promoted by a later apply.",
 			},
-			// OPLOG-001/002: Optional oplog size in megabytes
+			// OPLOG-001/002/021: oplog size in megabytes. Computed, so import
+			// and refresh record the live size, and leaving it unset tracks
+			// that size without planning a change.
 			"oplog_size_mb": {
 				Type:     schema.TypeFloat,
 				Optional: true,
+				Computed: true,
 				// OPLOG-015: the per-member resize/read connections dial the
 				// member hostnames from the replica set configuration, which
 				// host_override exists to avoid; reject the combination at
@@ -1120,7 +1126,7 @@ func resourceShardConfig() *schema.Resource {
 					}
 					return nil, nil
 				},
-				Description: "Maximum oplog size in megabytes. Applied via replSetResizeOplog on every data-bearing member. Conflicts with host_override.",
+				Description: "Maximum oplog size in megabytes. Applied via replSetResizeOplog on every data-bearing member, and read back from them on import and refresh: left unset, it records the live size (-1 when members disagree) without planning a change. Conflicts with host_override.",
 			},
 			// DISC-008: Override the shard host discovered via listShards
 			"host_override": {
