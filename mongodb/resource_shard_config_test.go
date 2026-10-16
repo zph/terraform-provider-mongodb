@@ -317,15 +317,15 @@ func TestShardConfigSchema(t *testing.T) {
 			},
 		},
 		{
-			// OPLOG-T01: OPLOG-001/002 — oplog_size_mb is Optional TypeFloat with validation
+			// OPLOG-T01: OPLOG-001/002 — oplog_size_mb is Optional, Computed TypeFloat with validation
 			name: "oplog_size_mb",
 			check: func(t *testing.T, s map[string]*schema.Schema) {
 				field, ok := s["oplog_size_mb"]
 				if !ok {
 					t.Fatal("schema missing 'oplog_size_mb' field")
 				}
-				if field.Required {
-					t.Error("oplog_size_mb should be Optional")
+				if !field.Optional || !field.Computed {
+					t.Error("oplog_size_mb should be Optional and Computed")
 				}
 				if field.Type != schema.TypeFloat {
 					t.Errorf("oplog_size_mb should be TypeFloat, got %v", field.Type)
@@ -641,16 +641,18 @@ func TestOplogSizeAcrossMembers(t *testing.T) {
 	}
 }
 
-// OPLOG-T13: OPLOG-004/014 — applyOplogConfig touches no connection when
-// oplog_size_mb is unset or unchanged (nil client/providerConf would panic
-// if the gates were broken)
+// OPLOG-T13: OPLOG-004/014/021 — applyOplogConfig touches no connection when
+// oplog_size_mb is unknown, unchanged or carried from the read-back (nil
+// client/providerConf would panic if the gates were broken)
 func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 	cases := []struct {
 		name string
 		data func(t *testing.T) *schema.ResourceData
 	}{
 		{
-			name: "unset",
+			// Computed and unset on create plans as unknown, which GetOk reports
+			// as not set.
+			name: "unknown on create",
 			data: func(t *testing.T) *schema.ResourceData {
 				return schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
 					"shard_name": "shard01",
@@ -675,6 +677,17 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 				return unchanged
 			},
 		},
+		{
+			// OPLOG-021: a divergence the read-back recorded is not a change to
+			// apply while the configuration leaves the size alone.
+			name: "recorded as divergent and unconfigured",
+			data: func(t *testing.T) *schema.ResourceData {
+				prior := shardConfigPrior()
+				prior["oplog_size_mb"] = OplogSizeMismatch
+				data, _ := shardConfigDiffData(t, prior, shardConfigPrior(), nil)
+				return data
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -684,6 +697,60 @@ func TestApplyOplogConfig_GatesBeforeDialing(t *testing.T) {
 			}
 			if attempted {
 				t.Errorf("fan-out must not run with oplog_size_mb %s", tc.name)
+			}
+		})
+	}
+}
+
+// OPLOG-T15: OPLOG-005 — readOplogConfig dials no member under host_override
+// and leaves oplog_size_mb unset (a nil providerConf would panic otherwise)
+func TestReadOplogConfig_SkipsUnderHostOverride(t *testing.T) {
+	data := schema.TestResourceDataRaw(t, resourceShardConfig().Schema, map[string]interface{}{
+		"shard_name":    "shard01",
+		"host_override": "override:27017",
+	})
+	if err := readOplogConfig(context.Background(), data, threeNodeRS(), nil, false, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, set := data.GetOk("oplog_size_mb"); set {
+		t.Error("oplog_size_mb must stay unset under host_override")
+	}
+}
+
+// OPLOG-T16: OPLOG-021 — the plan carries the size the read-back recorded
+// unless the configuration sets a different one, so an import followed by a
+// configuration that omits or matches it plans clean
+func TestOplogSizePlan(t *testing.T) {
+	cases := []struct {
+		name       string
+		prior      interface{} // nil leaves oplog_size_mb out of state
+		config     interface{} // nil leaves oplog_size_mb out of the configuration
+		wantChange bool
+		wantNew    float64
+	}{
+		{"nothing recorded, unconfigured", nil, nil, false, 0},
+		{"live size recorded, unconfigured", 51200.0, nil, false, 51200},
+		{"divergence recorded, unconfigured", OplogSizeMismatch, nil, false, OplogSizeMismatch},
+		{"configured equal to recorded", 51200.0, 51200.0, false, 51200},
+		{"configured differs from recorded", 40960.0, 51200.0, true, 51200},
+		{"configured over a divergence", OplogSizeMismatch, 51200.0, true, 51200},
+		{"configured with nothing recorded", nil, 51200.0, true, 51200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prior, config := shardConfigPrior(), shardConfigPrior()
+			if tc.prior != nil {
+				prior["oplog_size_mb"] = tc.prior
+			}
+			if tc.config != nil {
+				config["oplog_size_mb"] = tc.config
+			}
+			data, diff := shardConfigDiffData(t, prior, config, nil)
+			if got := data.HasChange("oplog_size_mb"); got != tc.wantChange {
+				t.Errorf("HasChange = %v, want %v, diff %v", got, tc.wantChange, diff)
+			}
+			if got := data.Get("oplog_size_mb").(float64); got != tc.wantNew {
+				t.Errorf("planned oplog_size_mb = %v, want %v", got, tc.wantNew)
 			}
 		})
 	}
