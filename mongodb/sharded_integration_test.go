@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -582,5 +584,46 @@ func TestShardedIntegration_ResolveShardClient_DirectRS_Passthrough(t *testing.T
 	// On direct RS, ResolveShardClient should return the same client
 	if returned != directClient {
 		t.Error("expected ResolveShardClient to return the same client on direct RS connection")
+	}
+}
+
+// CLUS-015: Read on an imported shard, whose state holds only the ID, takes
+// the hosts from listShards.
+func TestShardedIntegration_ShardRead_ImportSeedsHosts(t *testing.T) {
+	ensureShardedCluster(t)
+	conf := &MongoDatabaseConfiguration{Config: newMongosConfig(), MaxConnLifetime: 10}
+
+	data := resourceShard().Data(&terraform.InstanceState{ID: "shard01"})
+	if diags := RShard.Read(context.Background(), data, conf); diags.HasError() {
+		t.Fatalf("Read returned error: %+v", diags)
+	}
+	if got := data.Get("shard_name").(string); got != "shard01" {
+		t.Errorf("shard_name = %q, want shard01", got)
+	}
+	hosts := stringList(data.Get("hosts"))
+	if len(hosts) != 1 || hosts[0] != "shard01svr0:27018" {
+		t.Errorf("hosts = %v, want [shard01svr0:27018]", hosts)
+	}
+}
+
+// CLUS-015: once state holds hosts, Read leaves them alone even when the
+// live set reports something else; hosts is an identity field (CLUS-007).
+func TestShardedIntegration_ShardRead_KeepsStateHosts(t *testing.T) {
+	ensureShardedCluster(t)
+	conf := &MongoDatabaseConfiguration{Config: newMongosConfig(), MaxConnLifetime: 10}
+
+	seed := schema.TestResourceDataRaw(t, resourceShard().Schema, map[string]interface{}{
+		"shard_name": "shard01",
+		"hosts":      []interface{}{"stale-host:27018"},
+	})
+	seed.SetId("shard01")
+	data := resourceShard().Data(seed.State())
+
+	if diags := RShard.Read(context.Background(), data, conf); diags.HasError() {
+		t.Fatalf("Read returned error: %+v", diags)
+	}
+	hosts := stringList(data.Get("hosts"))
+	if len(hosts) != 1 || hosts[0] != "stale-host:27018" {
+		t.Errorf("hosts = %v, want the state value to be kept", hosts)
 	}
 }

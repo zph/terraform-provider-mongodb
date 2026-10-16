@@ -18,14 +18,18 @@ func blockFieldChange(fieldName string) schema.CustomizeDiffFunc {
 			return nil
 		}
 		if d.HasChange(fieldName) {
-			return fmt.Errorf(
-				"changing %q is not allowed on an existing resource; "+
-					"remove the resource from state and re-create it instead",
-				fieldName,
-			)
+			return immutableFieldError(fieldName)
 		}
 		return nil
 	}
+}
+
+func immutableFieldError(fieldName string) error {
+	return fmt.Errorf(
+		"changing %q is not allowed on an existing resource; "+
+			"remove the resource from state and re-create it instead",
+		fieldName,
+	)
 }
 
 func validateDiagFunc(validateFunc func(interface{}, string) ([]string, []error)) schema.SchemaValidateDiagFunc {
