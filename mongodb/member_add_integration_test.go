@@ -645,6 +645,10 @@ func TestIntegration_ShardConfigImport_ReadsAllMembers(t *testing.T) {
 	if got := data.Get("shard_name").(string); got != memberAddRSName {
 		t.Errorf("shard_name = %q, want %q", got, memberAddRSName)
 	}
+	// SHARD-031: the client-side default is in state after the import.
+	if got := data.Get("init_timeout_secs").(int); got != DefaultInitTimeoutSecs {
+		t.Errorf("init_timeout_secs = %d, want default %d", got, DefaultInitTimeoutSecs)
+	}
 	members := data.Get("member").([]interface{})
 	if len(members) != 3 {
 		t.Fatalf("got %d members in state, want 3: %v", len(members), members)

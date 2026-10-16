@@ -38,6 +38,11 @@ in the order reported. Once state holds hosts, Read SHALL leave them
 unchanged: `hosts` is an identity field (CLUS-007), and rewriting it from the
 live set would turn every membership change into a plan error.
 
+**CLUS-017** (Event Driven): WHEN the resource is imported, it SHALL record
+`add_timeout_secs` and `remove_timeout_secs` at their schema defaults. Neither
+has a value in `listShards`, so without the seed the first plan after an
+import records the defaults as an in-place change.
+
 ## Delete (removeShard)
 
 **CLUS-006** (Event Driven): WHEN Delete is called, the resource SHALL run

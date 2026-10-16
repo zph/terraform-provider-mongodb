@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 // TEST-007: Valid base64 ID returns (shardName, database, nil)
@@ -829,5 +830,113 @@ func TestSuppressArbiterPriority(t *testing.T) {
 	}
 	if !suppressArbiterPriority("member.1.priority", "0", "1", data) {
 		t.Error("an arbiter's priority diff must be suppressed")
+	}
+}
+
+// shardConfigDiffData plans config against prior state and returns the
+// ResourceData an Update would see, plus the raw diff.
+func shardConfigDiffData(t *testing.T, prior map[string]interface{}, config map[string]interface{}, meta interface{}) (*schema.ResourceData, *terraform.InstanceDiff) {
+	t.Helper()
+	res := resourceShardConfig()
+	state := schema.TestResourceDataRaw(t, res.Schema, prior)
+	state.SetId("rs0")
+	diff, err := res.Diff(context.Background(), state.State(), terraform.NewResourceConfigRaw(config), meta)
+	if err != nil {
+		t.Fatalf("Diff returned error: %v", err)
+	}
+	data, err := schema.InternalMap(res.Schema).Data(state.State(), diff)
+	if err != nil {
+		t.Fatalf("Data returned error: %v", err)
+	}
+	return data, diff
+}
+
+func shardConfigPrior() map[string]interface{} {
+	return map[string]interface{}{
+		"shard_name": "rs0",
+		"member": []interface{}{
+			map[string]interface{}{"host": "a:27017"},
+		},
+		"init_timeout_secs": 60,
+	}
+}
+
+// SHARD-031: a plan that only records init_timeout_secs, as the first plan
+// after an import without the seed does, is not a reconfig.
+func TestOnlyClientSideChanges_TimeoutOnly(t *testing.T) {
+	config := shardConfigPrior()
+	config["init_timeout_secs"] = 180
+	data, diff := shardConfigDiffData(t, shardConfigPrior(), config, nil)
+	if diff == nil || len(diff.Attributes) == 0 {
+		t.Fatal("expected a diff on init_timeout_secs")
+	}
+	if !onlyClientSideChanges(data) {
+		t.Errorf("init_timeout_secs alone must count as client-side, diff %v", diff.Attributes)
+	}
+	if !data.HasChange("init_timeout_secs") {
+		t.Error("the planned timeout must still be visible to Update")
+	}
+}
+
+// SHARD-031: host_override is client-side as well.
+func TestOnlyClientSideChanges_HostOverride(t *testing.T) {
+	config := shardConfigPrior()
+	config["host_override"] = "override:27017"
+	data, _ := shardConfigDiffData(t, shardConfigPrior(), config, nil)
+	if !onlyClientSideChanges(data) {
+		t.Error("host_override alone must count as client-side")
+	}
+}
+
+// SHARD-031: anything the server holds still reconfigures.
+func TestOnlyClientSideChanges_ServerAttribute(t *testing.T) {
+	config := shardConfigPrior()
+	config["init_timeout_secs"] = 180
+	config["chaining_allowed"] = false
+	data, _ := shardConfigDiffData(t, shardConfigPrior(), config, nil)
+	if onlyClientSideChanges(data) {
+		t.Error("chaining_allowed is a server setting and must not be skipped")
+	}
+
+	config = shardConfigPrior()
+	config["member"] = []interface{}{
+		map[string]interface{}{"host": "a:27017"},
+		map[string]interface{}{"host": "b:27017"},
+	}
+	data, _ = shardConfigDiffData(t, shardConfigPrior(), config, nil)
+	if onlyClientSideChanges(data) {
+		t.Error("a member add must not be skipped")
+	}
+
+	config = shardConfigPrior()
+	config["oplog_size_mb"] = 2048.0
+	data, _ = shardConfigDiffData(t, shardConfigPrior(), config, nil)
+	if onlyClientSideChanges(data) {
+		t.Error("oplog_size_mb is applied to the members and must not be skipped")
+	}
+}
+
+// SHARD-031: with command preview on, a client-side-only plan shows no
+// command and planned_commands does not itself turn into a change.
+func TestShardConfigPreview_ClientSideOnlyIsEmpty(t *testing.T) {
+	meta := &MongoDatabaseConfiguration{
+		CommandPreview:  true,
+		FeaturesEnabled: map[string]bool{"mongodb_shard_config": true},
+	}
+	config := shardConfigPrior()
+	config["init_timeout_secs"] = 180
+	data, diff := shardConfigDiffData(t, shardConfigPrior(), config, meta)
+	if attr, ok := diff.Attributes["planned_commands"]; ok && attr.New != "" {
+		t.Errorf("planned_commands = %q, want none for a client-side-only change", attr.New)
+	}
+	if !onlyClientSideChanges(data) {
+		t.Errorf("client-side-only plan must still be skipped with preview on, diff %v", diff.Attributes)
+	}
+
+	config["chaining_allowed"] = false
+	_, diff = shardConfigDiffData(t, shardConfigPrior(), config, meta)
+	attr, ok := diff.Attributes["planned_commands"]
+	if !ok || !strings.Contains(attr.New, "replSetReconfig") {
+		t.Errorf("a settings change must still preview a replSetReconfig, got %v", diff.Attributes["planned_commands"])
 	}
 }

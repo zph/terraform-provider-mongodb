@@ -254,6 +254,16 @@ would record none and the first plan would show every `member` block as an
 add. IF the replica set name the server reports differs from the import ID,
 THEN the import SHALL fail rather than let Read rename the resource.
 
+**SHARD-031** (Ubiquitous): The resource SHALL treat `init_timeout_secs` and
+`host_override` as client-side attributes: MongoDB holds no value for them.
+Import SHALL record each one that has a schema default at that default, so an
+import followed by a configuration at the defaults plans no change. Update
+SHALL send no `replSetReconfig` when nothing but client-side attributes (or
+the `timeouts` block) changed, and the command preview SHALL show no command
+for such a plan. Without this, the first plan after an import records the
+default as an in-place change and the apply runs a reconfig with otherwise
+identical content.
+
 ## Initialization
 
 The initialization flow hands over to this reconciliation after

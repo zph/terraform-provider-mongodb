@@ -45,7 +45,7 @@ func resourceShard() *schema.Resource {
 		UpdateContext: RShard.Update,
 		DeleteContext: RShard.Delete,
 		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
+			StateContext: RShard.Import,
 		},
 		// GATE-005: require feature opt-in
 		// DANGER-016, DANGER-017: block identity field changes at plan time
@@ -276,6 +276,20 @@ func stringList(raw interface{}) []string {
 		}
 	}
 	return out
+}
+
+// shardClientSideAttributes are the attributes listShards has no value for;
+// they live only in Terraform state. CLUS-017
+var shardClientSideAttributes = []string{"add_timeout_secs", "remove_timeout_secs"}
+
+// Import passes the ID through for Read to fill from listShards (CLUS-015)
+// and seeds the client-side timeouts with their defaults, so an import
+// followed by a matching configuration plans clean. CLUS-017
+func (r *ResourceShard) Import(_ context.Context, data *schema.ResourceData, _ interface{}) ([]*schema.ResourceData, error) {
+	if err := seedClientSideDefaults(data, resourceShard().Schema, shardClientSideAttributes...); err != nil {
+		return nil, err
+	}
+	return []*schema.ResourceData{data}, nil
 }
 
 // Update handles changes to client-side-only fields (e.g. remove_timeout_secs).

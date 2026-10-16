@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 // TEST-026: Warnings propagated as DiagWarning
@@ -74,5 +75,32 @@ func TestValidateDiagFunc_Empty(t *testing.T) {
 	diags := fn("value", cty.Path{})
 	if len(diags) != 0 {
 		t.Errorf("expected 0 diagnostics, got %d", len(diags))
+	}
+}
+
+// SHARD-031, CLUS-017: seedClientSideDefaults writes schema defaults only
+// where state holds nothing, and skips attributes without a default.
+func TestSeedClientSideDefaults(t *testing.T) {
+	s := resourceShardConfig().Schema
+	data := resourceShardConfig().Data(&terraform.InstanceState{
+		ID:         "rs0",
+		Attributes: map[string]string{"init_timeout_secs": "120"},
+	})
+	if err := seedClientSideDefaults(data, s, "init_timeout_secs", "host_override", "no_such_attribute"); err != nil {
+		t.Fatalf("seedClientSideDefaults returned error: %v", err)
+	}
+	if v := data.Get("init_timeout_secs").(int); v != 120 {
+		t.Errorf("init_timeout_secs = %d, want the existing 120 kept", v)
+	}
+	if _, set := data.GetOk("host_override"); set {
+		t.Errorf("host_override has no default and must stay unset, got %q", data.Get("host_override"))
+	}
+
+	data = resourceShardConfig().Data(&terraform.InstanceState{ID: "rs0"})
+	if err := seedClientSideDefaults(data, s, "init_timeout_secs"); err != nil {
+		t.Fatalf("seedClientSideDefaults returned error: %v", err)
+	}
+	if v := data.Get("init_timeout_secs").(int); v != DefaultInitTimeoutSecs {
+		t.Errorf("init_timeout_secs = %d, want default %d", v, DefaultInitTimeoutSecs)
 	}
 }

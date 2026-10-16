@@ -608,7 +608,42 @@ func connectToMember(ctx context.Context, providerConf *MongoDatabaseConfigurati
 	return client, func() { _ = client.Disconnect(ctx) }, nil
 }
 
+// shardConfigClientSideAttributes are the attributes MongoDB has no value
+// for. They live only in Terraform state, so a change to one of them alone
+// has nothing to send to the server. SHARD-031
+var shardConfigClientSideAttributes = []string{"init_timeout_secs", "host_override"}
+
+// changeReporter is the part of ResourceData and ResourceDiff the client-side
+// check needs; ResourceDiff has no HasChangesExcept in this SDK.
+type changeReporter interface {
+	HasChange(key string) bool
+}
+
+// onlyClientSideChanges reports whether the planned update touches nothing
+// but client-side attributes. planned_commands is computed and the timeouts
+// block lives outside the schema, so neither counts. SHARD-031
+func onlyClientSideChanges(d changeReporter) bool {
+	skip := map[string]bool{"planned_commands": true}
+	for _, k := range shardConfigClientSideAttributes {
+		skip[k] = true
+	}
+	for k := range resourceShardConfig().Schema {
+		if !skip[k] && d.HasChange(k) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *ResourceShardConfig) Update(ctx context.Context, data *schema.ResourceData, i interface{}) diag.Diagnostics {
+	// SHARD-031: a plan that only records a client-side value, as the first
+	// plan after a 0.5.2 import does for init_timeout_secs, must not run a
+	// replSetReconfig with otherwise identical content. The SDK persists the
+	// planned values on a nil return.
+	if onlyClientSideChanges(data) {
+		tflog.Debug(ctx, "only client-side attributes changed; skipping replSetReconfig")
+		return nil
+	}
 	client, cleanup, err := r.getShardClient(ctx, data, i)
 	if err != nil {
 		return diag.FromErr(err)
@@ -836,9 +871,13 @@ func (r *ResourceShardConfig) Read(ctx context.Context, data *schema.ResourceDat
 // the live configuration: every member becomes a managed member. Read only
 // records the members already in state (SHARD-007), so without this seed an
 // import would record none, and the first plan would show every member block
-// as an add. SHARD-030
+// as an add. SHARD-030. Client-side attributes with defaults are seeded too,
+// so an import followed by a matching configuration plans clean. SHARD-031
 func (r *ResourceShardConfig) Import(ctx context.Context, data *schema.ResourceData, i interface{}) ([]*schema.ResourceData, error) {
 	if err := data.Set("shard_name", data.Id()); err != nil {
+		return nil, err
+	}
+	if err := seedClientSideDefaults(data, resourceShardConfig().Schema, shardConfigClientSideAttributes...); err != nil {
 		return nil, err
 	}
 	client, cleanup, err := r.getShardClient(ctx, data, i)

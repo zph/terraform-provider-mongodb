@@ -447,6 +447,11 @@ func balancerConfigCommandPreview(d *schema.ResourceDiff) string {
 func shardConfigCommandPreview(d *schema.ResourceDiff) string {
 	shardName := d.Get("shard_name").(string)
 	isCreate := d.Id() == ""
+	// SHARD-031: Update sends nothing when only client-side attributes
+	// changed, so the preview must not promise a reconfig.
+	if !isCreate && onlyClientSideChanges(d) {
+		return ""
+	}
 	oldRaw, newRaw := d.GetChange("member")
 	planned := previewMembersFromRaw(newRaw)
 	var state []previewMember
