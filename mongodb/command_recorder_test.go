@@ -315,170 +315,202 @@ func cleanValue(v interface{}) interface{} {
 
 // --- Unit Tests ---
 
-func TestCommandRecorder_FiltersNoise(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
+func startedEvent(name, db string, body bson.Raw) *event.CommandStartedEvent {
+	return &event.CommandStartedEvent{Command: body, DatabaseName: db, CommandName: name}
+}
 
+func TestCommandRecorder(t *testing.T) {
+	var noiseEvents []*event.CommandStartedEvent
 	for name := range noiseCommands {
-		mon.Started(context.Background(), &event.CommandStartedEvent{
-			Command:      mustBSON(bson.D{{Key: name, Value: 1}}),
-			DatabaseName: "admin",
-			CommandName:  name,
+		noiseEvents = append(noiseEvents, startedEvent(name, "admin", mustBSON(bson.D{{Key: name, Value: 1}})))
+	}
+	createUser := startedEvent("createUser", "admin",
+		mustBSON(bson.D{{Key: "createUser", Value: "u1"}, {Key: "pwd", Value: "p"}, {Key: "roles", Value: bson.A{}}}))
+	dropUser := startedEvent("dropUser", "mydb", mustBSON(bson.D{{Key: "dropUser", Value: "gone"}}))
+
+	cases := []struct {
+		name   string
+		source string
+		setup  func(rec *CommandRecorder) // runs before events fire
+		events []*event.CommandStartedEvent
+		check  func(t *testing.T, rec *CommandRecorder)
+	}{
+		{
+			name:   "GOLDEN-002 filters noise",
+			events: noiseEvents,
+			check: func(t *testing.T, rec *CommandRecorder) {
+				if len(rec.Commands()) != 0 {
+					t.Errorf("expected 0 recorded commands after noise, got %d", len(rec.Commands()))
+				}
+			},
+		},
+		{
+			name: "GOLDEN-001 records non-noise",
+			events: []*event.CommandStartedEvent{startedEvent("createUser", "admin",
+				mustBSON(bson.D{{Key: "createUser", Value: "testuser"}, {Key: "pwd", Value: "secret"}, {Key: "roles", Value: bson.A{}}}))},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				cmds := rec.Commands()
+				if len(cmds) != 1 {
+					t.Fatalf("expected 1 command, got %d", len(cmds))
+				}
+				if cmds[0].Name != "createUser" {
+					t.Errorf("expected command name 'createUser', got %q", cmds[0].Name)
+				}
+				if cmds[0].Database != "admin" {
+					t.Errorf("expected database 'admin', got %q", cmds[0].Database)
+				}
+			},
+		},
+		{
+			name: "GOLDEN-004 redacts password",
+			events: []*event.CommandStartedEvent{startedEvent("createUser", "testdb",
+				mustBSON(bson.D{{Key: "createUser", Value: "u1"}, {Key: "pwd", Value: "supersecret"}, {Key: "roles", Value: bson.A{}}}))},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				output := rec.String()
+				if strings.Contains(output, "supersecret") {
+					t.Error("password was not redacted in output")
+				}
+				if !strings.Contains(output, "[REDACTED]") {
+					t.Error("expected [REDACTED] placeholder in output")
+				}
+			},
+		},
+		{
+			name: "GOLDEN-003 strips driver meta",
+			events: []*event.CommandStartedEvent{startedEvent("find", "admin", mustBSON(bson.D{
+				{Key: "find", Value: "users"},
+				{Key: "$db", Value: "admin"},
+				{Key: "$readPreference", Value: bson.D{{Key: "mode", Value: "primary"}}},
+				{Key: "lsid", Value: bson.D{{Key: "id", Value: "abc123"}}},
+				{Key: "$clusterTime", Value: bson.D{{Key: "clusterTime", Value: 1}}},
+			}))},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				output := rec.String()
+				for _, field := range []string{"$db", "$readPreference", "lsid", "$clusterTime"} {
+					if strings.Contains(output, fmt.Sprintf("%q", field)) {
+						t.Errorf("driver meta field %s was not stripped", field)
+					}
+				}
+				if !strings.Contains(output, "find") {
+					t.Error("expected 'find' command in output")
+				}
+			},
+		},
+		{
+			name:   "GOLDEN-005 string format",
+			events: []*event.CommandStartedEvent{dropUser},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				output := rec.String()
+				if !strings.HasPrefix(output, "Command: dropUser\n") {
+					t.Errorf("unexpected output prefix: %q", output[:min(40, len(output))])
+				}
+				if !strings.Contains(output, "Database: mydb\n") {
+					t.Error("expected 'Database: mydb' in output")
+				}
+				if !strings.Contains(output, "Body:\n") {
+					t.Error("expected 'Body:' header in output")
+				}
+			},
+		},
+		{
+			name:   "GOLDEN-005 string format with source",
+			source: "TestExample (mongodb/example_test.go)",
+			events: []*event.CommandStartedEvent{dropUser},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				output := rec.String()
+				if !strings.HasPrefix(output, "Source: TestExample (mongodb/example_test.go)\n") {
+					t.Errorf("expected Source line prefix, got: %q", output[:min(60, len(output))])
+				}
+				if !strings.Contains(output, "Command: dropUser\n") {
+					t.Error("expected 'Command: dropUser' after Source line")
+				}
+			},
+		},
+		{
+			name:   "reset clears commands",
+			events: []*event.CommandStartedEvent{startedEvent("find", "db", mustBSON(bson.D{{Key: "find", Value: "col"}}))},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				if len(rec.Commands()) != 1 {
+					t.Fatal("expected 1 command before reset")
+				}
+				rec.Reset()
+				if len(rec.Commands()) != 0 {
+					t.Error("expected 0 commands after reset")
+				}
+			},
+		},
+		{
+			name: "multiple commands are separate sections",
+			events: []*event.CommandStartedEvent{
+				createUser,
+				startedEvent("usersInfo", "admin",
+					mustBSON(bson.D{{Key: "usersInfo", Value: bson.D{{Key: "user", Value: "u1"}, {Key: "db", Value: "admin"}}}})),
+			},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				sections := strings.Split(rec.String(), "\nCommand: ")
+				if len(sections) != 2 {
+					t.Errorf("expected 2 command sections, got %d", len(sections))
+				}
+			},
+		},
+		{
+			// GOLDEN-022: WHEN a sensitive command (createUser) has an empty body from the
+			// driver AND a pre-registered body exists, the CommandRecorder SHALL use the
+			// pre-registered body with password redaction applied.
+			name: "GOLDEN-022 pre-registered body for sensitive command",
+			setup: func(rec *CommandRecorder) {
+				rec.RecordBody("createUser", bson.D{
+					{Key: "createUser", Value: "testuser"},
+					{Key: "pwd", Value: "supersecret"},
+					{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "read"}, {Key: "db", Value: "mydb"}}}},
+				})
+			},
+			// empty body — driver redacts sensitive commands
+			events: []*event.CommandStartedEvent{startedEvent("createUser", "admin", bson.Raw{})},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				cmds := rec.Commands()
+				if len(cmds) != 1 {
+					t.Fatalf("expected 1 command, got %d", len(cmds))
+				}
+				body := cmds[0].Body
+				if strings.Contains(body, "supersecret") {
+					t.Error("password was not redacted in reconstructed body")
+				}
+				for _, want := range []string{"[REDACTED]", "testuser", "read"} {
+					if !strings.Contains(body, want) {
+						t.Errorf("expected %q in reconstructed body, got: %s", want, body)
+					}
+				}
+			},
+		},
+		{
+			// GOLDEN-023: WHEN a sensitive command has an empty body AND no pre-registered
+			// body exists, the CommandRecorder SHALL output "<redacted by driver>".
+			name:   "GOLDEN-023 no pre-registered body",
+			events: []*event.CommandStartedEvent{startedEvent("createUser", "admin", bson.Raw{})},
+			check: func(t *testing.T, rec *CommandRecorder) {
+				cmds := rec.Commands()
+				if len(cmds) != 1 {
+					t.Fatalf("expected 1 command, got %d", len(cmds))
+				}
+				if cmds[0].Body != "<redacted by driver>" {
+					t.Errorf("expected '<redacted by driver>', got %q", cmds[0].Body)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := NewCommandRecorder(tc.source)
+			if tc.setup != nil {
+				tc.setup(rec)
+			}
+			mon := rec.Monitor()
+			for _, e := range tc.events {
+				mon.Started(context.Background(), e)
+			}
+			tc.check(t, rec)
 		})
-	}
-
-	if len(rec.Commands()) != 0 {
-		t.Errorf("expected 0 recorded commands after noise, got %d", len(rec.Commands()))
-	}
-}
-
-func TestCommandRecorder_RecordsNonNoise(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "createUser", Value: "testuser"}, {Key: "pwd", Value: "secret"}, {Key: "roles", Value: bson.A{}}}),
-		DatabaseName: "admin",
-		CommandName:  "createUser",
-	})
-
-	cmds := rec.Commands()
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(cmds))
-	}
-	if cmds[0].Name != "createUser" {
-		t.Errorf("expected command name 'createUser', got %q", cmds[0].Name)
-	}
-	if cmds[0].Database != "admin" {
-		t.Errorf("expected database 'admin', got %q", cmds[0].Database)
-	}
-}
-
-func TestCommandRecorder_RedactsPassword(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "createUser", Value: "u1"}, {Key: "pwd", Value: "supersecret"}, {Key: "roles", Value: bson.A{}}}),
-		DatabaseName: "testdb",
-		CommandName:  "createUser",
-	})
-
-	output := rec.String()
-	if strings.Contains(output, "supersecret") {
-		t.Error("password was not redacted in output")
-	}
-	if !strings.Contains(output, "[REDACTED]") {
-		t.Error("expected [REDACTED] placeholder in output")
-	}
-}
-
-func TestCommandRecorder_StripsDriverMeta(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command: mustBSON(bson.D{
-			{Key: "find", Value: "users"},
-			{Key: "$db", Value: "admin"},
-			{Key: "$readPreference", Value: bson.D{{Key: "mode", Value: "primary"}}},
-			{Key: "lsid", Value: bson.D{{Key: "id", Value: "abc123"}}},
-			{Key: "$clusterTime", Value: bson.D{{Key: "clusterTime", Value: 1}}},
-		}),
-		DatabaseName: "admin",
-		CommandName:  "find",
-	})
-
-	output := rec.String()
-	for _, field := range []string{"$db", "$readPreference", "lsid", "$clusterTime"} {
-		if strings.Contains(output, fmt.Sprintf("%q", field)) {
-			t.Errorf("driver meta field %s was not stripped", field)
-		}
-	}
-	if !strings.Contains(output, "find") {
-		t.Error("expected 'find' command in output")
-	}
-}
-
-func TestCommandRecorder_StringFormat(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "dropUser", Value: "gone"}}),
-		DatabaseName: "mydb",
-		CommandName:  "dropUser",
-	})
-
-	output := rec.String()
-	if !strings.HasPrefix(output, "Command: dropUser\n") {
-		t.Errorf("unexpected output prefix: %q", output[:min(40, len(output))])
-	}
-	if !strings.Contains(output, "Database: mydb\n") {
-		t.Error("expected 'Database: mydb' in output")
-	}
-	if !strings.Contains(output, "Body:\n") {
-		t.Error("expected 'Body:' header in output")
-	}
-}
-
-func TestCommandRecorder_StringFormatWithSource(t *testing.T) {
-	rec := NewCommandRecorder("TestExample (mongodb/example_test.go)")
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "dropUser", Value: "gone"}}),
-		DatabaseName: "mydb",
-		CommandName:  "dropUser",
-	})
-
-	output := rec.String()
-	if !strings.HasPrefix(output, "Source: TestExample (mongodb/example_test.go)\n") {
-		t.Errorf("expected Source line prefix, got: %q", output[:min(60, len(output))])
-	}
-	if !strings.Contains(output, "Command: dropUser\n") {
-		t.Error("expected 'Command: dropUser' after Source line")
-	}
-}
-
-func TestCommandRecorder_Reset(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "find", Value: "col"}}),
-		DatabaseName: "db",
-		CommandName:  "find",
-	})
-	if len(rec.Commands()) != 1 {
-		t.Fatal("expected 1 command before reset")
-	}
-
-	rec.Reset()
-	if len(rec.Commands()) != 0 {
-		t.Error("expected 0 commands after reset")
-	}
-}
-
-func TestCommandRecorder_MultipleCommands(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "createUser", Value: "u1"}, {Key: "pwd", Value: "p"}, {Key: "roles", Value: bson.A{}}}),
-		DatabaseName: "admin",
-		CommandName:  "createUser",
-	})
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      mustBSON(bson.D{{Key: "usersInfo", Value: bson.D{{Key: "user", Value: "u1"}, {Key: "db", Value: "admin"}}}}),
-		DatabaseName: "admin",
-		CommandName:  "usersInfo",
-	})
-
-	output := rec.String()
-	sections := strings.Split(output, "\nCommand: ")
-	if len(sections) != 2 {
-		t.Errorf("expected 2 command sections, got %d", len(sections))
 	}
 }
 
@@ -496,68 +528,6 @@ func TestBsonToRedactedJSON_NestedDocClean(t *testing.T) {
 	}
 	if strings.Contains(result, "should-strip") {
 		t.Error("nested $db field was not stripped")
-	}
-}
-
-// GOLDEN-022: WHEN a sensitive command (createUser) has an empty body from the
-// driver AND a pre-registered body exists, the CommandRecorder SHALL use the
-// pre-registered body with password redaction applied.
-func TestCommandRecorder_RecordBody_SensitiveCommand(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	// Pre-register the body before the event fires
-	rec.RecordBody("createUser", bson.D{
-		{Key: "createUser", Value: "testuser"},
-		{Key: "pwd", Value: "supersecret"},
-		{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "read"}, {Key: "db", Value: "mydb"}}}},
-	})
-
-	// Simulate the driver sending an empty body for createUser
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      bson.Raw{}, // empty — driver redacts sensitive commands
-		DatabaseName: "admin",
-		CommandName:  "createUser",
-	})
-
-	cmds := rec.Commands()
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(cmds))
-	}
-
-	body := cmds[0].Body
-	if strings.Contains(body, "supersecret") {
-		t.Error("password was not redacted in reconstructed body")
-	}
-	if !strings.Contains(body, "[REDACTED]") {
-		t.Error("expected [REDACTED] placeholder in reconstructed body")
-	}
-	if !strings.Contains(body, "testuser") {
-		t.Error("expected username in reconstructed body")
-	}
-	if !strings.Contains(body, "read") {
-		t.Error("expected role name in reconstructed body")
-	}
-}
-
-// GOLDEN-023: WHEN a sensitive command has an empty body AND no pre-registered
-// body exists, the CommandRecorder SHALL output "<redacted by driver>".
-func TestCommandRecorder_RecordBody_NoPending(t *testing.T) {
-	rec := &CommandRecorder{}
-	mon := rec.Monitor()
-
-	mon.Started(context.Background(), &event.CommandStartedEvent{
-		Command:      bson.Raw{},
-		DatabaseName: "admin",
-		CommandName:  "createUser",
-	})
-
-	cmds := rec.Commands()
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(cmds))
-	}
-	if cmds[0].Body != "<redacted by driver>" {
-		t.Errorf("expected '<redacted by driver>', got %q", cmds[0].Body)
 	}
 }
 

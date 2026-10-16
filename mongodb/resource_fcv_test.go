@@ -6,131 +6,53 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-// FCV-T01: FCV-001 — Schema has version (TypeString, Required) and danger_mode (TypeBool, Optional, Default false)
-func TestFCVSchema_AllFields(t *testing.T) {
-	res := resourceFCV()
-	expected := map[string]schema.ValueType{
-		"version":     schema.TypeString,
-		"danger_mode": schema.TypeBool,
-	}
-	for name, typ := range expected {
-		field, ok := res.Schema[name]
-		if !ok {
-			t.Errorf("schema missing field %q", name)
-			continue
-		}
-		if field.Type != typ {
-			t.Errorf("field %q: want type %v, got %v", name, typ, field.Type)
-		}
-	}
-
-	// version must be Required
-	if !res.Schema["version"].Required {
-		t.Error("version should be Required")
-	}
-
-	// danger_mode must be Optional
-	if !res.Schema["danger_mode"].Optional {
-		t.Error("danger_mode should be Optional")
-	}
+// FCV-T01, FCV-T03: FCV-001 — version Required string; danger_mode Optional
+// bool defaulting to false. (FCV-T04 CustomizeDiff: see
+// TestDangerousOps_CustomizeDiffPresent.)
+func TestFCVSchema(t *testing.T) {
+	checkSchemaFields(t, resourceFCV(), []schemaField{
+		{name: "version", typ: schema.TypeString, required: true},
+		{name: "danger_mode", typ: schema.TypeBool, optional: true, def: false},
+	})
 }
 
 // FCV-T02: FCV-002 — version ValidateFunc accepts/rejects correct patterns
 func TestFCVSchema_VersionValidation(t *testing.T) {
-	res := resourceFCV()
-	field := res.Schema["version"]
-	if field.ValidateFunc == nil {
-		t.Fatal("version should have a ValidateFunc")
-	}
-
-	// Valid values
-	for _, v := range []string{"6.0", "7.0", "10.0"} {
-		_, errs := field.ValidateFunc(v, "version")
-		if len(errs) > 0 {
-			t.Errorf("version=%q should be valid, got errors: %v", v, errs)
-		}
-	}
-
-	// Invalid values
-	for _, v := range []string{"", "abc", "6", "6.0.1"} {
-		_, errs := field.ValidateFunc(v, "version")
-		if len(errs) == 0 {
-			t.Errorf("version=%q should be invalid, got no errors", v)
-		}
-	}
+	checkValidateFunc(t, resourceFCV().Schema["version"].ValidateFunc, "version",
+		[]interface{}{"6.0", "7.0", "10.0"}, []interface{}{"", "abc", "6", "6.0.1"})
 }
 
-// FCV-T03: FCV-001 — danger_mode Default is false
-func TestFCVSchema_DangerModeDefault(t *testing.T) {
-	res := resourceFCV()
-	field := res.Schema["danger_mode"]
-	if field.Default != false {
-		t.Errorf("danger_mode default should be false, got %v", field.Default)
+// FCV-012: compareFCV orders by major then minor and rejects bad input.
+func TestCompareFCV(t *testing.T) {
+	cases := []struct {
+		name    string
+		a, b    string
+		want    int
+		wantErr bool
+	}{
+		{"FCV-T05 greater major", "7.0", "6.0", 1, false},
+		{"FCV-T06 lesser major", "6.0", "7.0", -1, false},
+		{"FCV-T07 equal", "7.0", "7.0", 0, false},
+		{"FCV-T08 greater minor", "7.1", "7.0", 1, false},
+		{"FCV-T09 invalid left", "invalid", "7.0", 0, true},
+		{"FCV-T09 invalid right", "7.0", "invalid", 0, true},
 	}
-}
-
-// FCV-T04: FCV-001 — CustomizeDiff is non-nil
-func TestFCVSchema_CustomizeDiffPresent(t *testing.T) {
-	res := resourceFCV()
-	if res.CustomizeDiff == nil {
-		t.Error("CustomizeDiff should be non-nil")
-	}
-}
-
-// FCV-T05: FCV-012 — compareFCV("7.0", "6.0") → +1
-func TestCompareFCV_GreaterMajor(t *testing.T) {
-	got, err := compareFCV("7.0", "6.0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != 1 {
-		t.Errorf("compareFCV(7.0, 6.0) = %d, want 1", got)
-	}
-}
-
-// FCV-T06: FCV-012 — compareFCV("6.0", "7.0") → -1
-func TestCompareFCV_LesserMajor(t *testing.T) {
-	got, err := compareFCV("6.0", "7.0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != -1 {
-		t.Errorf("compareFCV(6.0, 7.0) = %d, want -1", got)
-	}
-}
-
-// FCV-T07: FCV-012 — compareFCV("7.0", "7.0") → 0
-func TestCompareFCV_Equal(t *testing.T) {
-	got, err := compareFCV("7.0", "7.0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != 0 {
-		t.Errorf("compareFCV(7.0, 7.0) = %d, want 0", got)
-	}
-}
-
-// FCV-T08: FCV-012 — compareFCV("7.1", "7.0") → +1 (minor)
-func TestCompareFCV_GreaterMinor(t *testing.T) {
-	got, err := compareFCV("7.1", "7.0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != 1 {
-		t.Errorf("compareFCV(7.1, 7.0) = %d, want 1", got)
-	}
-}
-
-// FCV-T09: FCV-012 — compareFCV("invalid", "7.0") → error
-func TestCompareFCV_InvalidInput(t *testing.T) {
-	_, err := compareFCV("invalid", "7.0")
-	if err == nil {
-		t.Error("compareFCV(invalid, 7.0) should return error")
-	}
-
-	_, err = compareFCV("7.0", "invalid")
-	if err == nil {
-		t.Error("compareFCV(7.0, invalid) should return error")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := compareFCV(tc.a, tc.b)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("compareFCV(%s, %s) should return error", tc.a, tc.b)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("compareFCV(%s, %s) = %d, want %d", tc.a, tc.b, got, tc.want)
+			}
+		})
 	}
 }
 

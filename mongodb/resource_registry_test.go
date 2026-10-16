@@ -4,50 +4,32 @@ import (
 	"testing"
 )
 
-// --- Maturity classification tests ---
-
-// GATE-T01: Mature resources are classified correctly
-func TestAllResources_MatureClassification(t *testing.T) {
-	matureExpected := map[string]bool{
-		"mongodb_db_user":       true,
-		"mongodb_db_role":       true,
-		"mongodb_original_user": true,
+// GATE-T01, GATE-T02: maturity classification per resource; GATE-T03: every
+// entry has a factory.
+func TestAllResources(t *testing.T) {
+	want := map[string]ResourceMaturity{
+		"mongodb_db_user":                       ResourceMature,
+		"mongodb_db_role":                       ResourceMature,
+		"mongodb_original_user":                 ResourceMature,
+		"mongodb_shard_config":                  ResourceExperimental,
+		"mongodb_shard":                         ResourceExperimental,
+		"mongodb_profiler":                      ResourceExperimental,
+		"mongodb_server_parameter":              ResourceExperimental,
+		"mongodb_balancer_config":               ResourceExperimental,
+		"mongodb_collection_balancing":          ResourceExperimental,
+		"mongodb_feature_compatibility_version": ResourceExperimental,
 	}
 	for _, reg := range AllResources() {
-		if matureExpected[reg.Name] && reg.Maturity != ResourceMature {
-			t.Errorf("resource %q should be mature, got %s", reg.Name, reg.Maturity)
-		}
+		t.Run(reg.Name, func(t *testing.T) {
+			if m, ok := want[reg.Name]; ok && reg.Maturity != m {
+				t.Errorf("maturity: want %s, got %s", m, reg.Maturity)
+			}
+			if reg.Factory == nil {
+				t.Error("nil Factory")
+			}
+		})
 	}
 }
-
-// GATE-T02: Experimental resources are classified correctly
-func TestAllResources_ExperimentalClassification(t *testing.T) {
-	experimentalExpected := map[string]bool{
-		"mongodb_shard_config":                  true,
-		"mongodb_shard":                         true,
-		"mongodb_profiler":                      true,
-		"mongodb_server_parameter":              true,
-		"mongodb_balancer_config":               true,
-		"mongodb_collection_balancing":          true,
-		"mongodb_feature_compatibility_version": true,
-	}
-	for _, reg := range AllResources() {
-		if experimentalExpected[reg.Name] && reg.Maturity != ResourceExperimental {
-			t.Errorf("resource %q should be experimental, got %s", reg.Name, reg.Maturity)
-		}
-	}
-}
-
-// GATE-T03: Every resource in the registry has a non-nil factory
-func TestAllResources_FactoriesNonNil(t *testing.T) {
-	for _, reg := range AllResources() {
-		if reg.Factory == nil {
-			t.Errorf("resource %q has nil Factory", reg.Name)
-		}
-	}
-}
-
-// --- BuildResourceMap tests ---
 
 // GATE-T04: BuildResourceMap registers all resources unconditionally
 func TestBuildResourceMap_AllRegistered(t *testing.T) {
@@ -59,50 +41,49 @@ func TestBuildResourceMap_AllRegistered(t *testing.T) {
 	}
 }
 
-// GATE-T05: requireFeature blocks when feature not in enabled set
-func TestRequireFeature_Blocks(t *testing.T) {
+func TestRequireFeature(t *testing.T) {
+	cases := []struct {
+		name    string
+		meta    interface{}
+		wantErr bool
+	}{
+		{"GATE-T05 blocks when not enabled", &MongoDatabaseConfiguration{FeaturesEnabled: map[string]bool{}}, true},
+		{"GATE-T06 allows when enabled", &MongoDatabaseConfiguration{FeaturesEnabled: map[string]bool{"mongodb_shard": true}}, false},
+		// Validate phase runs with no provider meta.
+		{"GATE-T07 allows nil meta", nil, false},
+	}
 	fn := requireFeature("mongodb_shard")
-	meta := &MongoDatabaseConfiguration{FeaturesEnabled: map[string]bool{}}
-	err := fn(nil, nil, meta)
-	if err == nil {
-		t.Error("expected error when feature not enabled")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fn(nil, nil, tc.meta)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("error = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
-// GATE-T06: requireFeature allows when feature is in enabled set
-func TestRequireFeature_Allows(t *testing.T) {
-	fn := requireFeature("mongodb_shard")
-	meta := &MongoDatabaseConfiguration{FeaturesEnabled: map[string]bool{"mongodb_shard": true}}
-	err := fn(nil, nil, meta)
-	if err != nil {
-		t.Errorf("expected nil error when feature enabled, got: %v", err)
-	}
-}
-
-// GATE-T07: requireFeature allows when meta is nil (validate phase)
-func TestRequireFeature_NilMeta(t *testing.T) {
-	fn := requireFeature("mongodb_shard")
-	err := fn(nil, nil, nil)
-	if err != nil {
-		t.Errorf("expected nil error for nil meta, got: %v", err)
-	}
-}
-
-// GATE-T08: mergeEnableLists combines env and HCL sources
 func TestMergeEnableLists(t *testing.T) {
-	env := map[string]bool{"mongodb_shard": true}
-	hcl := map[string]bool{"mongodb_profiler": true}
-	got := mergeEnableLists(env, hcl)
-	if !got["mongodb_shard"] || !got["mongodb_profiler"] {
-		t.Errorf("expected both sources merged, got %v", got)
+	cases := []struct {
+		name     string
+		env, hcl map[string]bool
+		want     []string
+	}{
+		{"GATE-T08 combines env and HCL", map[string]bool{"mongodb_shard": true}, map[string]bool{"mongodb_profiler": true}, []string{"mongodb_shard", "mongodb_profiler"}},
+		{"GATE-T09 nil inputs", nil, nil, nil},
 	}
-}
-
-// GATE-T09: mergeEnableLists handles nil inputs
-func TestMergeEnableLists_Nil(t *testing.T) {
-	got := mergeEnableLists(nil, nil)
-	if len(got) != 0 {
-		t.Errorf("expected empty map, got %v", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeEnableLists(tc.env, tc.hcl)
+			if len(got) != len(tc.want) {
+				t.Errorf("want %v, got %v", tc.want, got)
+			}
+			for _, name := range tc.want {
+				if !got[name] {
+					t.Errorf("expected %s in merged list, got %v", name, got)
+				}
+			}
+		})
 	}
 }
 
@@ -123,38 +104,31 @@ func TestResourceMaturity_String(t *testing.T) {
 	}
 }
 
-// --- parseEnableList tests (via env var) ---
-
-// GATE-T11: parseEnableList with comma-separated values
-func TestParseEnableList_CommaSeparated(t *testing.T) {
-	t.Setenv(EnableEnvVar, "mongodb_shard_config,mongodb_shard")
-	result := parseEnableList()
-	if !result["mongodb_shard_config"] {
-		t.Error("mongodb_shard_config should be in enable list")
+// parseEnableList reads the enable list from the env var.
+func TestParseEnableList(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		want    []string
+		wantNil bool
+	}{
+		{"GATE-T11 comma-separated", "mongodb_shard_config,mongodb_shard", []string{"mongodb_shard_config", "mongodb_shard"}, false},
+		{"GATE-T12 empty env returns nil", "", nil, true},
+		{"GATE-T13 trims whitespace", " mongodb_shard_config , mongodb_shard ", []string{"mongodb_shard_config", "mongodb_shard"}, false},
 	}
-	if !result["mongodb_shard"] {
-		t.Error("mongodb_shard should be in enable list")
-	}
-}
-
-// GATE-T12: parseEnableList with empty env var returns nil
-func TestParseEnableList_EmptyEnv(t *testing.T) {
-	t.Setenv(EnableEnvVar, "")
-	result := parseEnableList()
-	if result != nil {
-		t.Errorf("expected nil for empty env var, got %v", result)
-	}
-}
-
-// GATE-T13: parseEnableList trims whitespace
-func TestParseEnableList_Whitespace(t *testing.T) {
-	t.Setenv(EnableEnvVar, " mongodb_shard_config , mongodb_shard ")
-	result := parseEnableList()
-	if !result["mongodb_shard_config"] {
-		t.Error("mongodb_shard_config should be in enable list after trim")
-	}
-	if !result["mongodb_shard"] {
-		t.Error("mongodb_shard should be in enable list after trim")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnableEnvVar, tc.env)
+			got := parseEnableList()
+			if tc.wantNil && got != nil {
+				t.Errorf("expected nil for empty env var, got %v", got)
+			}
+			for _, name := range tc.want {
+				if !got[name] {
+					t.Errorf("%s should be in enable list, got %v", name, got)
+				}
+			}
+		})
 	}
 }
 
