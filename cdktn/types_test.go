@@ -110,12 +110,12 @@ func TestSSLConfig_Fields(t *testing.T) {
 	ssl := SSLConfig{
 		Enabled:              true,
 		Certificate:          "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
-		ClientCertificateKey: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+		ClientCertificateKey: "CLIENT_CERT_AND_KEY_PEM",
 		InsecureSkipVerify:   false,
 	}
 	assert.True(t, ssl.Enabled)
 	assert.Contains(t, ssl.Certificate, "BEGIN CERTIFICATE")
-	assert.Contains(t, ssl.ClientCertificateKey, "BEGIN PRIVATE KEY")
+	assert.Equal(t, "CLIENT_CERT_AND_KEY_PEM", ssl.ClientCertificateKey)
 	assert.False(t, ssl.InsecureSkipVerify)
 }
 

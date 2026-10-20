@@ -128,7 +128,7 @@ func TestSplitHostPort(t *testing.T) {
 // the provider config and always connects direct to the given member.
 func TestBuildShardClientConfig(t *testing.T) {
 	cert := "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----"
-	clientCert := cert + "\n-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----"
+	clientCert := "CLIENT_CERT_AND_KEY_PEM"
 	cases := []struct {
 		name     string
 		provider *ClientConfig
