@@ -173,9 +173,10 @@ cluster, err := cdktn.NewMongoShardedCluster("multi", &cdktn.MongoShardedCluster
     ProviderVersion: ">= 1.0.0",
     Credentials:     &cdktn.DirectCredentials{Username: "admin", Password: "pass"},
     SSL: &cdktn.SSLConfig{
-        Enabled:            true,
-        Certificate:        pemCertString,
-        InsecureSkipVerify: false,
+        Enabled:              true,
+        Certificate:          caPemString,
+        ClientCertificateKey: clientPemString, // only when mongod requires client certificates
+        InsecureSkipVerify:   false,
     },
     Proxy: "socks5://bastion:1080",
     ConfigServers: cdktn.ConfigServerConfig{

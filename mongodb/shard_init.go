@@ -257,21 +257,9 @@ func SetReplSetConfigWithRetry(ctx context.Context, client *mongo.Client, cfg *R
 func ConnectForInit(ctx context.Context, providerCfg *ClientConfig, host, port string, maxConnLifetime time.Duration) (*mongo.Client, func(), error) {
 	noop := func() {}
 
-	// INIT-022: Direct mode for uninitialized members
-	cfg := &ClientConfig{
-		Host:               host,
-		Port:               port,
-		Username:           providerCfg.Username,
-		Password:           providerCfg.Password,
-		DB:                 providerCfg.DB,
-		Ssl:                providerCfg.Ssl,
-		InsecureSkipVerify: providerCfg.InsecureSkipVerify,
-		Certificate:        providerCfg.Certificate,
-		ReplicaSet:         "",
-		RetryWrites:        providerCfg.RetryWrites,
-		Direct:             true,
-		Proxy:              providerCfg.Proxy,
-	}
+	// INIT-019, INIT-022: inherit credentials, TLS and proxy from the
+	// provider and connect direct to the uninitialized member.
+	cfg := BuildShardClientConfig(providerCfg, host, port, "")
 
 	conf := &MongoDatabaseConfiguration{
 		Config:          cfg,

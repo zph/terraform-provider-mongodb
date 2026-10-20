@@ -124,6 +124,9 @@ func BuildOriginalUsers(stack *TerraformStack, prefix string, users []OriginalUs
 			if user.SSL.Certificate != "" {
 				config["certificate"] = user.SSL.Certificate
 			}
+			if user.SSL.ClientCertificateKey != "" {
+				config["client_certificate_key"] = user.SSL.ClientCertificateKey
+			}
 			if user.SSL.InsecureSkipVerify {
 				config["insecure_skip_verify"] = true
 			}

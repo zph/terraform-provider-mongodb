@@ -2,6 +2,8 @@ package mongodb
 
 import (
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 // TEST-030: Provider schema passes InternalValidate (also DANGER-T10)
@@ -35,14 +37,14 @@ func TestProviderResourceSchemasValid(t *testing.T) {
 	}
 }
 
-// TEST-033: Provider schema includes features_enabled field
-func TestProviderSchema_FeaturesEnabled(t *testing.T) {
+// TEST-033: provider schema fields. Both PEM inputs are Sensitive so they
+// stay out of plan output and logs.
+func TestProviderSchema_Fields(t *testing.T) {
 	p := Provider()
-	field, ok := p.Schema["features_enabled"]
-	if !ok {
-		t.Fatal("provider schema missing features_enabled field")
-	}
-	if !field.Optional {
-		t.Error("features_enabled should be Optional")
-	}
+	checkSchemaFields(t, &schema.Resource{Schema: p.Schema}, []schemaField{
+		{name: "certificate", typ: schema.TypeString, optional: true, sensitive: true},
+		{name: "client_certificate_key", typ: schema.TypeString, optional: true, sensitive: true},
+		{name: "insecure_skip_verify", typ: schema.TypeBool, optional: true, def: false},
+		{name: "features_enabled", typ: schema.TypeSet, optional: true},
+	})
 }

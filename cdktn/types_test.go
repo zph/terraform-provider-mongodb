@@ -108,12 +108,14 @@ func TestPrivilege_ClusterLevel(t *testing.T) {
 
 func TestSSLConfig_Fields(t *testing.T) {
 	ssl := SSLConfig{
-		Enabled:            true,
-		Certificate:        "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
-		InsecureSkipVerify: false,
+		Enabled:              true,
+		Certificate:          "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+		ClientCertificateKey: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+		InsecureSkipVerify:   false,
 	}
 	assert.True(t, ssl.Enabled)
 	assert.Contains(t, ssl.Certificate, "BEGIN CERTIFICATE")
+	assert.Contains(t, ssl.ClientCertificateKey, "BEGIN PRIVATE KEY")
 	assert.False(t, ssl.InsecureSkipVerify)
 }
 

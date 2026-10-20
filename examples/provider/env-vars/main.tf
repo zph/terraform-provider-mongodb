@@ -15,7 +15,8 @@ terraform {
 #   MONGO_PWD  - password
 #
 # Optional env vars:
-#   MONGODB_CERT - PEM-encoded CA certificate content
+#   MONGODB_CERT            - PEM-encoded CA certificate content
+#   MONGODB_CLIENT_CERT_KEY - PEM-encoded client certificate + private key
 #   ALL_PROXY    - SOCKS5 proxy URL (e.g. socks5://proxy:1080)
 provider "mongodb" {
   auth_database = "admin"

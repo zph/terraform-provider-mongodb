@@ -50,11 +50,15 @@ type RoleConfig struct {
 	InheritedRoles []InheritedRole
 }
 
-// SSLConfig holds TLS settings for provider aliases. // CDKTN-018, CDKTN-019, CDKTN-020
+// SSLConfig holds TLS settings for provider aliases. // CDKTN-018, CDKTN-019, CDKTN-020, CDKTN-053
 type SSLConfig struct {
 	Enabled            bool
 	Certificate        string
 	InsecureSkipVerify bool
+	// ClientCertificateKey is a combined PEM (client certificate followed by
+	// its unencrypted private key) for servers that require client
+	// certificates. // CDKTN-053
+	ClientCertificateKey string
 }
 
 // MemberOverrideConfig specifies per-member replica set configuration overrides.

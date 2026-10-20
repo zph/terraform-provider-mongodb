@@ -84,8 +84,9 @@ resource "mongodb_original_user" "shard02_admin" {
 * `password` - (Required, Sensitive) Admin password to create.
 * `auth_database` - (Optional) Database to create the user in. Default: `"admin"`.
 * `ssl` - (Optional) Enable SSL. Default: `false`.
-* `certificate` - (Optional, Sensitive) PEM-encoded certificate content for TLS.
-* `insecure_skip_verify` - (Optional) Skip TLS certificate verification (chain and hostname). Only meaningful when TLS is enabled via `ssl = true` or `certificate`. Default: `false`.
+* `certificate` - (Optional, Sensitive) PEM-encoded CA certificate content for TLS.
+* `client_certificate_key` - (Optional, Sensitive) PEM-encoded client certificate followed by its unencrypted private key, presented when the server requires client TLS certificates. Setting it enables TLS.
+* `insecure_skip_verify` - (Optional) Skip TLS certificate verification (chain and hostname). Only meaningful when TLS is enabled via `ssl = true`, `certificate` or `client_certificate_key`. Default: `false`.
 * `replica_set` - (Optional, Computed) Replica set name. Auto-discovered from the server via `isMaster` if not set. When present, the driver uses discovery mode to route writes to the primary.
 ### Role
 

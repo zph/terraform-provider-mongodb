@@ -351,6 +351,19 @@ Set `InsecureSkipVerify` to true and verify the attribute appears in provider bl
 
 ---
 
+**CDKTN-053:** Optional Feature
+
+**Requirement:**
+WHERE a `ClientCertificateKey` PEM string is provided in `SSLConfig`, the CDKTN Sharded Cluster Generator SHALL include the `client_certificate_key` attribute in the corresponding provider alias blocks and `mongodb_original_user` resources.
+
+**Rationale:**
+A mongod configured with a CA file and the default `allowConnectionsWithoutCertificates: false` rejects clients that present no certificate.
+
+**Verification:**
+Provide a client certificate string and verify it appears in the provider blocks.
+
+---
+
 ### 7. Validation
 
 **CDKTN-021:** Unwanted Behaviour
@@ -851,6 +864,7 @@ Synthesize with original users at L2 level and verify resources have inline conn
 | CDKTN-050 | L1 Bindings | Ubiquitous | Must |
 | CDKTN-051 | Member Overrides | Optional Feature | Should |
 | CDKTN-052 | Original User | Optional Feature | Should |
+| CDKTN-053 | SSL/TLS | Optional Feature | Should |
 
 ## Design Considerations
 

@@ -42,13 +42,13 @@ FWMIG-003: WHEN a resource exists in both providers during migration, the framew
 
 ## Phase 1: Provider Schema
 
-FWMIG-004: WHEN the framework provider is initialized, it SHALL define the same provider schema as the SDKv2 provider: `host`, `port`, `username`, `password`, `auth_database`, `certificate`, `ssl`, `insecure_skip_verify`, `replica_set`, `direct`, `retrywrites`, `proxy`.
+FWMIG-004: WHEN the framework provider is initialized, it SHALL define the same provider schema as the SDKv2 provider: `host`, `port`, `username`, `password`, `auth_database`, `certificate`, `client_certificate_key`, `ssl`, `insecure_skip_verify`, `replica_set`, `direct`, `retrywrites`, `proxy`.
 
 FWMIG-005: WHEN the framework provider schema defines `password`, the field SHALL use the `Sensitive` attribute AND the `WriteOnly` modifier (Terraform 1.11+) so the value is never persisted to state.
 
 > Rationale: WriteOnly attributes are sent to the provider during configure/apply but are never stored in state. This is the primary motivation for the migration.
 
-FWMIG-006: WHEN the framework provider schema defines `certificate`, the field SHALL use both `Sensitive` and `WriteOnly` modifiers.
+FWMIG-006: WHEN the framework provider schema defines `certificate` or `client_certificate_key`, the field SHALL use both `Sensitive` and `WriteOnly` modifiers.
 
 FWMIG-007: WHEN the framework provider reads configuration, it SHALL use `provider.ConfigureRequest` and set the configured MongoDB client on `provider.ConfigureResponse` for resource access via `req.ProviderData`.
 
@@ -84,7 +84,7 @@ FWMIG-013: WHEN `mongodb_db_user` is updated and the password has not changed, t
 
 FWMIG-014: WHEN `mongodb_original_user` is migrated, the `password` attribute SHALL use `WriteOnly`.
 
-FWMIG-015: WHEN `mongodb_original_user` is migrated, the `certificate` attribute SHALL use `WriteOnly`.
+FWMIG-015: WHEN `mongodb_original_user` is migrated, the `certificate` and `client_certificate_key` attributes SHALL use `WriteOnly`.
 
 FWMIG-016: WHEN `mongodb_original_user` is migrated, the resource SHALL retain its independent connection parameters (not using the provider client).
 

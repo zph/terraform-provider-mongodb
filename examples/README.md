@@ -6,6 +6,7 @@
 |---|---|
 | [provider/basic](provider/basic) | Minimal connection to a local MongoDB instance |
 | [provider/ssl](provider/ssl) | TLS-enabled connection with a custom CA certificate |
+| [provider/mtls](provider/mtls) | Mutual TLS: CA plus a client certificate for servers that require one |
 | [provider/env-vars](provider/env-vars) | All connection details via environment variables |
 | [provider/proxy](provider/proxy) | Connection through a SOCKS5 proxy |
 | [provider/direct](provider/direct) | Direct connection mode (bypass replica set discovery) |

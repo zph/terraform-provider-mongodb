@@ -9,7 +9,8 @@ import (
 // TEST-046: host, port, username Required (password optional to avoid state).
 // TEST-047: optional field defaults. TEST-048: password Optional so
 // MONGODB_ORIGINAL_USER_PASSWORD can be used without state, and Sensitive.
-// TEST-049: certificate Sensitive. TEST-057: replica_set auto-discovered.
+// TEST-049: certificate and client_certificate_key Sensitive. TEST-057:
+// replica_set auto-discovered.
 func TestResourceOriginalUser_Schema(t *testing.T) {
 	res := resourceOriginalUser()
 	checkSchemaFields(t, res, []schemaField{
@@ -18,6 +19,7 @@ func TestResourceOriginalUser_Schema(t *testing.T) {
 		{name: "username", typ: schema.TypeString, required: true},
 		{name: "password", typ: schema.TypeString, optional: true, sensitive: true},
 		{name: "certificate", typ: schema.TypeString, optional: true, sensitive: true},
+		{name: "client_certificate_key", typ: schema.TypeString, optional: true, sensitive: true},
 		{name: "auth_database", typ: schema.TypeString, optional: true, def: "admin"},
 		{name: "ssl", typ: schema.TypeBool, optional: true, def: false},
 		{name: "insecure_skip_verify", typ: schema.TypeBool, optional: true, def: false},

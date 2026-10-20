@@ -344,6 +344,7 @@ Pattern: `<component_type>_<replica_set_name>_<member_index>` for shards and con
 | CDKTN-018 | SSL enabled at cluster level propagates to all providers | Done | `provider_factory.go:BuildProviderConfig`, `cluster.go` |
 | CDKTN-019 | Certificate PEM included in provider when set | Done | `provider_factory.go:BuildProviderConfig` |
 | CDKTN-020 | `insecure_skip_verify` propagated when set | Done | `provider_factory.go:BuildProviderConfig` |
+| CDKTN-053 | `client_certificate_key` propagated when set | Done | `provider_factory.go:BuildProviderConfig`, `resource_builder.go:BuildOriginalUsers` |
 | CDKTN-021 | `MongoConfigServer` with < 3 members returns error | Done | `validation.go:ValidateReplicaSetMembers` |
 | CDKTN-022 | `MongoShard` with < 3 members returns error | Done | `validation.go:ValidateReplicaSetMembers` |
 | CDKTN-023 | Empty `Mongos` slice returns error | Done | `validation.go:ValidateClusterMongos` |

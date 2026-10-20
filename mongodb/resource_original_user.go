@@ -105,6 +105,12 @@ func resourceOriginalUser() *schema.Resource {
 				Optional:  true,
 				Sensitive: true,
 			},
+			"client_certificate_key": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Sensitive:   true,
+				Description: "PEM-encoded client certificate followed by its unencrypted private key, presented when the server requires client TLS certificates",
+			},
 			"insecure_skip_verify": {
 				Type:        schema.TypeBool,
 				Optional:    true,
@@ -141,6 +147,9 @@ func buildOriginalUserConfig(data *schema.ResourceData) *MongoDatabaseConfigurat
 	if v, ok := data.GetOk("certificate"); ok {
 		cfg.Certificate = v.(string)
 	}
+	if v, ok := data.GetOk("client_certificate_key"); ok {
+		cfg.ClientCertificateKey = v.(string)
+	}
 	return &MongoDatabaseConfiguration{
 		Config:          cfg,
 		MaxConnLifetime: 10,
@@ -171,6 +180,9 @@ func probeReplicaSet(ctx context.Context, data *schema.ResourceData) string {
 	}
 	if v, ok := data.GetOk("certificate"); ok {
 		probeCfg.Certificate = v.(string)
+	}
+	if v, ok := data.GetOk("client_certificate_key"); ok {
+		probeCfg.ClientCertificateKey = v.(string)
 	}
 	probeConf := &MongoDatabaseConfiguration{Config: probeCfg, MaxConnLifetime: 10}
 

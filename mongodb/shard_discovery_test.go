@@ -128,6 +128,7 @@ func TestSplitHostPort(t *testing.T) {
 // the provider config and always connects direct to the given member.
 func TestBuildShardClientConfig(t *testing.T) {
 	cert := "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----"
+	clientCert := cert + "\n-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----"
 	cases := []struct {
 		name     string
 		provider *ClientConfig
@@ -140,8 +141,8 @@ func TestBuildShardClientConfig(t *testing.T) {
 			ClientConfig{Username: "admin", Password: "secret", DB: "admin", Host: "mongo1", Port: "27018", ReplicaSet: "shard01", Direct: true}},
 		{"DISC-T15 direct mode", &ClientConfig{}, "mongo1", "27018", "shard01",
 			ClientConfig{Host: "mongo1", Port: "27018", ReplicaSet: "shard01", Direct: true}},
-		{"DISC-T16 inherits TLS", &ClientConfig{Ssl: true, InsecureSkipVerify: true, Certificate: cert}, "mongo1", "27018", "rs0",
-			ClientConfig{Ssl: true, InsecureSkipVerify: true, Certificate: cert, Host: "mongo1", Port: "27018", ReplicaSet: "rs0", Direct: true}},
+		{"DISC-T16 inherits TLS", &ClientConfig{Ssl: true, InsecureSkipVerify: true, Certificate: cert, ClientCertificateKey: clientCert}, "mongo1", "27018", "rs0",
+			ClientConfig{Ssl: true, InsecureSkipVerify: true, Certificate: cert, ClientCertificateKey: clientCert, Host: "mongo1", Port: "27018", ReplicaSet: "rs0", Direct: true}},
 		{"DISC-T17 inherits proxy", &ClientConfig{Proxy: "socks5://proxy:1080"}, "mongo1", "27018", "rs0",
 			ClientConfig{Proxy: "socks5://proxy:1080", Host: "mongo1", Port: "27018", ReplicaSet: "rs0", Direct: true}},
 	}

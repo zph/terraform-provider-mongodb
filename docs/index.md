@@ -31,6 +31,25 @@ provider "mongodb" {
 }
 ```
 
+### With Client Certificates
+
+A mongod started with `net.tls.CAFile` (or `net.ssl.CAFile`) and the default `allowConnectionsWithoutCertificates: false` closes the TLS handshake of any client that presents no certificate. Pass the client certificate and its unencrypted private key as one PEM, the same layout mongod uses for `tlsCertificateKeyFile`:
+
+```hcl
+provider "mongodb" {
+  host                   = "mongo.example.com"
+  port                   = "27017"
+  username               = "admin"
+  password               = var.mongo_password
+  auth_database          = "admin"
+  ssl                    = true
+  certificate            = file(pathexpand("~/.mongodb/ca.pem"))
+  client_certificate_key = file(pathexpand("~/.mongodb/client.pem"))
+}
+```
+
+When the certificate and key live in separate files, concatenate them: `client_certificate_key = "${file("client.crt")}${file("client.key")}"`.
+
 ### Environment Variables
 
 Credentials can be provided via environment variables instead of the provider block:
@@ -56,8 +75,9 @@ provider "mongodb" {
 * `password` - (Optional) Password for authentication. Can be sourced from `MONGO_PWD`.
 * `auth_database` - (Optional) Authentication database. Default: `"admin"`.
 * `ssl` - (Optional) Enable TLS/SSL. Default: `false`.
-* `certificate` - (Optional) PEM-encoded CA certificate content for TLS. Can be sourced from `MONGODB_CERT`.
-* `insecure_skip_verify` - (Optional) Skip TLS certificate verification (chain and hostname). Only meaningful when TLS is enabled via `ssl = true` or `certificate`. Default: `false`.
+* `certificate` - (Optional, Sensitive) PEM-encoded CA certificate content for TLS. Can be sourced from `MONGODB_CERT`.
+* `client_certificate_key` - (Optional, Sensitive) PEM-encoded client certificate followed by its unencrypted private key, presented when the server requires client TLS certificates. Setting it enables TLS. Can be sourced from `MONGODB_CLIENT_CERT_KEY`.
+* `insecure_skip_verify` - (Optional) Skip TLS certificate verification (chain and hostname). Only meaningful when TLS is enabled via `ssl = true`, `certificate` or `client_certificate_key`. Default: `false`.
 * `replica_set` - (Optional) Replica set name. When set, the driver uses discovery mode.
 * `direct` - (Optional) Force a direct connection (bypass replica set discovery). Default: `false`.
 * `retrywrites` - (Optional) Enable retryable writes. Default: `true`.
