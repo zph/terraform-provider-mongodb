@@ -137,18 +137,19 @@ func SplitHostPort(hostPort string) (string, string, error) {
 // provider's config. // DISC-003, DISC-010
 func BuildShardClientConfig(providerCfg *ClientConfig, host, port, rsName string) *ClientConfig {
 	return &ClientConfig{
-		Host:               host,
-		Port:               port,
-		Username:           providerCfg.Username,
-		Password:           providerCfg.Password,
-		DB:                 providerCfg.DB,
-		Ssl:                providerCfg.Ssl,
-		InsecureSkipVerify: providerCfg.InsecureSkipVerify,
-		Certificate:        providerCfg.Certificate,
-		ReplicaSet:         rsName,
-		RetryWrites:        providerCfg.RetryWrites,
-		Direct:             true,
-		Proxy:              providerCfg.Proxy,
+		Host:                 host,
+		Port:                 port,
+		Username:             providerCfg.Username,
+		Password:             providerCfg.Password,
+		DB:                   providerCfg.DB,
+		Ssl:                  providerCfg.Ssl,
+		InsecureSkipVerify:   providerCfg.InsecureSkipVerify,
+		Certificate:          providerCfg.Certificate,
+		ClientCertificateKey: providerCfg.ClientCertificateKey,
+		ReplicaSet:           rsName,
+		RetryWrites:          providerCfg.RetryWrites,
+		Direct:               true,
+		Proxy:                providerCfg.Proxy,
 	}
 }
 

@@ -44,11 +44,14 @@ func BuildProviderConfig(member MemberConfig, clusterCreds CredentialSource, ssl
 		"ssl":           false,
 	}
 
-	// CDKTN-018, CDKTN-019, CDKTN-020
+	// CDKTN-018, CDKTN-019, CDKTN-020, CDKTN-053
 	if ssl != nil {
 		config["ssl"] = ssl.Enabled
 		if ssl.Certificate != "" {
 			config["certificate"] = ssl.Certificate
+		}
+		if ssl.ClientCertificateKey != "" {
+			config["client_certificate_key"] = ssl.ClientCertificateKey
 		}
 		if ssl.InsecureSkipVerify {
 			config["insecure_skip_verify"] = true

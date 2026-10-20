@@ -84,34 +84,34 @@ func TestBuildProviderConfig_AuthDatabaseDefault(t *testing.T) {
 	assert.Equal(t, "admin", config["auth_database"])
 }
 
-// CDKTN-018: SSL enabled
-func TestBuildProviderConfig_SSLEnabled(t *testing.T) {
+// CDKTN-018, CDKTN-019, CDKTN-020, CDKTN-053: SSL settings land on the
+// provider block; the PEM attributes are emitted only when set.
+func TestBuildProviderConfig_SSL(t *testing.T) {
 	member := MemberConfig{Host: "h1", Port: 27017}
 	creds := &DirectCredentials{Username: "u", Password: "p"}
-	ssl := &SSLConfig{Enabled: true}
-
-	config := BuildProviderConfig(member, creds, ssl, "", true)
-	assert.Equal(t, true, config["ssl"])
-}
-
-// CDKTN-019: SSL certificate
-func TestBuildProviderConfig_SSLCertificate(t *testing.T) {
-	member := MemberConfig{Host: "h1", Port: 27017}
-	creds := &DirectCredentials{Username: "u", Password: "p"}
-	ssl := &SSLConfig{Enabled: true, Certificate: "CERT_PEM"}
-
-	config := BuildProviderConfig(member, creds, ssl, "", true)
-	assert.Equal(t, "CERT_PEM", config["certificate"])
-}
-
-// CDKTN-020: InsecureSkipVerify
-func TestBuildProviderConfig_InsecureSkipVerify(t *testing.T) {
-	member := MemberConfig{Host: "h1", Port: 27017}
-	creds := &DirectCredentials{Username: "u", Password: "p"}
-	ssl := &SSLConfig{Enabled: true, InsecureSkipVerify: true}
-
-	config := BuildProviderConfig(member, creds, ssl, "", true)
-	assert.Equal(t, true, config["insecure_skip_verify"])
+	cases := []struct {
+		name string
+		ssl  SSLConfig
+		key  string
+		want interface{}
+	}{
+		{"CDKTN-018 ssl enabled", SSLConfig{Enabled: true}, "ssl", true},
+		{"CDKTN-019 certificate", SSLConfig{Enabled: true, Certificate: "CERT_PEM"}, "certificate", "CERT_PEM"},
+		{"CDKTN-020 insecure_skip_verify", SSLConfig{Enabled: true, InsecureSkipVerify: true}, "insecure_skip_verify", true},
+		{"CDKTN-053 client_certificate_key", SSLConfig{Enabled: true, ClientCertificateKey: "CLIENT_PEM"}, "client_certificate_key", "CLIENT_PEM"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ssl := tc.ssl
+			config := BuildProviderConfig(member, creds, &ssl, "", true)
+			assert.Equal(t, tc.want, config[tc.key])
+			for _, pemKey := range []string{"certificate", "client_certificate_key"} {
+				if pemKey != tc.key {
+					assert.NotContains(t, config, pemKey)
+				}
+			}
+		})
+	}
 }
 
 // CDKTN-034: Proxy configuration

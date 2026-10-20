@@ -29,8 +29,13 @@ type ClientConfig struct {
 	ReplicaSet         string
 	RetryWrites        bool
 	Certificate        string
-	Direct             bool
-	Proxy              string
+	// ClientCertificateKey is a combined PEM: the client certificate chain
+	// followed by its unencrypted private key, the layout mongod itself uses
+	// for net.tls.certificateKeyFile. Presented to servers that require
+	// client certificates.
+	ClientCertificateKey string
+	Direct               bool
+	Proxy                string
 }
 type DbUser struct {
 	Name     string `json:"name"`
@@ -164,27 +169,71 @@ func (c *ClientConfig) mongoClientOptions(ctx context.Context) (*options.ClientO
 
 	opts := options.Client().ApplyURI(uri).SetDialer(dialer).SetMonitor(commandMonitor(ctx))
 
-	if c.InsecureSkipVerify && (c.Certificate != "" || c.Ssl) {
+	if c.InsecureSkipVerify && c.tlsEnabled() {
 		tflog.Warn(ctx, "TLS certificate verification disabled (insecure_skip_verify=true)",
 			map[string]interface{}{
 				"host": c.Host,
 			})
 	}
 
-	if c.Certificate != "" {
-		tlsConfig, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), c.InsecureSkipVerify)
-		if err != nil {
-			return nil, err
-		}
+	tlsConfig, err := c.tlsConfig()
+	if err != nil {
+		return nil, err
+	}
+	if tlsConfig != nil {
 		opts.SetTLSConfig(tlsConfig)
-	} else if c.Ssl && c.InsecureSkipVerify {
-		// Without a custom CA the driver would otherwise use its default TLS
-		// config, which verifies certificates — silently ignoring
-		// insecure_skip_verify (e.g. failing on legacy CN-only certificates).
-		opts.SetTLSConfig(&tls.Config{InsecureSkipVerify: true})
 	}
 
 	return opts, nil
+}
+
+// tlsEnabled reports whether the client will speak TLS. Setting a TLS config
+// on the driver turns TLS on, so a CA or client certificate implies TLS even
+// when ssl is false.
+func (c *ClientConfig) tlsEnabled() bool {
+	return c.Ssl || c.Certificate != "" || c.ClientCertificateKey != ""
+}
+
+// tlsConfig builds the TLS config the driver should use, or nil when the
+// driver's own default (TLS off, or TLS on with system roots when ssl is
+// true) already matches the configuration.
+func (c *ClientConfig) tlsConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
+	switch {
+	case c.Certificate != "":
+		cfg, err := getTLSConfigWithAllServerCertificates([]byte(c.Certificate), c.InsecureSkipVerify)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig = cfg
+	case c.ClientCertificateKey != "" || (c.Ssl && c.InsecureSkipVerify):
+		// Without a custom CA the driver would otherwise use its default TLS
+		// config, which verifies certificates — silently ignoring
+		// insecure_skip_verify (e.g. failing on legacy CN-only certificates).
+		tlsConfig = &tls.Config{InsecureSkipVerify: c.InsecureSkipVerify}
+	default:
+		return nil, nil
+	}
+
+	if c.ClientCertificateKey != "" {
+		cert, err := parseClientCertificateKey([]byte(c.ClientCertificateKey))
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	return tlsConfig, nil
+}
+
+// parseClientCertificateKey loads a client certificate and its private key
+// from one PEM bundle. The certificate and key blocks may appear in either
+// order; other block types are skipped.
+func parseClientCertificateKey(bundle []byte) (tls.Certificate, error) {
+	cert, err := tls.X509KeyPair(bundle, bundle)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("client_certificate_key: %w", err)
+	}
+	return cert, nil
 }
 
 // SHARD-011: MongoClient creates a mongo.Client. When Username is non-empty it

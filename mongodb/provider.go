@@ -33,6 +33,13 @@ func Provider() *schema.Provider {
 				DefaultFunc: schema.EnvDefaultFunc("MONGODB_CERT", ""),
 				Description: "PEM-encoded content of Mongodb host CA certificate",
 			},
+			"client_certificate_key": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Sensitive:   true,
+				DefaultFunc: schema.EnvDefaultFunc("MONGODB_CLIENT_CERT_KEY", ""),
+				Description: "PEM-encoded client certificate followed by its unencrypted private key, presented when the server requires client TLS certificates",
+			},
 
 			"username": {
 				Type:        schema.TypeString,
@@ -134,18 +141,19 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	var diags diag.Diagnostics
 
 	clientConfig := ClientConfig{
-		Host:               d.Get("host").(string),
-		Port:               d.Get("port").(string),
-		Username:           d.Get("username").(string),
-		Password:           d.Get("password").(string),
-		DB:                 d.Get("auth_database").(string),
-		Ssl:                d.Get("ssl").(bool),
-		ReplicaSet:         d.Get("replica_set").(string),
-		Certificate:        d.Get("certificate").(string),
-		InsecureSkipVerify: d.Get("insecure_skip_verify").(bool),
-		Direct:             d.Get("direct").(bool),
-		RetryWrites:        d.Get("retrywrites").(bool),
-		Proxy:              d.Get("proxy").(string),
+		Host:                 d.Get("host").(string),
+		Port:                 d.Get("port").(string),
+		Username:             d.Get("username").(string),
+		Password:             d.Get("password").(string),
+		DB:                   d.Get("auth_database").(string),
+		Ssl:                  d.Get("ssl").(bool),
+		ReplicaSet:           d.Get("replica_set").(string),
+		Certificate:          d.Get("certificate").(string),
+		ClientCertificateKey: d.Get("client_certificate_key").(string),
+		InsecureSkipVerify:   d.Get("insecure_skip_verify").(bool),
+		Direct:               d.Get("direct").(bool),
+		RetryWrites:          d.Get("retrywrites").(bool),
+		Proxy:                d.Get("proxy").(string),
 	}
 
 	// GATE-006: merge HCL features_enabled with env var

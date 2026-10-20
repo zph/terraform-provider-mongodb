@@ -225,8 +225,9 @@ func TestBuildPrivilegeDocs(t *testing.T) {
 	}
 }
 
-// generateTestPEM creates a self-signed PEM certificate for testing.
-func generateTestPEM(t *testing.T) []byte {
+// generateTestCertAndKey creates a self-signed certificate and its private
+// key, both PEM-encoded.
+func generateTestCertAndKey(t *testing.T) (certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -244,7 +245,18 @@ func generateTestPEM(t *testing.T) []byte {
 	if err != nil {
 		t.Fatalf("failed to create certificate: %v", err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+// generateTestPEM creates a self-signed PEM certificate for testing.
+func generateTestPEM(t *testing.T) []byte {
+	certPEM, _ := generateTestCertAndKey(t)
+	return certPEM
 }
 
 func TestGetTLSConfig(t *testing.T) {
@@ -292,10 +304,13 @@ func TestGetTLSConfig(t *testing.T) {
 }
 
 func TestMongoClientOptions(t *testing.T) {
+	clientCert, clientKey := generateTestCertAndKey(t)
+	clientBundle := string(clientCert) + string(clientKey)
 	cases := []struct {
-		name  string
-		cfg   ClientConfig
-		check func(t *testing.T, opts *options.ClientOptions)
+		name    string
+		cfg     ClientConfig
+		wantErr bool
+		check   func(t *testing.T, opts *options.ClientOptions)
 	}{
 		{
 			name: "TEST-041 full params",
@@ -345,10 +360,62 @@ func TestMongoClientOptions(t *testing.T) {
 				}
 			},
 		},
+		{
+			// TEST-070: a client certificate alone turns TLS on and is presented
+			// to the server; without a CA the system roots verify the server.
+			name: "TEST-070 client_certificate_key alone enables TLS and presents the certificate",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", ClientCertificateKey: clientBundle},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig == nil {
+					t.Fatal("expected TLS config to be set")
+				}
+				if len(opts.TLSConfig.Certificates) != 1 {
+					t.Fatalf("expected 1 client certificate, got %d", len(opts.TLSConfig.Certificates))
+				}
+				if opts.TLSConfig.RootCAs != nil || opts.TLSConfig.InsecureSkipVerify {
+					t.Error("expected system roots with verification enabled")
+				}
+			},
+		},
+		{
+			name: "TEST-071 certificate + client_certificate_key sets RootCAs and the client certificate",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", Ssl: true, Certificate: string(generateTestPEM(t)), ClientCertificateKey: clientBundle},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig == nil || opts.TLSConfig.RootCAs == nil {
+					t.Fatal("expected TLS config with RootCAs")
+				}
+				if len(opts.TLSConfig.Certificates) != 1 {
+					t.Errorf("expected 1 client certificate, got %d", len(opts.TLSConfig.Certificates))
+				}
+			},
+		},
+		{
+			name: "TEST-072 client_certificate_key accepts the key before the certificate",
+			cfg:  ClientConfig{Host: "myhost", Port: "27017", ClientCertificateKey: string(clientKey) + string(clientCert)},
+			check: func(t *testing.T, opts *options.ClientOptions) {
+				if opts.TLSConfig == nil || len(opts.TLSConfig.Certificates) != 1 {
+					t.Fatal("expected TLS config with 1 client certificate")
+				}
+			},
+		},
+		{
+			name:    "TEST-073 client_certificate_key without a private key is rejected",
+			cfg:     ClientConfig{Host: "myhost", Port: "27017", ClientCertificateKey: string(clientCert)},
+			wantErr: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts, err := tc.cfg.mongoClientOptions(context.Background())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "client_certificate_key") {
+					t.Errorf("expected error to name client_certificate_key, got: %v", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

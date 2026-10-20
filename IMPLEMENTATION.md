@@ -156,13 +156,14 @@ Implementation: `mongodb/shard_discovery.go`.
 
 Standalone examples organized by capability. See [examples/README.md](examples/README.md) for the full index with descriptions. The attribute lists below are derived from the provider schema (`terraform providers schema -json`) matched against uncommented lines in each example; regenerate them when examples or schemas change.
 
-### Provider Configuration (6 examples)
+### Provider Configuration (7 examples)
 
 | Example | Attributes Covered |
 |---|---|
 | `provider/basic` | auth_database, host, password, port, username |
 | `provider/direct` | auth_database, direct, host, password, port, username |
 | `provider/env-vars` | auth_database |
+| `provider/mtls` | auth_database, certificate, client_certificate_key, host, password, port, ssl, username |
 | `provider/proxy` | auth_database, host, password, port, proxy, username |
 | `provider/replica-set` | auth_database, host, password, port, replica_set, retrywrites, username |
 | `provider/ssl` | auth_database, certificate, host, insecure_skip_verify, password, port, ssl, username |
@@ -214,13 +215,13 @@ Standalone examples organized by capability. See [examples/README.md](examples/R
 
 ### Attribute Coverage
 
-- **Provider:** auth_database, certificate, command_preview, direct, features_enabled, host, insecure_skip_verify, password, port, proxy, replica_set, retrywrites, ssl, username
+- **Provider:** auth_database, certificate, client_certificate_key, command_preview, direct, features_enabled, host, insecure_skip_verify, password, port, proxy, replica_set, retrywrites, ssl, username
 - **mongodb_balancer_config:** active_window_start, active_window_stop, chunk_size_mb, enabled, secondary_throttle, wait_for_delete
 - **mongodb_collection_balancing:** chunk_size_mb, enabled, namespace
 - **mongodb_db_role:** database, name, inherited_role, inherited_role.db, inherited_role.role, privilege, privilege.actions, privilege.cluster, privilege.collection, privilege.db
 - **mongodb_db_user:** auth_database, name, password, role, role.db, role.role
 - **mongodb_feature_compatibility_version:** danger_mode, version
-- **mongodb_original_user:** auth_database, certificate, host, insecure_skip_verify, password, port, replica_set, ssl, username, role, role.db, role.role
+- **mongodb_original_user:** auth_database, certificate, host, insecure_skip_verify, password, port, replica_set, ssl, username, role, role.db, role.role — not shown: `client_certificate_key` (same combined PEM as the provider argument; see `provider/mtls`)
 - **mongodb_profiler:** database, level, slowms — not shown: `ratelimit` (honoured by Percona Server only; described in a comment in `profiler/multi-database`)
 - **mongodb_server_parameter:** ignore_read, parameter, value
 - **mongodb_shard:** add_timeout_secs, hosts, remove_timeout_secs, shard_name

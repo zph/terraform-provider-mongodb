@@ -59,7 +59,8 @@ provider "mongodb" {
   password           = var.password    # MONGO_PWD
   auth_database      = "admin"
   ssl                = false
-  certificate        = ""              # MONGODB_CERT
+  certificate        = ""              # MONGODB_CERT (CA PEM)
+  client_certificate_key = ""          # MONGODB_CLIENT_CERT_KEY (client cert + key PEM)
   insecure_skip_verify = false
   replica_set        = ""
   direct             = false
